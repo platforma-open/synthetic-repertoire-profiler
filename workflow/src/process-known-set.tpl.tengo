@@ -1,0 +1,78 @@
+// Known-set metadata read (ephemeral) — one level (nt or aa), only when that
+// level has a known file AND ≥1 metadata column was mapped.
+//
+// Reads the known TSV, hashes the user-selected Sequence column into the
+// knownVariantKey (the SAME hash params as the variant side in aggregate-known,
+// so metadata joins the known linker by exact-match key at budget 0), keeps the
+// selected metadata columns, dedups by key, and emits:
+//   metadata.tsv  [knownKey] -> <one column per mapped metadata field>
+//
+// The TSV holds the whole DESIGNED set, but the assigned-known table only lists
+// MATCHED entries. To avoid phantom rows (designed-but-unmatched entries showing
+// up with metadata only and no ID/Sequence/abundance), the metadata is
+// inner-joined against the assigned known keys — so it covers exactly the
+// entries already in the Known Variants table. (Unmatched designed entries are a
+// separate listing.)
+//
+// The metadata column set is user-mapped (dynamic), so the pt selection is built
+// from the descriptors. Column ids are sanitized headers — main.tpl rebuilds the
+// same ids (strings.substituteSpecialCharacters) for the xsv import specs.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+units := import("@platforma-sdk/workflow-tengo:units")
+strings := import("@platforma-sdk/workflow-tengo:strings")
+
+self.defineOutputs("metadata")
+
+self.awaitState("InputsLocked")
+self.awaitState("knownFile", "ResourceReady")
+self.awaitState("assignedKeysFile", "ResourceReady")
+
+self.body(func(inputs) {
+	seqCol := inputs.sequenceColumn
+	metaCols := inputs.metadataColumns // [{header, type}]
+	ll.assert(len(metaCols) > 0, "process-known-set: no metadata columns mapped")
+
+	wf := pt.workflow().mem(2 * units.GiB).cpu(1)
+
+	frame := wf.frame({ file: inputs.knownFile, xsvType: "tsv" }, { id: "known" })
+
+	keyExpr := pt.col(seqCol).hash("sha256", "base64_alphanumeric", 120).alias("knownKey")
+
+	selects := [keyExpr]
+	aggs := []
+	metaIds := []
+	for c in metaCols {
+		cid := strings.substituteSpecialCharacters(c.header)
+		metaIds = append(metaIds, cid)
+		selects = append(selects, pt.col(c.header).cast(c.type).alias(cid))
+		aggs = append(aggs, pt.col(cid).first().alias(cid))
+	}
+
+	metadata := frame.
+		select(selects...).
+		groupBy("knownKey").
+		agg(aggs...)
+
+	assignedKeys := wf.frame({ file: inputs.assignedKeysFile, xsvType: "tsv" }, { id: "assigned" }).
+		select(pt.col("knownKey")).
+		groupBy("knownKey").
+		agg(pt.col("knownKey").first().alias("_present"))
+
+	finalSelects := [pt.col("knownKey")]
+	for cid in metaIds {
+		finalSelects = append(finalSelects, pt.col(cid))
+	}
+
+	metadata.
+		join(assignedKeys, { how: "inner", on: ["knownKey"] }).
+		select(finalSelects...).
+		sort(["knownKey"]).
+		save("metadata.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return { metadata: result.getFile("metadata.tsv") }
+})

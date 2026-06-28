@@ -1,0 +1,94 @@
+// Cross-sample linker aggregation (ephemeral).
+//
+// Builds the platform linker tables from the raw per-sample variant TSVs (the
+// relations are sample-independent, so dedup across samples):
+//   ntToAa.tsv    [variantKey(aa) aaKey, variantKey(nt) ntKey] -> 1   (one aa → many nt)
+//   parentNt.tsv  [parentId, variantKey(nt) ntKey]            -> 1   (one parent → many nt)
+//   parentAa.tsv  [parentId, variantKey(aa) aaKey]            -> 1   (one parent → many aa)
+//
+// Distinct rows via groupBy on the key columns (a sentinel `link` = 1 is added on
+// import-side as the value).
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+units := import("@platforma-sdk/workflow-tengo:units")
+
+self.defineOutputs("ntToAa", "parentNt", "parentAa")
+
+self.awaitState("InputsLocked")
+self.awaitState("variantsTsvData", "ResourceReady")
+self.awaitState("aaVariantsTsvData", "ResourceReady")
+
+self.body(func(inputs) {
+	wf := pt.workflow().mem(4 * units.GiB).cpu(2)
+
+	loadConcat := func(rmData, idPrefix) {
+		frames := []
+		rmMap := rmData.inputs()
+		for sKey in maps.getKeys(rmMap) {
+			frames = append(frames, wf.frame({
+				file: rmMap[sKey],
+				xsvType: "tsv"
+			}, { id: idPrefix + "_" + string(len(frames)) }))
+		}
+		ll.assert(len(frames) > 0, "no frames for " + idPrefix)
+		if len(frames) == 1 {
+			return frames[0]
+		}
+		return pt.concat(frames)
+	}
+
+	distinctLink := func(df, keyCols) {
+		agg := df.groupBy(keyCols...).agg(
+			pt.col(keyCols[0]).count().alias("_n")
+		)
+		exprs := []
+		for c in keyCols {
+			exprs = append(exprs, pt.col(c))
+		}
+		exprs = append(exprs, pt.lit(1).alias("link"))
+		return agg.select(exprs...).sort(keyCols)
+	}
+
+	vdf := loadConcat(inputs.variantsTsvData, "ntv")
+	adf := loadConcat(inputs.aaVariantsTsvData, "aav")
+
+	// nt → aa: nt variants carrying an aa variant key (frame-shifted have none).
+	distinctLink(
+		vdf.
+			filter(pt.col("aaVariantKey").cast("String").fillNull("").strLenChars().gt(pt.lit(0))).
+			select(
+				pt.col("aaVariantKey").alias("aaKey"),
+				pt.col("variantKey").alias("ntKey")
+			),
+		["aaKey", "ntKey"]
+	).save("ntToAa.tsv", { xsvType: "tsv" })
+
+	// parent → nt
+	distinctLink(
+		vdf.select(
+			pt.col("parentId").cast("String").alias("parentId"),
+			pt.col("variantKey").alias("ntKey")
+		),
+		["parentId", "ntKey"]
+	).save("parentNt.tsv", { xsvType: "tsv" })
+
+	// parent → aa
+	distinctLink(
+		adf.select(
+			pt.col("parentId").cast("String").alias("parentId"),
+			pt.col("aaVariantKey").alias("aaKey")
+		),
+		["parentId", "aaKey"]
+	).save("parentAa.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return {
+		ntToAa: result.getFile("ntToAa.tsv"),
+		parentNt: result.getFile("parentNt.tsv"),
+		parentAa: result.getFile("parentAa.tsv")
+	}
+})

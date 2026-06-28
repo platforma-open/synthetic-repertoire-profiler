@@ -1,0 +1,46 @@
+// Prerun — drives the upload of the user's "My Computer" files (parent FASTA,
+// known-set TSVs) independently of the main Run. Importing here (rather than in
+// the main body) means the upload completes + the import handle finalizes during
+// staging, BEFORE the main run captures its prodArgs — so the block does not flip
+// to "modified" right after a run that uploaded a file.
+//
+// The model's active `prerunFileImports` output calls getImportProgress() on each
+// handle here, which is what actually starts the transfer.
+
+wf := import("@platforma-sdk/workflow-tengo:workflow")
+file := import("@platforma-sdk/workflow-tengo:file")
+
+wf.body(func(args) {
+	fileImports := {}
+	outputs := { fileImports: fileImports }
+
+	// Import for upload progress; return the imported resource so callers can
+	// also export it for content reads.
+	add := func(handle) {
+		if is_undefined(handle) {
+			return undefined
+		}
+		imp := file.importFile(handle)
+		fileImports[handle] = imp.handle
+		return imp
+	}
+
+	add(args.parentFileHandle)
+	knownNtImp := add(args.knownNtFileHandle)
+	knownAaImp := add(args.knownAaFileHandle)
+
+	// Export the known files so the UI can read their bytes (header discovery +
+	// column mapping) for remote files via ReactiveFileContent — local files are
+	// read straight off disk, but remote ones only arrive after this import.
+	if !is_undefined(knownNtImp) {
+		outputs.knownNtFile = file.exportFile(knownNtImp.file)
+	}
+	if !is_undefined(knownAaImp) {
+		outputs.knownAaFile = file.exportFile(knownAaImp.file)
+	}
+
+	return {
+		outputs: outputs,
+		exports: {}
+	}
+})
