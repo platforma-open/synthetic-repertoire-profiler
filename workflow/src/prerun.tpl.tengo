@@ -25,13 +25,16 @@ wf.body(func(args) {
 		return imp
 	}
 
-	add(args.parentFileHandle)
+	parentImp := add(args.parentFileHandle)
 	knownNtImp := add(args.knownNtFileHandle)
 	knownAaImp := add(args.knownAaFileHandle)
 
-	// Export the known files so the UI can read their bytes (header discovery +
-	// column mapping) for remote files via ReactiveFileContent — local files are
-	// read straight off disk, but remote ones only arrive after this import.
+	// Export the parent + known files so the UI can read their bytes for remote
+	// files via ReactiveFileContent (region editor parent-id discovery; known-set
+	// header/column mapping) — local files are read straight off disk.
+	if !is_undefined(parentImp) {
+		outputs.parentFile = file.exportFile(parentImp.file)
+	}
 	if !is_undefined(knownNtImp) {
 		outputs.knownNtFile = file.exportFile(knownNtImp.file)
 	}

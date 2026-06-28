@@ -24,6 +24,7 @@ import {
 import { computed, watch } from "vue";
 import { useApp } from "./app";
 import { findHeader, parseKnownTsv } from "./parseKnownTsv";
+import RegionSchemeEditor from "./RegionSchemeEditor.vue";
 
 const app = useApp();
 
@@ -220,6 +221,10 @@ ACGTACGT..."
       molecule-level counting.
     </template>
   </PlTextField>
+
+  <PlAccordionSection label="Region scheme (optional)">
+    <RegionSchemeEditor />
+  </PlAccordionSection>
 
   <PlAccordionSection label="Known Variants">
     <PlFileInput

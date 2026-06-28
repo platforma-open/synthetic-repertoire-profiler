@@ -35,6 +35,87 @@ export type KnownColumnInfo = {
   type: "Int" | "Double" | "String";
 };
 
+/** Per-parent numbering-and-region scheme. `none` = no regions (default). */
+export type RegionScheme = "none" | "imgt" | "custom";
+
+/** A region in a parent's partition: a name + nucleotide length. Boundary
+ *  offsets are derived cumulatively from the lengths (region-first entry). */
+export type RegionDef = { name: string; length: number };
+
+/** Per-parent region scheme, keyed by the parent's FASTA id. */
+export type ParentRegionConfig = {
+  parentId: string;
+  scheme: RegionScheme;
+  /** Optional name for the whole-variant feature (e.g. `VDJRegion`). */
+  assemblyFeature?: string;
+  regions: RegionDef[];
+};
+
+/** The canonical IMGT V-domain partition, in order. */
+export const IMGT_REGION_NAMES = ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"] as const;
+
+const FEATURE_NAME_RE = /^[A-Za-z0-9_]+$/;
+
+/** Builds the `--parent-regions` overlay JSON (offsets cumulative from region
+ *  lengths) consumed by mitool and re-parsed by the workflow. Returns undefined
+ *  when nothing is configured. Throws on an invalid partition. */
+export function buildParentRegionsJson(
+  configs: ParentRegionConfig[] | undefined,
+): string | undefined {
+  const parents: Record<
+    string,
+    {
+      scheme: RegionScheme;
+      assemblyFeature?: string;
+      regions: { name: string; begin: number; end: number }[];
+    }
+  > = {};
+  for (const c of configs ?? []) {
+    const af = c.assemblyFeature?.trim() || undefined;
+    if (c.scheme === "none" && !af) continue; // nothing to carry for this parent
+    if (af && !FEATURE_NAME_RE.test(af))
+      throw new Error(`Assembly feature name '${af}' must be alphanumeric/underscore.`);
+
+    let pos = 0;
+    const regions = c.regions.map((r) => {
+      const name = r.name.trim();
+      if (c.scheme !== "none") {
+        if (!FEATURE_NAME_RE.test(name))
+          throw new Error(
+            `Region name '${r.name}' (parent ${c.parentId}) must be alphanumeric/underscore.`,
+          );
+        if (!Number.isInteger(r.length) || r.length <= 0)
+          throw new Error(`Region '${name}' (parent ${c.parentId}) needs a positive length.`);
+      }
+      const begin = pos;
+      pos += r.length;
+      return { name, begin, end: pos };
+    });
+
+    if (c.scheme === "imgt") {
+      const names = regions.map((r) => r.name);
+      if (
+        names.length !== IMGT_REGION_NAMES.length ||
+        names.some((n, i) => n !== IMGT_REGION_NAMES[i])
+      )
+        throw new Error(
+          `IMGT scheme (parent ${c.parentId}) needs exactly ${IMGT_REGION_NAMES.join(", ")}.`,
+        );
+    }
+    if (c.scheme === "custom" && regions.length === 0)
+      throw new Error(`Custom scheme (parent ${c.parentId}) needs at least one region.`);
+    if (new Set(regions.map((r) => r.name)).size !== regions.length)
+      throw new Error(`Region names must be unique within parent ${c.parentId}.`);
+
+    parents[c.parentId] = {
+      scheme: c.scheme,
+      assemblyFeature: af,
+      regions: c.scheme === "none" ? [] : regions,
+    };
+  }
+  return Object.keys(parents).length === 0 ? undefined : JSON.stringify({ version: 1, parents });
+}
+
 /** Unified, UI-editable block state (V3 data model). The `.args(...)` lambda
  *  projects this to the workflow-facing args; view-only fields stay here. */
 export type BlockData = {
@@ -56,6 +137,11 @@ export type BlockData = {
   parentInputMode: ParentInputMode;
   parentSequence?: string; // fastaSequence: pasted FASTA
   parentFileHandle?: ImportFileHandle; // fastaFile: uploaded FASTA
+
+  // Optional per-parent region schemes (FR/CDR or custom), keyed by parent id.
+  // Empty/absent = no regions (today's behaviour). Projected to the
+  // `--parent-regions` overlay JSON in args.
+  parentRegions?: ParentRegionConfig[];
 
   // Optional known-variant set(s) — TSV with arbitrary headers, nt and/or aa.
   // May supply one, both, or neither. The columns are user-mapped (the format
@@ -100,6 +186,8 @@ export type BlockArgs = {
   parentInputMode: ParentInputMode;
   parentSequence?: string;
   parentFileHandle?: ImportFileHandle;
+  // `--parent-regions` overlay JSON (built from parentRegions); absent = none.
+  parentRegionsJson?: string;
   knownNtFileHandle?: ImportFileHandle;
   knownAaFileHandle?: ImportFileHandle;
   // User-mapped known-set columns. ID/Sequence names go to mitool's
@@ -211,6 +299,13 @@ export const platforma = BlockModelV3.create(dataModel)
           }) ?? [],
       ),
     { isActive: true },
+  )
+
+  // Uploaded parent FASTA bytes for the region editor (parent-id discovery +
+  // length preview). Same prerun-export + ReactiveFileContent path as the known
+  // sets; the pasted-FASTA mode reads `data.parentSequence` directly instead.
+  .output("parentFileContent", (ctx) =>
+    ctx.prerun?.resolveAny({ field: "parentFile" })?.getFileHandle(),
   )
 
   // Known-set file handles (content-readable) for the UI's column-mapping
@@ -403,6 +498,7 @@ export const platforma = BlockModelV3.create(dataModel)
       // Suppress the inactive mode's field so the staleness gate ignores it.
       parentSequence: data.parentInputMode === "fastaSequence" ? data.parentSequence : undefined,
       parentFileHandle: data.parentInputMode === "fastaFile" ? data.parentFileHandle : undefined,
+      parentRegionsJson: buildParentRegionsJson(data.parentRegions),
       knownNtFileHandle: data.knownNtFileHandle,
       knownAaFileHandle: data.knownAaFileHandle,
       // Column mapping per level — suppressed when the level's file is absent.
