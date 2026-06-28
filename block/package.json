@@ -1,0 +1,46 @@
+{
+  "name": "@platforma-open/milaboratories.synthetic-repertoire-profiler.block",
+  "version": "1.0.0",
+  "files": [
+    "index.d.ts",
+    "index.js"
+  ],
+  "scripts": {
+    "build": "shx rm -rf ./block-pack && block-tools pack",
+    "mark-stable": "block-tools mark-stable -r 's3://milab-euce1-prod-pkgs-s3-block-registry/pub/releases/?region=eu-central-1'",
+    "prepublishOnly": "block-tools pack && block-tools publish -r 's3://milab-euce1-prod-pkgs-s3-block-registry/pub/releases/?region=eu-central-1'",
+    "do-pack": "shx rm -f *.tgz && block-tools pack && pnpm pack && shx mv *.tgz package.tgz"
+  },
+  "dependencies": {
+    "@platforma-open/milaboratories.synthetic-repertoire-profiler.model": "workspace:*",
+    "@platforma-open/milaboratories.synthetic-repertoire-profiler.ui": "workspace:*",
+    "@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow": "workspace:*"
+  },
+  "devDependencies": {
+    "@platforma-sdk/block-tools": "catalog:",
+    "shx": "catalog:"
+  },
+  "block": {
+    "components": {
+      "workflow": "@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow/dist/tengo/tpl/main.plj.gz",
+      "model": "@platforma-open/milaboratories.synthetic-repertoire-profiler.model/dist/model.json",
+      "ui": "@platforma-open/milaboratories.synthetic-repertoire-profiler.ui/dist"
+    },
+    "meta": {
+      "title": "Amplicon Repertoire Profiling",
+      "description": "Profiles synthetic antibody/TCR amplicon libraries by aligning reads against user-provided parent sequences and calling mutations to build a variant repertoire.",
+      "longDescription": "file:docs/description.md",
+      "logo": "file:logos/block-logo.png",
+      "tags": [
+        "upstream",
+        "amplicon",
+        "alignment"
+      ],
+      "organization": {
+        "name": "MiLaboratories Inc",
+        "url": "https://milaboratories.com/",
+        "logo": "file:logos/organization-logo.png"
+      }
+    }
+  }
+}

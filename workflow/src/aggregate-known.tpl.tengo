@@ -1,0 +1,253 @@
+// Known-set overlay aggregation (ephemeral) — only when a known set is given.
+//
+// v1 assignment runs at budget 0 (exact match), so an ASSIGNED variant's own
+// sequence IS the matched known sequence. We therefore derive the known-variant
+// key directly as a hash of the matched variant's sequence (no need to read /
+// translate the known TSV — that is needed only for unmatched designed entries +
+// metadata, handled separately). knownVariantId is the ID mitool emits.
+//
+// Emits, from the per-sample variants/aa-variants TSVs:
+//   knownLinkerNt.tsv [knownVariantKey(nt), variantKey(nt)] -> 1
+//   knownLinkerAa.tsv [knownVariantKey(aa), variantKey(aa)] -> 1
+//   ntDistance.tsv    [variantKey(nt)]  -> nMutationsToKnown
+//   aaDistance.tsv    [variantKey(aa)]  -> aaMutationsToKnown
+//   knownNt.tsv       [knownVariantKey(nt)] -> knownVariantId
+//   knownAa.tsv       [knownVariantKey(aa)] -> knownVariantId
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+units := import("@platforma-sdk/workflow-tengo:units")
+json := import("json")
+
+self.defineOutputs("knownLinkerNt", "knownLinkerAa", "ntDistance", "aaDistance", "knownNt", "knownAa", "knownAaToNt", "knownSynCount", "knownConvergence", "unmatchedNt")
+
+self.awaitState("InputsLocked")
+self.awaitState("variantsTsvData", "ResourceReady")
+self.awaitState("aaVariantsTsvData", "ResourceReady")
+self.awaitState("knownDesignedNtData", "ResourceReady")
+self.awaitState("knownDesignedAaData", "ResourceReady")
+self.awaitState("aaConvergenceData", "ResourceReady")
+
+self.body(func(inputs) {
+	wf := pt.workflow().mem(4 * units.GiB).cpu(2)
+
+	// Tags each row with its sampleId (from the resource-map key) so the known
+	// table can count samples + sum reads across the run.
+	loadConcatX := func(rmData, idPrefix, xsvType) {
+		frames := []
+		rmMap := rmData.inputs()
+		for sKey in maps.getKeys(rmMap) {
+			sampleId := json.decode(sKey)[0]
+			frames = append(frames, wf.frame({
+				file: rmMap[sKey],
+				xsvType: xsvType
+			}, { id: idPrefix + "_" + string(len(frames)) }).withColumns(pt.lit(sampleId).alias("sampleId")))
+		}
+		ll.assert(len(frames) > 0, "no frames for " + idPrefix)
+		if len(frames) == 1 {
+			return frames[0]
+		}
+		return pt.concat(frames)
+	}
+	loadConcat := func(rmData, idPrefix) {
+		return loadConcatX(rmData, idPrefix, "tsv")
+	}
+
+	nonEmpty := func(col) {
+		return pt.col(col).cast("String").fillNull("").strLenChars().gt(pt.lit(0))
+	}
+	seqHash := func(col) {
+		return pt.col(col).hash("sha256", "base64_alphanumeric", 120)
+	}
+
+	vdf := loadConcat(inputs.variantsTsvData, "ntv")
+	adf := loadConcat(inputs.aaVariantsTsvData, "aav")
+
+	// --- nt overlay (ASSIGNED rows; budget 0 → variant seq == known seq) ---
+	ntAssigned := vdf.
+		filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
+		withColumns(seqHash("ntSequence").alias("knownKey"))
+
+	ntAssigned.
+		groupBy("knownKey", "variantKey").
+		agg(pt.col("variantKey").count().alias("_n")).
+		select(
+			pt.col("knownKey"),
+			pt.col("variantKey").alias("ntKey"),
+			pt.lit(1).alias("link")
+		).
+		sort(["knownKey", "ntKey"]).save("knownLinkerNt.tsv", { xsvType: "tsv" })
+
+	// known nt table: per known entry — id (label), sequence, linked-variant
+	// abundance (budget-0 exact match ⇒ the assigned variant IS the known one).
+	ntAssigned.
+		groupBy("knownKey").
+		agg(
+			pt.col("knownNtKey").cast("String").first().alias("label"),
+			pt.col("ntSequence").first().alias("sequence"),
+			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
+			pt.col("sampleId").nUnique().alias("sampleCount")
+		).
+		select(
+			pt.col("knownKey"),
+			pt.col("label"),
+			pt.col("sequence"),
+			pt.col("readCountTotal"),
+			pt.col("sampleCount")
+		).
+		sort(["knownKey"]).save("knownNt.tsv", { xsvType: "tsv" })
+
+	// nt distance-to-nearest (ASSIGNED + AMBIGUOUS carry a distance)
+	vdf.
+		filter(nonEmpty("nMutationsToKnown")).
+		groupBy("variantKey").
+		agg(pt.col("nMutationsToKnown").cast("Int").first().alias("distance")).
+		select(pt.col("variantKey"), pt.col("distance")).
+		sort(["variantKey"]).save("ntDistance.tsv", { xsvType: "tsv" })
+
+	// --- aa overlay ---
+	// aa metadata, one row per assigned aa variant: knownKey = hash(aaSequence),
+	// label = the assigned aa-known ID.
+	aaMeta := adf.
+		filter(nonEmpty("knownAaKey")).
+		groupBy("aaVariantKey").
+		agg(
+			pt.col("knownAaKey").cast("String").first().alias("label"),
+			pt.col("aaSequence").first().alias("sequence")
+		).
+		withColumns(seqHash("sequence").alias("knownKey"))
+
+	aaMeta.
+		select(
+			pt.col("knownKey"),
+			pt.col("aaVariantKey").alias("aaKey"),
+			pt.lit(1).alias("link")
+		).
+		sort(["knownKey", "aaKey"]).save("knownLinkerAa.tsv", { xsvType: "tsv" })
+
+	// known aa table with abundance. aa-variants.tsv has no readCount, so the
+	// abundance is the summed reads of the nt members (variants.tsv) of each
+	// assigned aa variant — joined nt→aa on aaVariantKey.
+	vdf.
+		select(pt.col("aaVariantKey"), pt.col("readCount").cast("Long").alias("readCount"), pt.col("sampleId")).
+		join(aaMeta, { how: "inner", on: ["aaVariantKey"] }).
+		groupBy("knownKey").
+		agg(
+			pt.col("label").first().alias("label"),
+			pt.col("sequence").first().alias("sequence"),
+			pt.col("readCount").sum().alias("readCountTotal"),
+			pt.col("sampleId").nUnique().alias("sampleCount")
+		).
+		select(
+			pt.col("knownKey"),
+			pt.col("label"),
+			pt.col("sequence"),
+			pt.col("readCountTotal"),
+			pt.col("sampleCount")
+		).
+		sort(["knownKey"]).save("knownAa.tsv", { xsvType: "tsv" })
+
+	adf.
+		filter(nonEmpty("aaMutationsToKnown")).
+		groupBy("aaVariantKey").
+		agg(pt.col("aaMutationsToKnown").cast("Int").first().alias("distance")).
+		select(pt.col("aaVariantKey").alias("variantKey"), pt.col("distance")).
+		sort(["variantKey"]).save("aaDistance.tsv", { xsvType: "tsv" })
+
+	// --- knownAaToNt linker -------------------------------------------------
+	// From the DESIGNED export (the full designed set, incl. zero-read members),
+	// not the observed variants: each designed nt entry → its translated aa group.
+	// mitool's `knownAaKey` (its own VariantKey hash) bridges nt→aa; we re-key both
+	// sides with the block's hash(sequence) so the linker lands on the same nt/aa
+	// known axes as the rest of the overlay. Designed TSVs are sample-independent;
+	// loadConcat stacks every sample's copy, so we dedup.
+	designedNt := loadConcat(inputs.knownDesignedNtData, "dNt").
+		select(pt.col("ntSequence"), pt.col("knownAaKey"))
+	designedAa := loadConcat(inputs.knownDesignedAaData, "dAa").
+		select(pt.col("knownAaId").alias("knownAaKey"), pt.col("aaSequence"))
+
+	aaToNt := designedNt.
+		join(designedAa, { how: "inner", on: ["knownAaKey"] }).
+		withColumns(
+			seqHash("ntSequence").alias("knownKeyNt"),
+			seqHash("aaSequence").alias("knownKeyAa")
+		).
+		groupBy("knownKeyAa", "knownKeyNt").
+		agg(pt.col("knownKeyAa").count().alias("_n"))
+
+	// linker [knownKeyAa, knownKeyNt] -> 1
+	aaToNt.
+		select(pt.col("knownKeyAa"), pt.col("knownKeyNt"), pt.lit(1).alias("link")).
+		sort(["knownKeyAa", "knownKeyNt"]).
+		save("knownAaToNt.tsv", { xsvType: "tsv" })
+
+	// Assigned (observed) known-aa keys — restrict the per-known-aa count and
+	// convergence to these so they land only on entries already in the Known
+	// Variants (AA) table (no phantom rows for designed-but-unobserved aa).
+	assignedAaKeys := aaMeta.
+		groupBy("knownKey").
+		agg(pt.col("knownKey").first().alias("_a")).
+		select(pt.col("knownKey"))
+
+	// declared synonymous-member count per known aa (# of designed nt members),
+	// restricted to assigned known-aa.
+	aaToNt.
+		groupBy("knownKeyAa").
+		agg(pt.col("knownKeyNt").nUnique().alias("declaredMemberCount")).
+		select(pt.col("knownKeyAa").alias("knownKey"), pt.col("declaredMemberCount")).
+		join(assignedAaKeys, { how: "inner", on: ["knownKey"] }).
+		sort(["knownKey"]).
+		save("knownSynCount.tsv", { xsvType: "tsv" })
+
+	// Cross-sample convergence summary per known-aa: mean of the per-sample
+	// declared synonymous spread (SD/CV), restricted to assigned known-aa.
+	loadConcatX(inputs.aaConvergenceData, "conv", "parquet").
+		groupBy("knownKey").
+		agg(
+			pt.col("stdDev").cast("Double").mean().alias("convStdDev"),
+			pt.col("cv").cast("Double").mean().alias("convCV")
+		).
+		join(assignedAaKeys, { how: "inner", on: ["knownKey"] }).
+		select(pt.col("knownKey"), pt.col("convStdDev"), pt.col("convCV")).
+		sort(["knownKey"]).
+		save("knownConvergence.tsv", { xsvType: "tsv" })
+
+	// --- unmatched designed nt entries (dropouts) ---------------------------
+	// Designed nt entries (block key = hash(designed ntSequence)) that NO variant
+	// matched in any sample. designed − assigned, via a left join + null filter.
+	designedNtKeyed := loadConcat(inputs.knownDesignedNtData, "dNtU").
+		select(pt.col("knownNtId"), pt.col("ntSequence")).
+		withColumns(seqHash("ntSequence").alias("knownKey")).
+		groupBy("knownKey").
+		agg(
+			pt.col("knownNtId").first().alias("label"),
+			pt.col("ntSequence").first().alias("sequence")
+		)
+	assignedNtKeys := ntAssigned.
+		groupBy("knownKey").
+		agg(pt.col("knownKey").first().alias("_k")).
+		select(pt.col("knownKey"), pt.lit(1).alias("assigned"))
+	designedNtKeyed.
+		join(assignedNtKeys, { how: "left", on: ["knownKey"] }).
+		filter(pt.col("assigned").fillNull(0).eq(pt.lit(0))).
+		select(pt.col("knownKey"), pt.col("label"), pt.col("sequence")).
+		sort(["knownKey"]).
+		save("unmatchedNt.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return {
+		knownLinkerNt: result.getFile("knownLinkerNt.tsv"),
+		knownLinkerAa: result.getFile("knownLinkerAa.tsv"),
+		ntDistance: result.getFile("ntDistance.tsv"),
+		aaDistance: result.getFile("aaDistance.tsv"),
+		knownNt: result.getFile("knownNt.tsv"),
+		knownAa: result.getFile("knownAa.tsv"),
+		knownAaToNt: result.getFile("knownAaToNt.tsv"),
+		knownSynCount: result.getFile("knownSynCount.tsv"),
+		knownConvergence: result.getFile("knownConvergence.tsv"),
+		unmatchedNt: result.getFile("unmatchedNt.tsv")
+	}
+})

@@ -1,0 +1,615 @@
+// PColumn spec builders for the synthetic-repertoire-profiler block.
+// Universal pl7.app/ names; the variant axis is distinguished by the
+// pl7.app/alphabet domain (nucleotide | aminoacid).
+
+maps := import("@platforma-sdk/workflow-tengo:maps")
+
+// Merge standard table annotations (order + visibility) onto a spec's annotations.
+tableAnno := func(order, visibility, anno) {
+	return maps.merge(anno, {
+		"pl7.app/table/orderPriority": string(order),
+		"pl7.app/table/visibility": visibility
+	})
+}
+
+// Variant axis: one distinct variant sequence. `alphabet` is "nucleotide" or
+// "aminoacid"; `extractionRunId` (blockId) scopes the axis to this run. Optional
+// trailing arg overrides the source column name (default "variantKey") — needed
+// for linker tables that carry two variant-key columns.
+variantKeyAxisSpec := func(blockId, alphabet, label, ...rest) {
+	col := "variantKey"
+	if len(rest) > 0 {
+		col = rest[0]
+	}
+	return {
+		column: col,
+		naRegex: "",
+		spec: {
+			name: "pl7.app/variantKey",
+			type: "String",
+			domain: {
+				"pl7.app/alphabet": alphabet,
+				"pl7.app/repertoire/extractionRunId": blockId
+			},
+			annotations: {
+				"pl7.app/label": label,
+				"pl7.app/table/fontFamily": "monospace",
+				"pl7.app/table/visibility": "default",
+				"pl7.app/table/orderPriority": "110000"
+			}
+		}
+	}
+}
+
+// Parent (alignment-reference) axis. Run-specific values → NO domain (the domain
+// annotation is reserved for project-wide enums; the parent set is per-run).
+parentIdAxisSpec := func(label) {
+	return {
+		column: "parentId",
+		naRegex: "",
+		spec: {
+			name: "pl7.app/repertoire/parentId",
+			type: "String",
+			annotations: {
+				"pl7.app/label": label
+			}
+		}
+	}
+}
+
+// Reference-position axis. String value (v2 IMGT-readiness), numbering = naive
+// (the only scheme v1 emits); alphabet distinguishes the nt vs aa state matrix.
+positionAxisSpec := func(alphabet, label) {
+	return {
+		column: "position",
+		naRegex: "",
+		spec: {
+			name: "pl7.app/repertoire/position",
+			type: "String",
+			domain: {
+				"pl7.app/repertoire/numbering": "naive",
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: {
+				"pl7.app/label": label
+			}
+		}
+	}
+}
+
+// State-matrix value column (encoding: letter = match/substitution,
+// multi-letter = insertion, "-" = deletion). The per-position value is the
+// variant's residue/base relative to the parent; labeled "Mutation State" for
+// customers ("State" alone read as jargon). `alphabet` distinguishes aa vs nt.
+stateMatrixColumns := func(alphabet) {
+	return [{
+		column: "state",
+		id: "state",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/stateMatrix",
+			valueType: "String",
+			annotations: tableAnno(70000, "default", {
+				"pl7.app/label": (alphabet == "aminoacid") ? "Mutation State (aa)" : "Mutation State (nt)",
+				"pl7.app/table/fontFamily": "monospace"
+			})
+		}
+	}]
+}
+
+// Known-variant axis: one distinct known (designed) sequence. Hash of the known
+// sequence (nt or aa), scoped to the run. Distinct axis from `variantKey` — the
+// known linker bridges the two.
+knownVariantKeyAxisSpec := func(blockId, alphabet, label, ...rest) {
+	col := "knownKey"
+	if len(rest) > 0 {
+		col = rest[0]
+	}
+	return {
+		column: col,
+		naRegex: "",
+		spec: {
+			name: "pl7.app/knownVariantKey",
+			type: "String",
+			domain: {
+				"pl7.app/alphabet": alphabet,
+				"pl7.app/repertoire/extractionRunId": blockId
+			},
+			annotations: {
+				"pl7.app/label": label,
+				"pl7.app/table/fontFamily": "monospace",
+				"pl7.app/table/visibility": "default",
+				"pl7.app/table/orderPriority": "110000"
+			}
+		}
+	}
+}
+
+// Known-variant table columns ([knownVariantKey]): the id as the axis LABEL
+// (name pl7.app/label + single axis ⇒ the table shows it instead of the hash
+// key), the known sequence, and (nt only) the linked exact-match variant's
+// abundance. `withAbundance` adds readCountTotal + sampleCount.
+knownVariantColumns := func(alphabet, withAbundance) {
+	cols := [{
+		column: "label",
+		id: "known-label",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/label",
+			valueType: "String",
+			annotations: tableAnno(100000, "default", {
+				"pl7.app/label": "Known variant"
+			})
+		}
+	}, {
+		column: "sequence",
+		id: "known-sequence",
+		allowNA: true,
+		naRegex: "",
+		spec: {
+			name: "pl7.app/sequence",
+			valueType: "String",
+			domain: {
+				// Matches the per-variant sequence feature (amplicon-sequence), so the
+				// known/designed sequence column is the same kind of entity, just on
+				// the knownVariantKey axis.
+				"pl7.app/feature": "amplicon-sequence",
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(80000, "default", {
+				"pl7.app/isMainSequence": "true",
+				"pl7.app/table/fontFamily": "monospace",
+				"pl7.app/label": (alphabet == "aminoacid") ? "Known Sequence (aa)" : "Known Sequence (nt)"
+			})
+		}
+	}]
+	if withAbundance {
+		cols = append(cols, {
+			column: "readCountTotal",
+			id: "known-read-count-total",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/readCountTotal",
+				valueType: "Long",
+				annotations: tableAnno(90000, "default", {
+					"pl7.app/min": "1",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "reads",
+					"pl7.app/abundance/normalized": "false",
+					"pl7.app/label": "Total reads"
+				})
+			}
+		}, {
+			column: "sampleCount",
+			id: "known-sample-count",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/sampleCount",
+				valueType: "Int",
+				annotations: tableAnno(85000, "default", {
+					"pl7.app/min": "1",
+					"pl7.app/label": "Number of samples"
+				})
+			}
+		})
+	}
+	return cols
+}
+
+// Distance (mutation count) from a variant to its nearest known entry.
+knownDistanceColumns := func(isAa) {
+	return [{
+		column: "distance",
+		id: "mutations-to-known",
+		allowNA: true,
+		naRegex: "",
+		spec: {
+			name: isAa ? "pl7.app/aaMutationsToKnown" : "pl7.app/nMutationsToKnown",
+			valueType: "Int",
+			domain: {
+				"pl7.app/alphabet": isAa ? "aminoacid" : "nucleotide"
+			},
+			annotations: tableAnno(86000, "default", {
+				"pl7.app/min": "0",
+				"pl7.app/label": "Mutations to known"
+			})
+		}
+	}]
+}
+
+// Cross-sample convergence summary per known-aa entry ([knownVariantKey(aa)]):
+// mean of the per-sample synonymous spread (SD/CV over declared members). The
+// per-sample detail stays in the exported [sampleId, knownVariantKey(aa)] columns.
+convergenceSummaryColumns := func() {
+	return [{
+		column: "convStdDev",
+		id: "conv-stddev-mean",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/aaVariantFractionStdDevMean",
+			valueType: "Double",
+			annotations: tableAnno(69000, "default", {
+				"pl7.app/min": "0",
+				"pl7.app/label": "Synonymous spread (mean SD)",
+				"pl7.app/format": ".2p"
+			})
+		}
+	}, {
+		column: "convCV",
+		id: "conv-cv-mean",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/aaVariantFractionCVMean",
+			valueType: "Double",
+			annotations: tableAnno(68000, "default", {
+				"pl7.app/min": "0",
+				"pl7.app/label": "Synonymous spread (mean CV)"
+			})
+		}
+	}]
+}
+
+// Declared synonymous-member count per known-aa entry ([knownVariantKey(aa)]):
+// the number of designed known-nt entries that translate to it (from knownAaToNt).
+knownSynCountColumns := func() {
+	return [{
+		column: "declaredMemberCount",
+		id: "declared-member-count",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/declaredSynonymousCount",
+			valueType: "Long",
+			annotations: tableAnno(60000, "default", {
+				"pl7.app/min": "1",
+				"pl7.app/label": "Declared synonymous members"
+			})
+		}
+	}]
+}
+
+// Known-level per-sample abundance ([sampleId, knownVariantKey]) — read counts
+// summed over the assembled variants assigned to each known variant.
+knownAbundanceColumns := func() {
+	return [{
+		column: "knownVariantReadCount",
+		id: "known-read-count",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/knownVariantReadCount",
+			valueType: "Long",
+			annotations: tableAnno(90000, "default", {
+				"pl7.app/min": "0",
+				"pl7.app/isAbundance": "true",
+				"pl7.app/abundance/unit": "reads",
+				"pl7.app/abundance/normalized": "false",
+				"pl7.app/abundance/aggregated": "true",
+				"pl7.app/label": "Known reads"
+			})
+		}
+	}, {
+		column: "knownVariantReadFraction",
+		id: "known-read-fraction",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/knownVariantReadFraction",
+			valueType: "Double",
+			annotations: tableAnno(89000, "default", {
+				"pl7.app/min": "0",
+				"pl7.app/max": "1",
+				"pl7.app/isAbundance": "true",
+				"pl7.app/abundance/unit": "reads",
+				"pl7.app/abundance/normalized": "true",
+				"pl7.app/abundance/aggregated": "true",
+				"pl7.app/label": "Known read fraction",
+				"pl7.app/format": ".2p"
+			})
+		}
+	}]
+}
+
+// Synonymous-spread QC ([sampleId, variantKey(aa)]) — disagreement among an aa
+// variant's nt members' per-sample fractions. High spread flags synthesis
+// artifact / mis-assignment / contamination at the nt level.
+convergenceColumns := func() {
+	// stdDev/cv are imported from a typed Parquet (the per-sample aaConvergence
+	// target), not a TSV. An empty-string naRegex would make the XSV importer emit
+	// `when col == "" then null` against a Float64 column → "cannot compare string
+	// with numeric (f64)". The values are never null (repertoire-pipeline fillNulls
+	// stdDev to 0.0 and computes cv), so no NA handling is needed.
+	return [{
+		column: "stdDev",
+		id: "aa-fraction-stddev",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/aaVariantFractionStdDev",
+			valueType: "Double",
+			annotations: tableAnno(71000, "default", {
+				"pl7.app/min": "0",
+				"pl7.app/label": "Synonymous spread (SD)",
+				"pl7.app/format": ".2p"
+			})
+		}
+	}, {
+		column: "cv",
+		id: "aa-fraction-cv",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/aaVariantFractionCV",
+			valueType: "Double",
+			annotations: tableAnno(70000, "default", {
+				"pl7.app/min": "0",
+				"pl7.app/label": "Synonymous spread (CV)"
+			})
+		}
+	}]
+}
+
+// Linker value column (sentinel 1, isLinkerColumn). `name` distinguishes the
+// linker (aaToNt / parent); the axes carry the actual relation.
+linkerColumns := func(name) {
+	return [{
+		column: "link",
+		id: "link",
+		allowNA: false,
+		spec: {
+			name: name,
+			valueType: "Int",
+			annotations: {
+				"pl7.app/isLinkerColumn": "true",
+				"pl7.app/table/visibility": "hidden"
+			}
+		}
+	}]
+}
+
+// Per-sample abundance columns (2 axes: sampleId, variantKey). Same shape at nt
+// and aa level — the variantKey axis alphabet domain distinguishes them.
+// readCount is the primary abundance + anchor (no UMI in v1) — the column
+// downstream blocks (clonotype-browser etc.) discover as the dataset anchor.
+perSampleAbundanceColumns := func() {
+	return [{
+		column: "readCount",
+		id: "read-count",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/readCount",
+			valueType: "Long",
+			annotations: tableAnno(90000, "default", {
+				"pl7.app/min": "1",
+				"pl7.app/isAbundance": "true",
+				"pl7.app/abundance/unit": "reads",
+				"pl7.app/abundance/normalized": "false",
+				"pl7.app/abundance/isPrimary": "true",
+				"pl7.app/isAnchor": "true",
+				"pl7.app/label": "Number of reads"
+			})
+		}
+	}, {
+		column: "readFraction",
+		id: "read-fraction",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/readFraction",
+			valueType: "Double",
+			annotations: tableAnno(89000, "default", {
+				"pl7.app/min": "0",
+				"pl7.app/max": "1",
+				"pl7.app/isAbundance": "true",
+				"pl7.app/abundance/unit": "reads",
+				"pl7.app/abundance/normalized": "true",
+				"pl7.app/abundance/isPrimary": "true",
+				"pl7.app/label": "Fraction of reads",
+				"pl7.app/format": ".2p"
+			})
+		}
+	}]
+}
+
+// Per-variant columns aggregated cross-sample (1 axis: variantKey). `isAa` adds
+// the synonymous-replicate count (ntVariantCount), which exists only at aa level.
+aggregatedColumns := func(alphabet, isAa) {
+	cols := [{
+		column: "variantLabel",
+		id: "variant-label",
+		spec: {
+			name: "pl7.app/label",
+			valueType: "String",
+			annotations: tableAnno(100000, "default", {
+				"pl7.app/label": "Variant"
+			})
+		}
+	}, {
+		column: "sequence",
+		id: "sequence",
+		spec: {
+			name: "pl7.app/sequence",
+			valueType: "String",
+			domain: {
+				// Feature descriptor for the variant sequence. This block assembles
+				// whole-amplicon variants (not VDJ regions or peptides), so the
+				// honest value is "amplicon-sequence". Lets sequence-consuming
+				// downstream blocks (e.g. clonotype-clustering) discover these on the
+				// variantKey axis by {feature, alphabet}.
+				"pl7.app/feature": "amplicon-sequence",
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(80000, "default", {
+				"pl7.app/isMainSequence": "true",
+				"pl7.app/table/fontFamily": "monospace",
+				"pl7.app/label": (alphabet == "aminoacid") ? "Sequence (aa)" : "Sequence (nt)"
+			})
+		}
+	}, {
+		column: "mutations",
+		id: "mutations",
+		allowNA: true,
+		naRegex: "",
+		spec: {
+			name: "pl7.app/repertoire/mutations",
+			valueType: "String",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(95000, "hidden", {
+				"pl7.app/table/fontFamily": "monospace",
+				"pl7.app/label": "Mutations"
+			})
+		}
+	}, {
+		column: "mutationCount",
+		id: "mutation-count",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/mutationCount",
+			valueType: "Int",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(94000, "default", {
+				"pl7.app/min": "0",
+				"pl7.app/label": "Mutation count"
+			})
+		}
+	}, {
+		column: "readCountTotal",
+		id: "read-count-total",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/readCountTotal",
+			valueType: "Long",
+			annotations: tableAnno(90000, "default", {
+				"pl7.app/min": "1",
+				"pl7.app/isAbundance": "true",
+				"pl7.app/abundance/unit": "reads",
+				"pl7.app/abundance/normalized": "false",
+				"pl7.app/label": "Total reads"
+			})
+		}
+	}, {
+		column: "readFractionMean",
+		id: "read-fraction-mean",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/readFractionMean",
+			valueType: "Double",
+			annotations: tableAnno(88000, "default", {
+				"pl7.app/min": "0",
+				"pl7.app/max": "1",
+				"pl7.app/label": "Mean read fraction",
+				"pl7.app/format": ".2p"
+			})
+		}
+	}, {
+		column: "sampleCount",
+		id: "sample-count",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/sampleCount",
+			valueType: "Int",
+			annotations: tableAnno(85000, "default", {
+				"pl7.app/min": "1",
+				"pl7.app/label": "Number of samples"
+			})
+		}
+	}]
+	if isAa {
+		cols = append(cols, {
+			column: "ntVariantCount",
+			id: "nt-variant-count",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/ntVariantCount",
+				valueType: "Int",
+				annotations: tableAnno(84000, "default", {
+					"pl7.app/min": "1",
+					"pl7.app/label": "Synonymous nt variants"
+				})
+			}
+		})
+	}
+	return cols
+}
+
+// Per-sample QC metrics table (1 axis: sampleId). Mirrors the scalar fields of
+// mitool's RepertoireQc.Report (qc.json): variant counts, total reads,
+// frame-shift, and the assignment buckets (populated only when a known set is
+// supplied — otherwise 0). The synonymous-replicate histogram is a distribution,
+// not a per-sample scalar, so it is left for a future chart.
+qcColumns := func(sampleIdAxisSpec) {
+	longCol := func(col, id, order, vis, label, desc) {
+		return {
+			column: col,
+			id: id,
+			allowNA: true,
+			naRegex: "NaN",
+			spec: {
+				name: "pl7.app/repertoire/qc/" + col,
+				valueType: "Long",
+				annotations: tableAnno(order, vis, {
+					"pl7.app/min": "0",
+					"pl7.app/label": label,
+					"pl7.app/description": desc
+				})
+			}
+		}
+	}
+	fracCol := func(col, id, order, vis, label, desc) {
+		return {
+			column: col,
+			id: id,
+			allowNA: true,
+			naRegex: "NaN",
+			spec: {
+				name: "pl7.app/repertoire/qc/" + col,
+				valueType: "Double",
+				annotations: tableAnno(order, vis, {
+					"pl7.app/min": "0",
+					"pl7.app/max": "1",
+					"pl7.app/format": ".2p",
+					"pl7.app/label": label,
+					"pl7.app/description": desc
+				})
+			}
+		}
+	}
+	return {
+		axes: [{ column: "sampleId", spec: sampleIdAxisSpec }],
+		columns: [
+			longCol("ntVariants", "nt-variants", 100000, "default", "NT Variants", "Distinct nucleotide variants assembled."),
+			longCol("aaVariants", "aa-variants", 99000, "default", "AA Variants", "Distinct amino-acid variants."),
+			longCol("totalReads", "total-reads", 98000, "default", "Total Reads", "Reads assigned to variants."),
+			longCol("frameShiftVariants", "frame-shift-variants", 90000, "default", "Frame-Shift Variants", "Variants whose mutations shift the reading frame."),
+			longCol("frameShiftReads", "frame-shift-reads", 89000, "optional", "Frame-Shift Reads", "Reads on frame-shift variants."),
+			fracCol("frameShiftReadFraction", "frame-shift-read-fraction", 88000, "default", "Frame-Shift Reads (%)", "Fraction of total reads on frame-shift variants."),
+			longCol("assignedVariants", "assigned-variants", 80000, "optional", "Assigned Variants", "Variants matched to a known-set entry (assignment run only)."),
+			longCol("assignedReads", "assigned-reads", 79000, "optional", "Assigned Reads", "Reads on assigned variants."),
+			fracCol("assignedReadFraction", "assigned-read-fraction", 78000, "optional", "Assigned Reads (%)", "Fraction of total reads on assigned variants."),
+			longCol("unassignedVariants", "unassigned-variants", 77000, "optional", "Unassigned Variants", "Novel variants with no known-set match."),
+			longCol("unassignedReads", "unassigned-reads", 76000, "optional", "Unassigned Reads", "Reads on unassigned (novel) variants."),
+			fracCol("unassignedReadFraction", "unassigned-read-fraction", 75000, "optional", "Unassigned Reads (%)", "Fraction of total reads on unassigned variants."),
+			longCol("ambiguousVariants", "ambiguous-variants", 74000, "optional", "Ambiguous Variants", "Variants matching more than one known-set entry."),
+			longCol("ambiguousReads", "ambiguous-reads", 73000, "optional", "Ambiguous Reads", "Reads on ambiguous variants."),
+			fracCol("ambiguousReadFraction", "ambiguous-read-fraction", 72000, "optional", "Ambiguous Reads (%)", "Fraction of total reads on ambiguous variants.")
+		],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+export {
+	variantKeyAxisSpec: variantKeyAxisSpec,
+	parentIdAxisSpec: parentIdAxisSpec,
+	positionAxisSpec: positionAxisSpec,
+	stateMatrixColumns: stateMatrixColumns,
+	knownVariantKeyAxisSpec: knownVariantKeyAxisSpec,
+	knownVariantColumns: knownVariantColumns,
+	knownDistanceColumns: knownDistanceColumns,
+	knownSynCountColumns: knownSynCountColumns,
+	convergenceSummaryColumns: convergenceSummaryColumns,
+	knownAbundanceColumns: knownAbundanceColumns,
+	convergenceColumns: convergenceColumns,
+	linkerColumns: linkerColumns,
+	perSampleAbundanceColumns: perSampleAbundanceColumns,
+	aggregatedColumns: aggregatedColumns,
+	qcColumns: qcColumns
+}

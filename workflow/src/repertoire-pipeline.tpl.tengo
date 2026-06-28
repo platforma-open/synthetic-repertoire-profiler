@@ -1,0 +1,458 @@
+// Per-sample repertoire pipeline.
+//
+// Runs, over the lane/readIndex-aggregated FASTQ for one sample:
+//   parse --pattern <pattern>            FASTQ -> .mic
+//   repertoire analyze --parents …       .mic  -> variant / aa-variant /
+//                                                  aa-state-matrix TSVs + qc.json
+//
+// UMI consensus (refine-tags -> consensus before analyze) is not implemented;
+// a UMI pattern is rejected explicitly rather than silently mis-counted.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+units := import("@platforma-sdk/workflow-tengo:units")
+
+json := import("json")
+
+self.defineOutputs("variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "logs")
+
+// Progress marker prefix — mitool emits `[==PROGRESS==]<stage>: <pct>% ETA: …`
+// on stderr when MI_PROGRESS_PREFIX is set; the block scrapes it for the
+// per-sample Progress column.
+progressPrefix := "[==PROGRESS==]"
+
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:main")
+
+self.body(func(inputs) {
+	inputData := inputs[pConstants.VALUE_FIELD_NAME]
+	aggregationAxesNames := inputs[pConstants.AGGREGATION_AXES_NAMES_FIELD_NAME]
+	// Residual group key after the lane/readIndex aggregation == [sampleId].
+	// Stamped onto the per-sample QC row so the cross-sample merge can concat.
+	sampleId := inputs[pConstants.KEY_FIELD_NAME][0]
+
+	params := inputs.params
+	fileExtension := params.fileExtension
+	pattern := params.pattern
+	parts := params.patternParts
+	hasUmi := params.hasUmi
+	ntStateMatrix := params.ntStateMatrix
+	parentFastaStr := params.parentFastaStr
+	parentFile := params.parentFile
+	knownNtFile := params.knownNtFile
+	knownAaFile := params.knownAaFile
+	// User-mapped known-set column names (arbitrary headers) → mitool.
+	knownNtIdColumn := params.knownNtIdColumn
+	knownNtSequenceColumn := params.knownNtSequenceColumn
+	knownAaIdColumn := params.knownAaIdColumn
+	knownAaSequenceColumn := params.knownAaSequenceColumn
+	// Per-sample mitool resources (Advanced override or workflow default).
+	mitoolCPUs := params.mitoolCPUs
+	mitoolMem := string(params.mitoolMemGB) + "GiB"
+
+	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
+	ll.assert(
+		!hasUmi,
+		"UMI consensus path is not implemented yet; use a non-UMI tag pattern for now"
+	)
+
+	inputDataMeta := inputData.getDataAsJson()
+	inputMap := inputData.inputs()
+
+	// Collect R1/R2 FASTQ from the aggregated input (lane/readIndex axes).
+	R1Files := []
+	R2Files := []
+	if inputDataMeta.keyLength == 0 {
+		ll.assert(aggregationAxesNames == [], "unexpected aggregation axes names")
+		inputFile := inputMap["[]"]
+		ll.assert(!is_undefined(inputFile), "unexpected input structure")
+		R1Files = append(R1Files, { name: "input." + fileExtension, file: inputFile })
+	} else if inputDataMeta.keyLength == 1 {
+		ll.assert(
+			aggregationAxesNames == ["pl7.app/sequencing/readIndex"],
+			"unexpected aggregation axes names: " + json.encode(aggregationAxesNames)
+		)
+		for sKey in maps.getKeys(inputMap) {
+			inputFile := inputMap[sKey]
+			r := json.decode(sKey)[0]
+			if r == "R1" {
+				R1Files = append(R1Files, { name: "input_R1." + fileExtension, file: inputFile })
+			} else if r == "R2" {
+				R2Files = append(R2Files, { name: "input_R2." + fileExtension, file: inputFile })
+			}
+		}
+	} else if inputDataMeta.keyLength == 2 {
+		ll.assert(
+			aggregationAxesNames == ["pl7.app/sequencing/lane", "pl7.app/sequencing/readIndex"],
+			"unexpected aggregation axes names: " + json.encode(aggregationAxesNames)
+		)
+		for sKey in maps.getKeys(inputMap) {
+			inputFile := inputMap[sKey]
+			key := json.decode(sKey)
+			lane := key[0]
+			r := key[1]
+			if r == "R1" {
+				R1Files = append(R1Files, { name: "input_L" + lane + "_R1." + fileExtension, file: inputFile })
+			} else if r == "R2" {
+				R2Files = append(R2Files, { name: "input_L" + lane + "_R2." + fileExtension, file: inputFile })
+			}
+		}
+	} else {
+		ll.panic("unsupported input key layout: %v", inputDataMeta.keyLength)
+	}
+
+	ll.assert(len(R1Files) > 0, "no R1 FASTQ files found")
+
+	isPairedEnd := len(R2Files) > 0
+	// Pattern with only an R1 half forces single-end even on paired FASTQ input.
+	if isPairedEnd && is_undefined(parts.r2) {
+		isPairedEnd = false
+		R2Files = []
+	}
+	// Defence-in-depth: a pattern that captures R2 needs a paired-end input. The
+	// UI mirrors this check live (SettingsPanel), but the model can no longer gate
+	// it through args (that required a server-derived value in args — a hairpin).
+	ll.assert(
+		is_undefined(parts.r2) || isPairedEnd,
+		"tag pattern has a Read 2 half but the selected input is single-end (no R2 reads); remove the R2 half or pick a paired-end input"
+	)
+
+	// mitool `parse` reads-file argument (placeholders expand over lanes/mates).
+	inputArg := ""
+	if inputDataMeta.keyLength == 0 {
+		inputArg = "input." + fileExtension
+	} else if inputDataMeta.keyLength == 1 {
+		inputArg = isPairedEnd ? "input_{{R}}." + fileExtension : "input_R1." + fileExtension
+	} else {
+		inputArg = isPairedEnd ? "input_L{{n}}_{{R}}." + fileExtension : "input_L{{n}}_R1." + fileExtension
+	}
+
+	// --- parse: FASTQ -> .mic ---
+	parseBuilder := exec.builder().
+		printErrStreamToStdout().
+		saveStdoutStream().
+		cpu(mitoolCPUs).
+		mem(mitoolMem).
+		env("MI_PROGRESS_PREFIX", progressPrefix).
+		software(mitoolSw).
+		arg("parse").
+		arg("--pattern").arg(pattern).
+		arg("--threads").argWithVar("{system.cpu}").
+		arg(inputArg).
+		arg("parsed.mic")
+	for f in R1Files { parseBuilder = parseBuilder.addFile(f.name, f.file) }
+	for f in R2Files { parseBuilder = parseBuilder.addFile(f.name, f.file) }
+	parseCmd := parseBuilder.saveFile("parsed.mic").run()
+	micFile := parseCmd.getFile("parsed.mic")
+
+	// --- repertoire analyze: .mic -> variant / aa / state-matrix TSVs + qc.json ---
+	analyzeBuilder := exec.builder().
+		printErrStreamToStdout().
+		saveStdoutStream().
+		cpu(mitoolCPUs).
+		mem(mitoolMem).
+		env("MI_PROGRESS_PREFIX", progressPrefix).
+		software(mitoolSw).
+		arg("repertoire").arg("analyze").
+		arg("--parents").arg("parents.fa").
+		arg("--preset").arg("default").
+		arg("--budget").arg("0")
+	if !is_undefined(knownNtFile) {
+		analyzeBuilder = analyzeBuilder.arg("--known").arg("known_nt.tsv")
+		if !is_undefined(knownNtSequenceColumn) {
+			analyzeBuilder = analyzeBuilder.arg("--sequence-column").arg(knownNtSequenceColumn)
+		}
+		if !is_undefined(knownNtIdColumn) {
+			analyzeBuilder = analyzeBuilder.arg("--id-column").arg(knownNtIdColumn)
+		}
+	}
+	if !is_undefined(knownAaFile) {
+		analyzeBuilder = analyzeBuilder.arg("--known-aa").arg("known_aa.tsv")
+		if !is_undefined(knownAaSequenceColumn) {
+			analyzeBuilder = analyzeBuilder.arg("--aa-sequence-column").arg(knownAaSequenceColumn)
+		}
+		if !is_undefined(knownAaIdColumn) {
+			analyzeBuilder = analyzeBuilder.arg("--aa-id-column").arg(knownAaIdColumn)
+		}
+	}
+	if ntStateMatrix {
+		analyzeBuilder = analyzeBuilder.arg("--nt-state-matrix")
+	}
+	analyzeBuilder = analyzeBuilder.
+		arg("input.mic").
+		arg("out")
+
+	// Materialize the parent reference: pasted FASTA -> file; uploaded handle -> add.
+	if !is_undefined(parentFastaStr) {
+		analyzeBuilder = analyzeBuilder.writeFile("parents.fa", parentFastaStr)
+	} else {
+		analyzeBuilder = analyzeBuilder.addFile("parents.fa", parentFile)
+	}
+	if !is_undefined(knownNtFile) {
+		analyzeBuilder = analyzeBuilder.addFile("known_nt.tsv", knownNtFile)
+	}
+	if !is_undefined(knownAaFile) {
+		analyzeBuilder = analyzeBuilder.addFile("known_aa.tsv", knownAaFile)
+	}
+
+	analyzeBuilder = analyzeBuilder.
+		addFile("input.mic", micFile).
+		saveFile("out.variants.tsv").
+		saveFile("out.aa-variants.tsv").
+		saveFile("out.aa-state-matrix.tsv").
+		saveFile("out.qc.json").
+		saveFile("out.params.json")
+
+	// Per-step reports (json + txt). analyze writes one pair per pipeline stage;
+	// `assign` is produced only when a known set is supplied.
+	reportSteps := ["align", "assemble", "call-mutations"]
+	if !is_undefined(knownNtFile) || !is_undefined(knownAaFile) {
+		reportSteps = append(reportSteps, "assign")
+	}
+	for step in reportSteps {
+		analyzeBuilder = analyzeBuilder.
+			saveFile("out." + step + ".report.json").
+			saveFile("out." + step + ".report.txt")
+	}
+
+	// Designed known-set export (full designed set + nt→aa grouping). Written by
+	// analyze when an nt known set is supplied; the block-side keys are derived by
+	// hashing the sequences. Powers the knownAaToNt linker, declared convergence,
+	// and the unmatched-designed listing.
+	if !is_undefined(knownNtFile) {
+		analyzeBuilder = analyzeBuilder.
+			saveFile("out.known-nt.tsv").
+			saveFile("out.known-aa.tsv")
+	}
+
+	analyzeCmd := analyzeBuilder.run()
+
+	// Per-sample reports ResourceMap keyed [step, format]; processColumn prepends
+	// sampleId -> [sampleId, step, format]. Feeds the sample report panel + the
+	// Main-page Alignments cell (align/json).
+	reportsMap := pcolumn.resourceMapBuilder(2)
+	for step in reportSteps {
+		reportsMap.add([step, "json"], analyzeCmd.getFile("out." + step + ".report.json"))
+		reportsMap.add([step, "txt"], analyzeCmd.getFile("out." + step + ".report.txt"))
+	}
+
+	// --- Per-sample tables (ptabler) --------------------------------------
+	// One pt workflow produces the nt/aa per-sample abundance (keyed by mitool's
+	// content-hash variantKey / aaVariantKey) and the per-sample QC row.
+	ptWf := pt.workflow().mem(2 * units.GiB).cpu(1)
+
+	// Abundance. variants.tsv is already ~one row per variantKey; group
+	// defensively to fold the rare same-sequence/two-parent duplicate, and sum nt
+	// members into each aa variant. The aa key is aliased to "variantKey" so both
+	// levels share the variant-axis column name.
+	vAbund := ptWf.frame({
+		file: analyzeCmd.getFile("out.variants.tsv"),
+		xsvType: "tsv"
+	}, { id: "variantsAbund" })
+	vAbund.groupBy("variantKey").agg(
+		pt.col("readCount").cast("Long").sum().alias("readCount"),
+		pt.col("readFraction").cast("Double").sum().alias("readFraction")
+	).sort(["variantKey"]).save("ntAbundance.parquet")
+	vAbund.
+		filter(pt.col("aaVariantKey").cast("String").fillNull("").strLenChars().gt(pt.lit(0))).
+		groupBy("aaVariantKey").agg(
+			pt.col("readCount").cast("Long").sum().alias("readCount"),
+			pt.col("readFraction").cast("Double").sum().alias("readFraction")
+		).
+		select(
+			pt.col("aaVariantKey").alias("variantKey"),
+			pt.col("readCount"),
+			pt.col("readFraction")
+		).
+		sort(["variantKey"]).
+		save("aaAbundance.parquet")
+
+	// --- known-level abundance + synonymous spread (per sample) -------------
+	// Always emitted (empty when nothing is assigned); main exposes them only
+	// when a known set was supplied. knownVariantKey = hash(matched sequence).
+	b6SeqHash := func(col) {
+		return pt.col(col).hash("sha256", "base64_alphanumeric", 120)
+	}
+	b6NonEmpty := func(col) {
+		return pt.col(col).cast("String").fillNull("").strLenChars().gt(pt.lit(0))
+	}
+
+	// nt known × this sample: reads summed over assigned nt variants per known nt seq.
+	vAbund.
+		filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
+		withColumns(b6SeqHash("ntSequence").alias("knownKey")).
+		groupBy("knownKey").agg(
+			pt.col("readCount").cast("Long").sum().alias("knownVariantReadCount"),
+			pt.col("readFraction").cast("Double").sum().alias("knownVariantReadFraction")
+		).sort(["knownKey"]).save("knownNtAbundance.parquet")
+
+	// aa known × this sample: reads of the nt members of each assigned aa variant,
+	// keyed by hash(aa known seq).
+	aaForKnown := ptWf.frame({
+		file: analyzeCmd.getFile("out.aa-variants.tsv"),
+		xsvType: "tsv"
+	}, { id: "aaForKnown" })
+	aaKnownSeq := aaForKnown.
+		filter(b6NonEmpty("knownAaKey")).
+		groupBy("aaVariantKey").agg(pt.col("aaSequence").first().alias("aaSequence"))
+	vAbund.
+		filter(b6NonEmpty("aaVariantKey")).
+		join(aaKnownSeq, { how: "inner", on: ["aaVariantKey"] }).
+		withColumns(b6SeqHash("aaSequence").alias("knownKey")).
+		groupBy("knownKey").agg(
+			pt.col("readCount").cast("Long").sum().alias("knownVariantReadCount"),
+			pt.col("readFraction").cast("Double").sum().alias("knownVariantReadFraction")
+		).sort(["knownKey"]).save("knownAaAbundance.parquet")
+
+	// declared-member synonymous spread: per known-aa entity, the
+	// SD + CV of its DESIGNED nt members' per-sample fractions, seeding members
+	// with zero reads this sample at fraction 0 (the whole point of "declared" vs
+	// "observed"). Keyed by knownVariantKey(aa) = hash(designed aaSequence). Only
+	// meaningful with an nt known set; empty (right schema) otherwise.
+	if !is_undefined(knownNtFile) {
+		// This sample's designed members: each designed nt → its aa group, re-keyed
+		// with the block hash so it joins the rest of the known overlay.
+		convNt := ptWf.frame({ file: analyzeCmd.getFile("out.known-nt.tsv"), xsvType: "tsv" }, { id: "convNt" }).
+			select(pt.col("ntSequence"), pt.col("knownAaKey"))
+		convAa := ptWf.frame({ file: analyzeCmd.getFile("out.known-aa.tsv"), xsvType: "tsv" }, { id: "convAa" }).
+			select(pt.col("knownAaId").alias("knownAaKey"), pt.col("aaSequence"))
+		convMembers := convNt.
+			join(convAa, { how: "inner", on: ["knownAaKey"] }).
+			withColumns(
+				b6SeqHash("ntSequence").alias("knownKeyNt"),
+				b6SeqHash("aaSequence").alias("knownKeyAa")
+			).
+			groupBy("knownKeyAa", "knownKeyNt").
+			agg(pt.col("knownKeyAa").count().alias("_n")).
+			select(pt.col("knownKeyAa"), pt.col("knownKeyNt"))
+		// This sample's per-known-nt fraction (assigned only; unobserved → 0 via the join).
+		convFrac := vAbund.
+			filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
+			withColumns(b6SeqHash("ntSequence").alias("knownKeyNt")).
+			groupBy("knownKeyNt").
+			agg(pt.col("readFraction").cast("Double").sum().alias("memberFrac"))
+		convMembers.
+			join(convFrac, { how: "left", on: ["knownKeyNt"] }).
+			withColumns(pt.col("memberFrac").fillNull(0.0).alias("memberFrac")).
+			groupBy("knownKeyAa").agg(
+				pt.col("memberFrac").std().alias("stdDev"),
+				pt.col("memberFrac").mean().alias("meanFrac")
+			).
+			withColumns(
+				pt.when(pt.col("meanFrac").gt(pt.lit(0.0))).
+					then(pt.col("stdDev").fillNull(0.0).truediv(pt.col("meanFrac"))).
+					otherwise(pt.lit(0.0)).alias("cv")
+			).
+			select(
+				pt.col("knownKeyAa").alias("knownKey"),
+				pt.col("stdDev").fillNull(0.0).alias("stdDev"),
+				pt.col("cv")
+			).
+			sort(["knownKey"]).save("aaConvergence.parquet")
+	} else {
+		vAbund.filter(pt.lit(false)).select(
+			b6SeqHash("ntSequence").alias("knownKey"),
+			pt.col("readFraction").cast("Double").alias("stdDev"),
+			pt.col("readFraction").cast("Double").alias("cv")
+		).save("aaConvergence.parquet")
+	}
+
+	// Empty placeholders for the designed-export outputs when no nt known set was
+	// supplied. They must carry the SAME headers as the real mitool exports (TSV,
+	// 0 rows) because aggregate-known runs for ANY known set (incl. aa-only) and
+	// reads them — a schemaless/parquet placeholder would break the TSV read.
+	vAbund.filter(pt.lit(false)).select(
+		pt.col("variantKey").cast("String").alias("knownNtId"),
+		pt.col("ntSequence").cast("String").alias("ntSequence"),
+		pt.col("variantKey").cast("String").alias("knownAaKey")
+	).save("emptyKnownDesignedNt.tsv", { xsvType: "tsv" })
+	vAbund.filter(pt.lit(false)).select(
+		pt.col("variantKey").cast("String").alias("knownAaId"),
+		pt.col("variantKey").cast("String").alias("aaSequence")
+	).save("emptyKnownDesignedAa.tsv", { xsvType: "tsv" })
+
+	// --- Per-sample QC row -------------------------------------------------
+	// Recomputes the scalar fields of RepertoireQc.Report from the raw analyze
+	// TSVs (qc.json itself is nested JSON, not directly importable). ptabler
+	// infers column types from the TSV (e.g. frameShift -> bool), so every
+	// column touched here is cast explicitly before comparison/aggregation.
+	vdf := ptWf.frame({
+		file: analyzeCmd.getFile("out.variants.tsv"),
+		xsvType: "tsv"
+	}, { id: "variantsRaw" })
+	adf := ptWf.frame({
+		file: analyzeCmd.getFile("out.aa-variants.tsv"),
+		xsvType: "tsv"
+	}, { id: "aaVariantsRaw" })
+
+	fs := pt.col("frameShift").cast("String").strToUpper().eq("TRUE")
+	isAssigned := pt.col("assignStatus").cast("String").eq("ASSIGNED")
+	isUnassigned := pt.col("assignStatus").cast("String").eq("UNASSIGNED")
+	isAmbiguous := pt.col("assignStatus").cast("String").eq("AMBIGUOUS")
+	reads := pt.col("readCount").cast("Long")
+	countWhen := func(cond) {
+		return pt.when(cond).then(pt.lit(1)).otherwise(pt.lit(0)).sum()
+	}
+	readsWhen := func(cond) {
+		return pt.when(cond).then(reads).otherwise(pt.lit(0)).sum()
+	}
+
+	vStats := vdf.select(
+		pt.lit(sampleId).alias("sampleId"),
+		pt.col("variantKey").count().alias("ntVariants"),
+		reads.sum().alias("totalReads"),
+		countWhen(fs).alias("frameShiftVariants"),
+		readsWhen(fs).alias("frameShiftReads"),
+		countWhen(isAssigned).alias("assignedVariants"),
+		readsWhen(isAssigned).alias("assignedReads"),
+		countWhen(isUnassigned).alias("unassignedVariants"),
+		readsWhen(isUnassigned).alias("unassignedReads"),
+		countWhen(isAmbiguous).alias("ambiguousVariants"),
+		readsWhen(isAmbiguous).alias("ambiguousReads")
+	)
+	aaStats := adf.select(
+		pt.lit(sampleId).alias("sampleId"),
+		pt.col("aaVariantKey").count().alias("aaVariants")
+	)
+
+	frac := func(numCol) {
+		return pt.when(pt.col("totalReads").gt(pt.lit(0))).then(
+			pt.col(numCol).cast("Double").truediv(pt.col("totalReads").cast("Double"))
+		).otherwise(pt.lit(0.0))
+	}
+	vStats.join(aaStats, { how: "left", on: ["sampleId"] }).withColumns(
+		frac("frameShiftReads").alias("frameShiftReadFraction"),
+		frac("assignedReads").alias("assignedReadFraction"),
+		frac("unassignedReads").alias("unassignedReadFraction"),
+		frac("ambiguousReads").alias("ambiguousReadFraction")
+	).save("qcRow.parquet")
+
+	ptResult := ptWf.run()
+
+	return {
+		variantsTsv: analyzeCmd.getFile("out.variants.tsv"),
+		aaVariantsTsv: analyzeCmd.getFile("out.aa-variants.tsv"),
+		aaStateMatrixTsv: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
+		qcJson: analyzeCmd.getFile("out.qc.json"),
+		reports: reportsMap.build(),
+		paramsJson: analyzeCmd.getFile("out.params.json"),
+		ntAbundance: ptResult.getFile("ntAbundance.parquet"),
+		aaAbundance: ptResult.getFile("aaAbundance.parquet"),
+		knownNtAbundance: ptResult.getFile("knownNtAbundance.parquet"),
+		knownAaAbundance: ptResult.getFile("knownAaAbundance.parquet"),
+		aaConvergence: ptResult.getFile("aaConvergence.parquet"),
+		// Designed known-set export (raw mitool TSVs) when an nt known set ran;
+		// an empty placeholder otherwise (never read — aggregate-known is gated).
+		knownDesignedNt: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-nt.tsv") : ptResult.getFile("emptyKnownDesignedNt.tsv"),
+		knownDesignedAa: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-aa.tsv") : ptResult.getFile("emptyKnownDesignedAa.tsv"),
+		qcRow: ptResult.getFile("qcRow.parquet"),
+		// analyze stdout (stderr merged in) carries the align/assemble progress
+		// markers + the run summary — the per-sample Progress + Logs source.
+		logs: analyzeCmd.getStdoutStream()
+	}
+})

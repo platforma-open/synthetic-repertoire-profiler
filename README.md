@@ -1,2 +1,2 @@
 # synthetic-repertoire-profiler
-Synthetic Repertoire Profiler Block
+Amplicon Repertoire Profiling Block
