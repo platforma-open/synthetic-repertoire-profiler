@@ -20,7 +20,7 @@ units := import("@platforma-sdk/workflow-tengo:units")
 
 json := import("json")
 
-self.defineOutputs("variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "logs")
+self.defineOutputs("variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "logs")
 
 // Progress marker prefix — mitool emits `[==PROGRESS==]<stage>: <pct>% ETA: …`
 // on stderr when MI_PROGRESS_PREFIX is set; the block scrapes it for the
@@ -44,6 +44,8 @@ self.body(func(inputs) {
 	ntStateMatrix := params.ntStateMatrix
 	parentFastaStr := params.parentFastaStr
 	parentFile := params.parentFile
+	parentRegionsJson := params.parentRegionsJson
+	emitRegionAnnotation := !is_undefined(params.emitRegionAnnotation) && params.emitRegionAnnotation
 	knownNtFile := params.knownNtFile
 	knownAaFile := params.knownAaFile
 	// User-mapped known-set column names (arbitrary headers) → mitool.
@@ -162,6 +164,9 @@ self.body(func(inputs) {
 		arg("--parents").arg("parents.fa").
 		arg("--preset").arg("default").
 		arg("--budget").arg("0")
+	if !is_undefined(parentRegionsJson) {
+		analyzeBuilder = analyzeBuilder.arg("--parent-regions").arg("parents.regions.json")
+	}
 	if !is_undefined(knownNtFile) {
 		analyzeBuilder = analyzeBuilder.arg("--known").arg("known_nt.tsv")
 		if !is_undefined(knownNtSequenceColumn) {
@@ -193,6 +198,9 @@ self.body(func(inputs) {
 	} else {
 		analyzeBuilder = analyzeBuilder.addFile("parents.fa", parentFile)
 	}
+	if !is_undefined(parentRegionsJson) {
+		analyzeBuilder = analyzeBuilder.writeFile("parents.regions.json", parentRegionsJson)
+	}
 	if !is_undefined(knownNtFile) {
 		analyzeBuilder = analyzeBuilder.addFile("known_nt.tsv", knownNtFile)
 	}
@@ -207,6 +215,9 @@ self.body(func(inputs) {
 		saveFile("out.aa-state-matrix.tsv").
 		saveFile("out.qc.json").
 		saveFile("out.params.json")
+	if emitRegionAnnotation {
+		analyzeBuilder = analyzeBuilder.saveFile("out.region-annotation.tsv")
+	}
 
 	// Per-step reports (json + txt). analyze writes one pair per pipeline stage;
 	// `assign` is produced only when a known set is supplied.
@@ -376,6 +387,16 @@ self.body(func(inputs) {
 		pt.col("variantKey").cast("String").alias("aaSequence")
 	).save("emptyKnownDesignedAa.tsv", { xsvType: "tsv" })
 
+	// Region-annotation placeholder (right header, 0 rows) for runs without
+	// regions, so the per-sample output is always present.
+	if !emitRegionAnnotation {
+		vAbund.filter(pt.lit(false)).select(
+			pt.col("variantKey").cast("String").alias("parentId"),
+			pt.col("variantKey").cast("String").alias("position"),
+			pt.col("variantKey").cast("String").alias("region")
+		).save("emptyRegionAnnotation.tsv", { xsvType: "tsv" })
+	}
+
 	// --- Per-sample QC row -------------------------------------------------
 	// Recomputes the scalar fields of RepertoireQc.Report from the raw analyze
 	// TSVs (qc.json itself is nested JSON, not directly importable). ptabler
@@ -438,6 +459,7 @@ self.body(func(inputs) {
 		variantsTsv: analyzeCmd.getFile("out.variants.tsv"),
 		aaVariantsTsv: analyzeCmd.getFile("out.aa-variants.tsv"),
 		aaStateMatrixTsv: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
+		regionAnnotationTsv: emitRegionAnnotation ? analyzeCmd.getFile("out.region-annotation.tsv") : ptResult.getFile("emptyRegionAnnotation.tsv"),
 		qcJson: analyzeCmd.getFile("out.qc.json"),
 		reports: reportsMap.build(),
 		paramsJson: analyzeCmd.getFile("out.params.json"),

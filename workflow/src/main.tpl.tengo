@@ -15,12 +15,14 @@ render := import("@platforma-sdk/workflow-tengo:render")
 xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
 strings := import("@platforma-sdk/workflow-tengo:strings")
 columnSpecs := import(":column-specs")
+regionConfig := import(":region-config")
 json := import("json")
 
 prerunTpl := assets.importTemplate(":prerun")
 repertoirePipelineTpl := assets.importTemplate(":repertoire-pipeline")
 aggregateVariantsTpl := assets.importTemplate(":aggregate-variants")
 aggregateStateMatrixTpl := assets.importTemplate(":aggregate-state-matrix")
+aggregateRegionAnnotationTpl := assets.importTemplate(":aggregate-region-annotation")
 aggregateLinkersTpl := assets.importTemplate(":aggregate-linkers")
 aggregateKnownTpl := assets.importTemplate(":aggregate-known")
 processKnownSetTpl := assets.importTemplate(":process-known-set")
@@ -72,6 +74,9 @@ wf.body(func(args) {
 		knownAaFile = file.importFile(args.knownAaFileHandle).file
 	}
 
+	// Region scheme: feature names parsed from the same overlay JSON mitool gets.
+	rc := regionConfig.analyze(args.parentRegionsJson)
+
 	params := maps.clone({
 		fileExtension: fileExtension,
 		pattern: args.tagPattern,
@@ -80,6 +85,8 @@ wf.body(func(args) {
 		ntStateMatrix: args.ntStateMatrix,
 		parentFastaStr: parentFastaStr,
 		parentFile: parentFile,
+		parentRegionsJson: args.parentRegionsJson,
+		emitRegionAnnotation: rc.hasRegions,
 		knownNtFile: knownNtFile,
 		knownAaFile: knownAaFile,
 		knownNtIdColumn: args.knownNtIdColumn,
@@ -183,6 +190,7 @@ wf.body(func(args) {
 		fileOutput("variantsTsv"),
 		fileOutput("aaVariantsTsv"),
 		fileOutput("aaStateMatrixTsv"),
+		fileOutput("regionAnnotationTsv"),
 		fileOutput("qcJson"),
 		fileOutput("paramsJson"),
 		fileOutput("ntAbundance"),
@@ -230,15 +238,17 @@ wf.body(func(args) {
 		ntAbundanceData: perSampleResults.outputData("ntAbundance"),
 		aaAbundanceData: perSampleResults.outputData("aaAbundance"),
 		variantsTsvData: perSampleResults.outputData("variantsTsv"),
-		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv")
+		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
+		ntRegionCols: rc.ntRegionNames,
+		aaRegionCols: rc.aaRegionNames
 	})
-	importProps := func(file, axis, isAa) {
+	importProps := func(file, axis, isAa, regionNames) {
 		return xsv.importFile(
 			file,
 			"tsv",
 			{
 				axes: [axis],
-				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa),
+				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.assemblyFeature),
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
@@ -249,8 +259,8 @@ wf.body(func(args) {
 			}
 		)
 	}
-	ntPropsCols := importProps(aggVarsRun.output("ntProperties"), ntVariantAxis, false)
-	aaPropsCols := importProps(aggVarsRun.output("aaProperties"), aaVariantAxis, true)
+	ntPropsCols := importProps(aggVarsRun.output("ntProperties"), ntVariantAxis, false, rc.ntRegionNames)
+	aaPropsCols := importProps(aggVarsRun.output("aaProperties"), aaVariantAxis, true, rc.aaRegionNames)
 
 	// aa state matrix [variantKey(aa), parentId, position] -> state, deduped
 	// cross-sample.
@@ -276,6 +286,33 @@ wf.body(func(args) {
 			mem: string(defaultXsvMemGB) + "GiB"
 		}
 	)
+
+	// Region membership [parentId, position(aa)] -> region, deduped cross-sample.
+	// Only when the run defines regions (else there is no annotation to import).
+	regionAnnotationCols := undefined
+	if rc.hasRegions {
+		regionAnnRun := render.createEphemeral(aggregateRegionAnnotationTpl, {
+			regionAnnotationData: perSampleResults.outputData("regionAnnotationTsv")
+		})
+		regionAnnotationCols = xsv.importFile(
+			regionAnnRun.output("regionAnnotation"),
+			"tsv",
+			{
+				axes: [
+					columnSpecs.parentIdAxisSpec("Parent"),
+					columnSpecs.positionAxisSpec("aminoacid", "Position (aa)")
+				],
+				columns: columnSpecs.regionAnnotationColumns(),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{
+				splitDataAndSpec: true,
+				cpu: 1,
+				mem: string(defaultXsvMemGB) + "GiB"
+			}
+		)
+	}
 
 	// Linkers (nt→aa, parent→nt, parent→aa). One-side leads in the axes.
 	linkersRun := render.createEphemeral(aggregateLinkersTpl, {
@@ -375,6 +412,12 @@ wf.body(func(args) {
 	// block. No in-block view by design; visualization is the companion block's job.
 	for k, v in aaStateMatrixCols {
 		variantsPfBuilder.add("stateMatrixAa/" + k, aaTrace.inject(v.spec), v.data)
+	}
+	// Region membership (parent-derived; colours the aa state-matrix heat map).
+	if !is_undefined(regionAnnotationCols) {
+		for k, v in regionAnnotationCols {
+			variantsPfBuilder.add("regionAnnotation/" + k, baseTrace.inject(v.spec), v.data)
+		}
 	}
 	// Linkers — into the exported variants frame for downstream traversal.
 	for k, v in ntToAaCols {

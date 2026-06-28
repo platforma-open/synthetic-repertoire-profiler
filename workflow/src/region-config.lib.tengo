@@ -1,0 +1,69 @@
+// Derives the region feature names from the `--parent-regions` overlay JSON, so
+// the workflow declares sequence-import columns that match what mitool emits.
+// The same JSON mitool consumes is parsed here — one source of truth.
+
+maps := import("@platforma-sdk/workflow-tengo:maps")
+json := import("json")
+
+// analyze(parentRegionsJson) ->
+//   enabled         : a scheme is configured for at least one parent
+//   hasRegions      : at least one parent has a non-empty region partition
+//   ntRegionNames   : union of named-region names (first-seen order)
+//   aaRegionNames   : those codon-aligned at frame 0 (begin%3==0 && end%3==0)
+//   assemblyFeature : the assembly-feature name if a single one is used, else undefined
+analyze := func(parentRegionsJson) {
+	res := {
+		enabled: false,
+		hasRegions: false,
+		ntRegionNames: [],
+		aaRegionNames: [],
+		assemblyFeature: undefined
+	}
+	if is_undefined(parentRegionsJson) || parentRegionsJson == "" {
+		return res
+	}
+
+	parents := json.decode(parentRegionsJson).parents
+	if is_undefined(parents) {
+		return res
+	}
+	res.enabled = true
+
+	ntSeen := {}
+	aaSeen := {}
+	afSet := {}
+	for pid in maps.getKeys(parents) {
+		ps := parents[pid]
+		if !is_undefined(ps.assemblyFeature) && ps.assemblyFeature != "" {
+			afSet[ps.assemblyFeature] = true
+		}
+		regions := ps.regions
+		if is_undefined(regions) {
+			regions = []
+		}
+		if len(regions) > 0 {
+			res.hasRegions = true
+		}
+		for r in regions {
+			name := r.name
+			if is_undefined(ntSeen[name]) {
+				ntSeen[name] = true
+				res.ntRegionNames = append(res.ntRegionNames, name)
+			}
+			if int(r.begin) % 3 == 0 && int(r.end) % 3 == 0 && is_undefined(aaSeen[name]) {
+				aaSeen[name] = true
+				res.aaRegionNames = append(res.aaRegionNames, name)
+			}
+		}
+	}
+
+	afNames := maps.getKeys(afSet)
+	if len(afNames) == 1 {
+		res.assemblyFeature = afNames[0]
+	}
+	return res
+}
+
+export {
+	analyze: analyze
+}

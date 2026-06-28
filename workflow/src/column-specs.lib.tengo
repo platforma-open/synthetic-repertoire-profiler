@@ -405,9 +405,64 @@ perSampleAbundanceColumns := func() {
 	}]
 }
 
+// Per-variant region subsequence columns (one per region feature), keyed by
+// variantKey. The TSV column is nSeq<name>/aaSeq<name> (matching mitool); each
+// carries the region as its `pl7.app/feature` domain so downstream blocks find
+// it by {feature, alphabet}.
+regionSeqColumns := func(alphabet, regionNames) {
+	prefix := (alphabet == "aminoacid") ? "aaSeq" : "nSeq"
+	suffix := (alphabet == "aminoacid") ? " (aa)" : " (nt)"
+	cols := []
+	for i := 0; i < len(regionNames); i++ {
+		rn := regionNames[i]
+		cols = append(cols, {
+			column: prefix + rn,
+			id: "region-" + rn,
+			allowNA: true,
+			naRegex: "",
+			spec: {
+				name: "pl7.app/sequence",
+				valueType: "String",
+				domain: {
+					"pl7.app/feature": rn,
+					"pl7.app/alphabet": alphabet
+				},
+				annotations: tableAnno(75000 - i * 100, "default", {
+					"pl7.app/table/fontFamily": "monospace",
+					"pl7.app/label": rn + suffix
+				})
+			}
+		})
+	}
+	return cols
+}
+
+// Per-position region membership ([parentId, position] -> region name). Colours
+// the aa state-matrix heat map; positions are the aa axis (1-based).
+regionAnnotationColumns := func() {
+	return [{
+		column: "region",
+		id: "region",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/regionAnnotation",
+			valueType: "String",
+			annotations: tableAnno(70000, "default", {
+				"pl7.app/label": "Region"
+			})
+		}
+	}]
+}
+
 // Per-variant columns aggregated cross-sample (1 axis: variantKey). `isAa` adds
 // the synonymous-replicate count (ntVariantCount), which exists only at aa level.
-aggregatedColumns := func(alphabet, isAa) {
+// `regionNames` adds per-region sequence columns; `assemblyFeature` (when set)
+// relabels the whole-variant sequence feature (e.g. VDJRegion).
+aggregatedColumns := func(alphabet, isAa, regionNames, assemblyFeature) {
+	hasAssembly := !is_undefined(assemblyFeature) && assemblyFeature != ""
+	seqFeature := hasAssembly ? assemblyFeature : "amplicon-sequence"
+	seqSuffix := (alphabet == "aminoacid") ? " (aa)" : " (nt)"
+	seqLabel := (hasAssembly ? assemblyFeature : "Sequence") + seqSuffix
 	cols := [{
 		column: "variantLabel",
 		id: "variant-label",
@@ -425,18 +480,18 @@ aggregatedColumns := func(alphabet, isAa) {
 			name: "pl7.app/sequence",
 			valueType: "String",
 			domain: {
-				// Feature descriptor for the variant sequence. This block assembles
-				// whole-amplicon variants (not VDJ regions or peptides), so the
-				// honest value is "amplicon-sequence". Lets sequence-consuming
-				// downstream blocks (e.g. clonotype-clustering) discover these on the
-				// variantKey axis by {feature, alphabet}.
-				"pl7.app/feature": "amplicon-sequence",
+				// Feature descriptor for the whole-variant sequence — "amplicon-sequence"
+				// by default, or the parent's assembly-feature name (e.g. VDJRegion) when
+				// one is set. Lets sequence-consuming downstream blocks (e.g.
+				// clonotype-clustering) discover these on the variantKey axis by
+				// {feature, alphabet}.
+				"pl7.app/feature": seqFeature,
 				"pl7.app/alphabet": alphabet
 			},
 			annotations: tableAnno(80000, "default", {
 				"pl7.app/isMainSequence": "true",
 				"pl7.app/table/fontFamily": "monospace",
-				"pl7.app/label": (alphabet == "aminoacid") ? "Sequence (aa)" : "Sequence (nt)"
+				"pl7.app/label": seqLabel
 			})
 		}
 	}, {
@@ -527,6 +582,9 @@ aggregatedColumns := func(alphabet, isAa) {
 			}
 		})
 	}
+	for c in regionSeqColumns(alphabet, regionNames) {
+		cols = append(cols, c)
+	}
 	return cols
 }
 
@@ -611,5 +669,6 @@ export {
 	linkerColumns: linkerColumns,
 	perSampleAbundanceColumns: perSampleAbundanceColumns,
 	aggregatedColumns: aggregatedColumns,
+	regionAnnotationColumns: regionAnnotationColumns,
 	qcColumns: qcColumns
 }
