@@ -35,8 +35,9 @@ export type KnownColumnInfo = {
   type: "Int" | "Double" | "String";
 };
 
-/** Per-parent numbering-and-region scheme. `none` = no regions (default). */
-export type RegionScheme = "none" | "imgt" | "custom";
+/** Per-parent region scheme. `none` = no regions (default); `vdj` = the canonical
+ *  FR1→FR4 antibody/TCR partition; `custom` = arbitrary named regions. */
+export type RegionScheme = "none" | "vdj" | "custom";
 
 /** A region in a parent's partition: a name + nucleotide length. Boundary
  *  offsets are derived cumulatively from the lengths (region-first entry). */
@@ -51,8 +52,8 @@ export type ParentRegionConfig = {
   regions: RegionDef[];
 };
 
-/** The canonical IMGT V-domain partition, in order. */
-export const IMGT_REGION_NAMES = ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"] as const;
+/** The canonical VDJ V-domain partition (FR/CDR), in order. */
+export const VDJ_REGION_NAMES = ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"] as const;
 
 const FEATURE_NAME_RE = /^[A-Za-z0-9_]+$/;
 
@@ -92,14 +93,14 @@ export function buildParentRegionsJson(
       return { name, begin, end: pos };
     });
 
-    if (c.scheme === "imgt") {
+    if (c.scheme === "vdj") {
       const names = regions.map((r) => r.name);
       if (
-        names.length !== IMGT_REGION_NAMES.length ||
-        names.some((n, i) => n !== IMGT_REGION_NAMES[i])
+        names.length !== VDJ_REGION_NAMES.length ||
+        names.some((n, i) => n !== VDJ_REGION_NAMES[i])
       )
         throw new Error(
-          `IMGT scheme (parent ${c.parentId}) needs exactly ${IMGT_REGION_NAMES.join(", ")}.`,
+          `VDJ scheme (parent ${c.parentId}) needs exactly ${VDJ_REGION_NAMES.join(", ")}.`,
         );
     }
     if (c.scheme === "custom" && regions.length === 0)
