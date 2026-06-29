@@ -222,7 +222,7 @@ ACGTACGT..."
     </template>
   </PlTextField>
 
-  <PlAccordionSection label="Region scheme (optional)">
+  <PlAccordionSection label="Region scheme">
     <RegionSchemeEditor />
   </PlAccordionSection>
 

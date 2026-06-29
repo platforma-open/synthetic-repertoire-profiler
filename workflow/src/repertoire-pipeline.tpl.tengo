@@ -20,7 +20,7 @@ units := import("@platforma-sdk/workflow-tengo:units")
 
 json := import("json")
 
-self.defineOutputs("variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "logs")
+self.defineOutputs("parsedMic", "variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "logs")
 
 // Progress marker prefix — mitool emits `[==PROGRESS==]<stage>: <pct>% ETA: …`
 // on stderr when MI_PROGRESS_PREFIX is set; the block scrapes it for the
@@ -456,6 +456,13 @@ self.body(func(inputs) {
 	ptResult := ptWf.run()
 
 	return {
+		// `mitool parse` writes .mic records in thread-completion order (non-
+		// deterministic bytes, see Parse.kt mapChunksInParallel). Surfacing the
+		// parsed .mic as a retained output pins it by content hash so reruns
+		// recover it instead of recomputing a byte-different file — otherwise a
+		// settings-change rerun produces a new CID and collides with the one the
+		// completed run settled (CIDConflictError). Mirrors peptide-extraction.
+		parsedMic: micFile,
 		variantsTsv: analyzeCmd.getFile("out.variants.tsv"),
 		aaVariantsTsv: analyzeCmd.getFile("out.aa-variants.tsv"),
 		aaStateMatrixTsv: analyzeCmd.getFile("out.aa-state-matrix.tsv"),

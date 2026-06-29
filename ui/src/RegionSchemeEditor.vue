@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  IMGT_REGION_NAMES,
+  VDJ_REGION_NAMES,
   type ParentRegionConfig,
   type RegionScheme,
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
@@ -26,7 +26,7 @@ const reactiveFileContent = ReactiveFileContent.useGlobal();
 
 const schemeOptions = [
   { label: "None", value: "none" as const },
-  { label: "IMGT (FR/CDR)", value: "imgt" as const },
+  { label: "VDJ", value: "vdj" as const },
   { label: "Custom regions", value: "custom" as const },
 ];
 
@@ -60,23 +60,28 @@ function setConfig(cfg: ParentRegionConfig) {
 
 function onScheme(parentId: string, scheme: RegionScheme) {
   const cur = configFor(parentId);
-  if (scheme === "imgt") {
+  // Switching scheme resets the full sequence name: VDJ gets its conventional
+  // default, custom/none start blank so a previous scheme's value doesn't leak.
+  if (scheme === "vdj") {
     const byName = new Map(cur.regions.map((r) => [r.name, r.length]));
     setConfig({
       parentId,
       scheme,
-      assemblyFeature: cur.assemblyFeature || "VDJRegion",
-      regions: IMGT_REGION_NAMES.map((name) => ({ name, length: byName.get(name) ?? 0 })),
+      assemblyFeature: "VDJRegion",
+      regions: VDJ_REGION_NAMES.map((name) => ({ name, length: byName.get(name) ?? 0 })),
     });
   } else if (scheme === "custom") {
+    // Keep regions only when coming from a previous custom layout; switching from
+    // VDJ must start fresh so the fixed VDJ regions don't leak into custom mode.
+    const keep = cur.scheme === "custom" && cur.regions.length > 0;
     setConfig({
       parentId,
       scheme,
-      assemblyFeature: cur.assemblyFeature,
-      regions: cur.regions.length > 0 ? cur.regions : [{ name: "", length: 0 }],
+      assemblyFeature: undefined,
+      regions: keep ? cur.regions : [{ name: "", length: 0 }],
     });
   } else {
-    setConfig({ parentId, scheme: "none", assemblyFeature: cur.assemblyFeature, regions: [] });
+    setConfig({ parentId, scheme: "none", assemblyFeature: undefined, regions: [] });
   }
 }
 
@@ -136,10 +141,15 @@ function previews(p: ParsedParent) {
     <template v-if="configFor(p.id).scheme !== 'none'">
       <PlTextField
         :model-value="configFor(p.id).assemblyFeature ?? ''"
-        label="Assembly feature name (optional)"
+        label="Full sequence name (optional)"
         placeholder="e.g. VDJRegion"
         @update:model-value="(v) => setAssembly(p.id, v)"
-      />
+      >
+        <template #tooltip>
+          Names the whole assembled variant sequence (the full span), as opposed to the named
+          sub-regions below. Shown as the sequence column label, e.g. VDJRegion for an antibody.
+        </template>
+      </PlTextField>
 
       <div v-for="(row, i) in previews(p).rows" :key="i" class="region-row">
         <div class="region-row__controls">
@@ -151,7 +161,13 @@ function previews(p: ParsedParent) {
             placeholder="name"
             @update:model-value="(v) => setRegion(p.id, i, { name: v })"
           />
-          <div v-else class="region-row__name">{{ row.name }}</div>
+          <PlTextField
+            v-else
+            class="region-row__grow"
+            :model-value="row.name"
+            label="Region"
+            disabled
+          />
 
           <PlNumberField
             class="region-row__grow"
@@ -229,12 +245,6 @@ function previews(p: ParsedParent) {
 .region-row__grow {
   flex: 1 1 0;
   min-width: 0;
-}
-.region-row__name {
-  flex: 1 1 0;
-  min-width: 0;
-  font-weight: 500;
-  padding-bottom: 8px;
 }
 .region-row__preview {
   display: flex;

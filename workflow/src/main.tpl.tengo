@@ -187,6 +187,10 @@ wf.body(func(args) {
 	}
 
 	targetOutputs := [
+		// Parse output — surfaced for deduplication. mitool parse writes the .mic
+		// in non-deterministic record order, so it must be retained by content
+		// hash to survive reruns without a CID conflict (see repertoire-pipeline).
+		fileOutput("parsedMic"),
 		fileOutput("variantsTsv"),
 		fileOutput("aaVariantsTsv"),
 		fileOutput("aaStateMatrixTsv"),
@@ -673,6 +677,9 @@ wf.body(func(args) {
 	qcPf := qcPfBuilder.build()
 
 	outputs := {
+		// Kept reachable so the parsed .mic is persisted by content hash (dedup)
+		// and recovered on rerun rather than recomputed (non-deterministic bytes).
+		parsedMic: perSampleResults.outputData("parsedMic"),
 		variantsTsv: perSampleResults.output("variantsTsv"),
 		aaVariantsTsv: perSampleResults.output("aaVariantsTsv"),
 		aaStateMatrixTsv: perSampleResults.output("aaStateMatrixTsv"),
