@@ -27,7 +27,11 @@ self.defineOutputs("parsedMic", "variantsTsv", "aaVariantsTsv", "aaStateMatrixTs
 // per-sample Progress column.
 progressPrefix := "[==PROGRESS==]"
 
-mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:main")
+// `memory-from-limits` sizes the JVM heap (-Xmx) from the scheduler's RAM limit
+// (system.ram.mib, set by mem(mitoolMem) below). The `:main` entrypoint instead
+// uses -XX:MaxRAMPercentage of the RAM the JVM sees, which on native/desktop runs
+// is the whole host — ignoring mem(mitoolMem). Match the MiXCR blocks here.
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]

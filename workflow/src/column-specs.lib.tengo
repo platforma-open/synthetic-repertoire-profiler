@@ -158,6 +158,7 @@ knownVariantColumns := func(alphabet, withAbundance) {
 			},
 			annotations: tableAnno(80000, "default", {
 				"pl7.app/isMainSequence": "true",
+				"pl7.app/isAssemblingFeature": "true",
 				"pl7.app/table/fontFamily": "monospace",
 				"pl7.app/label": (alphabet == "aminoacid") ? "Known Sequence (aa)" : "Known Sequence (nt)"
 			})
@@ -424,6 +425,11 @@ regionSeqColumns := func(alphabet, regionNames) {
 				name: "pl7.app/sequence",
 				valueType: "String",
 				domain: {
+					// Each region subsequence is identified by its region name in
+					// pl7.app/feature (mirrors VDJ's pl7.app/vdj/feature). Distinct feature
+					// values keep the specs distinct, so a sequence-consuming downstream
+					// block (clonotype-clustering) that discovers these feature-agnostically
+					// can still resolve the picked column uniquely.
 					"pl7.app/feature": rn,
 					"pl7.app/alphabet": alphabet
 				},
@@ -460,7 +466,6 @@ regionAnnotationColumns := func() {
 // relabels the whole-variant sequence feature (e.g. VDJRegion).
 aggregatedColumns := func(alphabet, isAa, regionNames, assemblyFeature) {
 	hasAssembly := !is_undefined(assemblyFeature) && assemblyFeature != ""
-	seqFeature := hasAssembly ? assemblyFeature : "amplicon-sequence"
 	seqSuffix := (alphabet == "aminoacid") ? " (aa)" : " (nt)"
 	seqLabel := (hasAssembly ? assemblyFeature : "Sequence") + seqSuffix
 	cols := [{
@@ -480,16 +485,19 @@ aggregatedColumns := func(alphabet, isAa, regionNames, assemblyFeature) {
 			name: "pl7.app/sequence",
 			valueType: "String",
 			domain: {
-				// Feature descriptor for the whole-variant sequence — "amplicon-sequence"
-				// by default, or the parent's assembly-feature name (e.g. VDJRegion) when
-				// one is set. Lets sequence-consuming downstream blocks (e.g.
+				// Stable feature descriptor for the whole-variant sequence: always
+				// "amplicon-sequence". Sequence-consuming downstream blocks (e.g.
 				// clonotype-clustering) discover these on the variantKey axis by
-				// {feature, alphabet}.
-				"pl7.app/feature": seqFeature,
+				// {feature, alphabet} — a fixed feature value keeps that match working
+				// regardless of the run's region scheme. The parent's assembly-feature
+				// name (e.g. VDJRegion), when set, is carried in the label + flagged via
+				// pl7.app/isAssemblingFeature, NOT folded into the matchable feature key.
+				"pl7.app/feature": "amplicon-sequence",
 				"pl7.app/alphabet": alphabet
 			},
 			annotations: tableAnno(80000, "default", {
 				"pl7.app/isMainSequence": "true",
+				"pl7.app/isAssemblingFeature": "true",
 				"pl7.app/table/fontFamily": "monospace",
 				"pl7.app/label": seqLabel
 			})
