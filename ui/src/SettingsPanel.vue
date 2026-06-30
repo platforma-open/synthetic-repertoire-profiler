@@ -42,6 +42,8 @@ type Level = "nt" | "aa";
 const reactiveFileContent = ReactiveFileContent.useGlobal();
 
 // Parse bytes → persist discovered columns + pre-pick the obvious ID/Sequence.
+// The columns are snapshotted into `data` (not kept as a derived output) because
+// `.args()` consumes their inferred types — see the watcher rationale below.
 function processKnown(level: Level, bytes: Uint8Array) {
   const { columns, error } = parseKnownTsv(bytes);
   if (level === "nt") {
@@ -95,9 +97,12 @@ async function setKnownFile(level: Level, file: ImportFileHandle | undefined) {
   }
 }
 
-// Remote-file bytes via the prerun-exported handle. The outputs→data write is a
-// hairpin in form only: both clients parse identical bytes into identical
-// columns, so racing writes are idempotent (guarded against re-processing).
+// Remote-file bytes via the prerun-exported handle. Columns are snapshotted into
+// `data` because `.args()` needs their inferred types. Local files snapshot on
+// the user gesture (setKnownFile); remote bytes arrive async with no gesture, so
+// a watcher is required. This output→data write is hairpin-SHAPED but safe:
+// idempotent (identical bytes → identical columns), guarded against re-processing,
+// and knownNtColumns never feeds back into the watched output.
 const knownNtBytes = computed(() => {
   const h = app.model.outputs.knownNtFileContent;
   return h ? reactiveFileContent.getContentBytes(h.handle).value : undefined;

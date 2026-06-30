@@ -57,9 +57,8 @@ self.body(func(inputs) {
 	knownNtSequenceColumn := params.knownNtSequenceColumn
 	knownAaIdColumn := params.knownAaIdColumn
 	knownAaSequenceColumn := params.knownAaSequenceColumn
-	// Per-sample mitool resources (Advanced override or workflow default).
-	mitoolCPUs := params.mitoolCPUs
-	mitoolMem := string(params.mitoolMemGB) + "GiB"
+	mitoolCPUs := inputs.mitoolCPUs
+	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
 
 	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
 	ll.assert(
@@ -479,8 +478,12 @@ self.body(func(inputs) {
 		knownNtAbundance: ptResult.getFile("knownNtAbundance.parquet"),
 		knownAaAbundance: ptResult.getFile("knownAaAbundance.parquet"),
 		aaConvergence: ptResult.getFile("aaConvergence.parquet"),
-		// Designed known-set export (raw mitool TSVs) when an nt known set ran;
-		// an empty placeholder otherwise (never read — aggregate-known is gated).
+		// Designed known-set export (raw mitool TSVs) when an nt known set ran; an
+		// empty 0-row placeholder (matching headers) otherwise. The placeholder IS
+		// read by aggregate-known in the aa-only case (aggregate-known runs for any
+		// known set); it is genuinely unused only when no known set is supplied at
+		// all — which is exactly why it must carry the real headers (see the
+		// placeholder section above).
 		knownDesignedNt: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-nt.tsv") : ptResult.getFile("emptyKnownDesignedNt.tsv"),
 		knownDesignedAa: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-aa.tsv") : ptResult.getFile("emptyKnownDesignedAa.tsv"),
 		qcRow: ptResult.getFile("qcRow.parquet"),

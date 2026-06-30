@@ -433,7 +433,7 @@ regionSeqColumns := func(alphabet, regionNames) {
 					"pl7.app/feature": rn,
 					"pl7.app/alphabet": alphabet
 				},
-				annotations: tableAnno(75000 - i * 100, "default", {
+				annotations: tableAnno(75000 - i * 100, "optional", {
 					"pl7.app/table/fontFamily": "monospace",
 					"pl7.app/label": rn + suffix
 				})
@@ -462,12 +462,12 @@ regionAnnotationColumns := func() {
 
 // Per-variant columns aggregated cross-sample (1 axis: variantKey). `isAa` adds
 // the synonymous-replicate count (ntVariantCount), which exists only at aa level.
-// `regionNames` adds per-region sequence columns; `assemblyFeature` (when set)
+// `regionNames` adds per-region sequence columns; `completeFeatureName` (when set)
 // relabels the whole-variant sequence feature (e.g. VDJRegion).
-aggregatedColumns := func(alphabet, isAa, regionNames, assemblyFeature) {
-	hasAssembly := !is_undefined(assemblyFeature) && assemblyFeature != ""
+aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
+	hasCompleteFeature := !is_undefined(completeFeatureName) && completeFeatureName != ""
 	seqSuffix := (alphabet == "aminoacid") ? " (aa)" : " (nt)"
-	seqLabel := (hasAssembly ? assemblyFeature : "Sequence") + seqSuffix
+	seqLabel := (hasCompleteFeature ? completeFeatureName : "Sequence") + seqSuffix
 	cols := [{
 		column: "variantLabel",
 		id: "variant-label",
@@ -489,7 +489,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, assemblyFeature) {
 				// "amplicon-sequence". Sequence-consuming downstream blocks (e.g.
 				// clonotype-clustering) discover these on the variantKey axis by
 				// {feature, alphabet} — a fixed feature value keeps that match working
-				// regardless of the run's region scheme. The parent's assembly-feature
+				// regardless of the run's region scheme. The parent's complete-feature
 				// name (e.g. VDJRegion), when set, is carried in the label + flagged via
 				// pl7.app/isAssemblingFeature, NOT folded into the matchable feature key.
 				"pl7.app/feature": "amplicon-sequence",

@@ -51,10 +51,10 @@ function configFor(parentId: string): ParentRegionConfig {
 }
 
 // Persist an updated config, dropping entries that carry nothing (scheme none and
-// no assembly feature) so a cleared parent leaves no trace in args.
+// no complete feature name) so a cleared parent leaves no trace in args.
 function setConfig(cfg: ParentRegionConfig) {
   const rest = (app.model.data.parentRegions ?? []).filter((c) => c.parentId !== cfg.parentId);
-  const empty = cfg.scheme === "none" && !cfg.assemblyFeature?.trim();
+  const empty = cfg.scheme === "none" && !cfg.completeFeatureName?.trim();
   app.model.data.parentRegions = empty ? rest : [...rest, cfg];
 }
 
@@ -67,7 +67,7 @@ function onScheme(parentId: string, scheme: RegionScheme) {
     setConfig({
       parentId,
       scheme,
-      assemblyFeature: "VDJRegion",
+      completeFeatureName: "VDJRegion",
       regions: VDJ_REGION_NAMES.map((name) => ({ name, length: byName.get(name) ?? 0 })),
     });
   } else if (scheme === "custom") {
@@ -77,16 +77,16 @@ function onScheme(parentId: string, scheme: RegionScheme) {
     setConfig({
       parentId,
       scheme,
-      assemblyFeature: undefined,
+      completeFeatureName: undefined,
       regions: keep ? cur.regions : [{ name: "", length: 0 }],
     });
   } else {
-    setConfig({ parentId, scheme: "none", assemblyFeature: undefined, regions: [] });
+    setConfig({ parentId, scheme: "none", completeFeatureName: undefined, regions: [] });
   }
 }
 
-function setAssembly(parentId: string, name: string) {
-  setConfig({ ...configFor(parentId), assemblyFeature: name });
+function setCompleteFeatureName(parentId: string, name: string) {
+  setConfig({ ...configFor(parentId), completeFeatureName: name });
 }
 
 function setRegion(parentId: string, i: number, patch: Partial<{ name: string; length: number }>) {
@@ -140,10 +140,10 @@ function previews(p: ParsedParent) {
 
     <template v-if="configFor(p.id).scheme !== 'none'">
       <PlTextField
-        :model-value="configFor(p.id).assemblyFeature ?? ''"
+        :model-value="configFor(p.id).completeFeatureName ?? ''"
         label="Full sequence name (optional)"
         placeholder="e.g. VDJRegion"
-        @update:model-value="(v) => setAssembly(p.id, v)"
+        @update:model-value="(v) => setCompleteFeatureName(p.id, v)"
       >
         <template #tooltip>
           Names the whole assembled variant sequence (the full span), as opposed to the named

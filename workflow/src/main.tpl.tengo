@@ -92,9 +92,7 @@ wf.body(func(args) {
 		knownNtIdColumn: args.knownNtIdColumn,
 		knownNtSequenceColumn: args.knownNtSequenceColumn,
 		knownAaIdColumn: args.knownAaIdColumn,
-		knownAaSequenceColumn: args.knownAaSequenceColumn,
-		mitoolMemGB: is_undefined(args.perProcessMemGB) ? defaultMitoolMemGB : args.perProcessMemGB,
-		mitoolCPUs: is_undefined(args.perProcessCPUs) ? defaultMitoolCPUs : args.perProcessCPUs
+		knownAaSequenceColumn: args.knownAaSequenceColumn
 	}, { removeUndefs: true })
 
 	// One File-valued PColumn per analyze output, keyed by sampleId.
@@ -231,7 +229,11 @@ wf.body(func(args) {
 				importance: 20,
 				label: traceLabel
 			}],
-			extra: { params: params }
+			extra: { params: params },
+			metaExtra: {
+				mitoolMemGB: is_undefined(args.perProcessMemGB) ? defaultMitoolMemGB : args.perProcessMemGB,
+				mitoolCPUs: is_undefined(args.perProcessCPUs) ? defaultMitoolCPUs : args.perProcessCPUs
+			}
 		}
 	)
 
@@ -252,7 +254,7 @@ wf.body(func(args) {
 			"tsv",
 			{
 				axes: [axis],
-				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.assemblyFeature),
+				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName),
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
