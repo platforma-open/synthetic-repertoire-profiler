@@ -20,14 +20,18 @@ units := import("@platforma-sdk/workflow-tengo:units")
 
 json := import("json")
 
-self.defineOutputs("variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "logs")
+self.defineOutputs("parsedMic", "variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "logs")
 
 // Progress marker prefix — mitool emits `[==PROGRESS==]<stage>: <pct>% ETA: …`
 // on stderr when MI_PROGRESS_PREFIX is set; the block scrapes it for the
 // per-sample Progress column.
 progressPrefix := "[==PROGRESS==]"
 
-mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:main")
+// `memory-from-limits` sizes the JVM heap (-Xmx) from the scheduler's RAM limit
+// (system.ram.mib, set by mem(mitoolMem) below). The `:main` entrypoint instead
+// uses -XX:MaxRAMPercentage of the RAM the JVM sees, which on native/desktop runs
+// is the whole host — ignoring mem(mitoolMem). Match the MiXCR blocks here.
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
@@ -44,6 +48,8 @@ self.body(func(inputs) {
 	ntStateMatrix := params.ntStateMatrix
 	parentFastaStr := params.parentFastaStr
 	parentFile := params.parentFile
+	parentRegionsJson := params.parentRegionsJson
+	emitRegionAnnotation := !is_undefined(params.emitRegionAnnotation) && params.emitRegionAnnotation
 	knownNtFile := params.knownNtFile
 	knownAaFile := params.knownAaFile
 	// User-mapped known-set column names (arbitrary headers) → mitool.
@@ -51,9 +57,8 @@ self.body(func(inputs) {
 	knownNtSequenceColumn := params.knownNtSequenceColumn
 	knownAaIdColumn := params.knownAaIdColumn
 	knownAaSequenceColumn := params.knownAaSequenceColumn
-	// Per-sample mitool resources (Advanced override or workflow default).
-	mitoolCPUs := params.mitoolCPUs
-	mitoolMem := string(params.mitoolMemGB) + "GiB"
+	mitoolCPUs := inputs.mitoolCPUs
+	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
 
 	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
 	ll.assert(
@@ -162,6 +167,9 @@ self.body(func(inputs) {
 		arg("--parents").arg("parents.fa").
 		arg("--preset").arg("default").
 		arg("--budget").arg("0")
+	if !is_undefined(parentRegionsJson) {
+		analyzeBuilder = analyzeBuilder.arg("--parent-regions").arg("parents.regions.json")
+	}
 	if !is_undefined(knownNtFile) {
 		analyzeBuilder = analyzeBuilder.arg("--known").arg("known_nt.tsv")
 		if !is_undefined(knownNtSequenceColumn) {
@@ -193,6 +201,9 @@ self.body(func(inputs) {
 	} else {
 		analyzeBuilder = analyzeBuilder.addFile("parents.fa", parentFile)
 	}
+	if !is_undefined(parentRegionsJson) {
+		analyzeBuilder = analyzeBuilder.writeFile("parents.regions.json", parentRegionsJson)
+	}
 	if !is_undefined(knownNtFile) {
 		analyzeBuilder = analyzeBuilder.addFile("known_nt.tsv", knownNtFile)
 	}
@@ -207,6 +218,9 @@ self.body(func(inputs) {
 		saveFile("out.aa-state-matrix.tsv").
 		saveFile("out.qc.json").
 		saveFile("out.params.json")
+	if emitRegionAnnotation {
+		analyzeBuilder = analyzeBuilder.saveFile("out.region-annotation.tsv")
+	}
 
 	// Per-step reports (json + txt). analyze writes one pair per pipeline stage;
 	// `assign` is produced only when a known set is supplied.
@@ -376,6 +390,16 @@ self.body(func(inputs) {
 		pt.col("variantKey").cast("String").alias("aaSequence")
 	).save("emptyKnownDesignedAa.tsv", { xsvType: "tsv" })
 
+	// Region-annotation placeholder (right header, 0 rows) for runs without
+	// regions, so the per-sample output is always present.
+	if !emitRegionAnnotation {
+		vAbund.filter(pt.lit(false)).select(
+			pt.col("variantKey").cast("String").alias("parentId"),
+			pt.col("variantKey").cast("String").alias("position"),
+			pt.col("variantKey").cast("String").alias("region")
+		).save("emptyRegionAnnotation.tsv", { xsvType: "tsv" })
+	}
+
 	// --- Per-sample QC row -------------------------------------------------
 	// Recomputes the scalar fields of RepertoireQc.Report from the raw analyze
 	// TSVs (qc.json itself is nested JSON, not directly importable). ptabler
@@ -435,9 +459,17 @@ self.body(func(inputs) {
 	ptResult := ptWf.run()
 
 	return {
+		// `mitool parse` writes .mic records in thread-completion order (non-
+		// deterministic bytes, see Parse.kt mapChunksInParallel). Surfacing the
+		// parsed .mic as a retained output pins it by content hash so reruns
+		// recover it instead of recomputing a byte-different file — otherwise a
+		// settings-change rerun produces a new CID and collides with the one the
+		// completed run settled (CIDConflictError). Mirrors peptide-extraction.
+		parsedMic: micFile,
 		variantsTsv: analyzeCmd.getFile("out.variants.tsv"),
 		aaVariantsTsv: analyzeCmd.getFile("out.aa-variants.tsv"),
 		aaStateMatrixTsv: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
+		regionAnnotationTsv: emitRegionAnnotation ? analyzeCmd.getFile("out.region-annotation.tsv") : ptResult.getFile("emptyRegionAnnotation.tsv"),
 		qcJson: analyzeCmd.getFile("out.qc.json"),
 		reports: reportsMap.build(),
 		paramsJson: analyzeCmd.getFile("out.params.json"),
@@ -446,8 +478,12 @@ self.body(func(inputs) {
 		knownNtAbundance: ptResult.getFile("knownNtAbundance.parquet"),
 		knownAaAbundance: ptResult.getFile("knownAaAbundance.parquet"),
 		aaConvergence: ptResult.getFile("aaConvergence.parquet"),
-		// Designed known-set export (raw mitool TSVs) when an nt known set ran;
-		// an empty placeholder otherwise (never read — aggregate-known is gated).
+		// Designed known-set export (raw mitool TSVs) when an nt known set ran; an
+		// empty 0-row placeholder (matching headers) otherwise. The placeholder IS
+		// read by aggregate-known in the aa-only case (aggregate-known runs for any
+		// known set); it is genuinely unused only when no known set is supplied at
+		// all — which is exactly why it must carry the real headers (see the
+		// placeholder section above).
 		knownDesignedNt: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-nt.tsv") : ptResult.getFile("emptyKnownDesignedNt.tsv"),
 		knownDesignedAa: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-aa.tsv") : ptResult.getFile("emptyKnownDesignedAa.tsv"),
 		qcRow: ptResult.getFile("qcRow.parquet"),

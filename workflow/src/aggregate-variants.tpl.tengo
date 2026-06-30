@@ -71,17 +71,18 @@ self.body(func(inputs) {
 		)
 	}
 
+	// Per-region sequence columns (nSeq<name>/aaSeq<name>) carried through when the
+	// run defines regions. Names come from main (parsed from the regions overlay).
+	ntRegionCols := is_undefined(inputs.ntRegionCols) ? [] : inputs.ntRegionCols
+	aaRegionCols := is_undefined(inputs.aaRegionCols) ? [] : inputs.aaRegionCols
+
 	// --- nt level ---
-	ntMeta := concatF(loadFrames(inputs.variantsTsvData, "ntv", "tsv")).
-		groupBy("variantKey").agg(
-			pt.col("ntSequence").first().alias("sequence"),
-			pt.col("mutations").cast("String").first().alias("mutations"),
-			pt.col("mutationCount").cast("Int").first().alias("mutationCount")
-		)
-	withLabel(
-		totals(loadFrames(inputs.ntAbundanceData, "ntab", "parquet")).
-			join(ntMeta, { how: "left", on: ["variantKey"] })
-	).select(
+	ntAggs := [
+		pt.col("ntSequence").first().alias("sequence"),
+		pt.col("mutations").cast("String").first().alias("mutations"),
+		pt.col("mutationCount").cast("Int").first().alias("mutationCount")
+	]
+	ntSelect := [
 		pt.col("variantKey"),
 		pt.col("variantLabel"),
 		pt.col("sequence"),
@@ -90,27 +91,33 @@ self.body(func(inputs) {
 		pt.col("readCountTotal"),
 		pt.col("readFractionMean"),
 		pt.col("sampleCount")
-	).sort(["variantKey"]).save("ntProperties.tsv", { xsvType: "tsv" })
+	]
+	for rn in ntRegionCols {
+		ntAggs = append(ntAggs, pt.col("nSeq" + rn).cast("String").first().alias("nSeq" + rn))
+		ntSelect = append(ntSelect, pt.col("nSeq" + rn))
+	}
+	ntMeta := concatF(loadFrames(inputs.variantsTsvData, "ntv", "tsv")).
+		groupBy("variantKey").agg(ntAggs...)
+	withLabel(
+		totals(loadFrames(inputs.ntAbundanceData, "ntab", "parquet")).
+			join(ntMeta, { how: "left", on: ["variantKey"] })
+	).select(ntSelect...).sort(["variantKey"]).save("ntProperties.tsv", { xsvType: "tsv" })
 
 	// --- aa level (metadata keyed by aaVariantKey -> aliased to variantKey) ---
-	aaMeta := concatF(loadFrames(inputs.aaVariantsTsvData, "aav", "tsv")).
-		groupBy("aaVariantKey").agg(
-			pt.col("aaSequence").first().alias("sequence"),
-			pt.col("mutations").cast("String").first().alias("mutations"),
-			pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
-			pt.col("ntVariantCount").cast("Int").first().alias("ntVariantCount")
-		).
-		select(
-			pt.col("aaVariantKey").alias("variantKey"),
-			pt.col("sequence"),
-			pt.col("mutations"),
-			pt.col("mutationCount"),
-			pt.col("ntVariantCount")
-		)
-	withLabel(
-		totals(loadFrames(inputs.aaAbundanceData, "aaab", "parquet")).
-			join(aaMeta, { how: "left", on: ["variantKey"] })
-	).select(
+	aaAggs := [
+		pt.col("aaSequence").first().alias("sequence"),
+		pt.col("mutations").cast("String").first().alias("mutations"),
+		pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
+		pt.col("ntVariantCount").cast("Int").first().alias("ntVariantCount")
+	]
+	aaMetaSelect := [
+		pt.col("aaVariantKey").alias("variantKey"),
+		pt.col("sequence"),
+		pt.col("mutations"),
+		pt.col("mutationCount"),
+		pt.col("ntVariantCount")
+	]
+	aaSelect := [
 		pt.col("variantKey"),
 		pt.col("variantLabel"),
 		pt.col("sequence"),
@@ -120,7 +127,19 @@ self.body(func(inputs) {
 		pt.col("readFractionMean"),
 		pt.col("sampleCount"),
 		pt.col("ntVariantCount")
-	).sort(["variantKey"]).save("aaProperties.tsv", { xsvType: "tsv" })
+	]
+	for rn in aaRegionCols {
+		aaAggs = append(aaAggs, pt.col("aaSeq" + rn).cast("String").first().alias("aaSeq" + rn))
+		aaMetaSelect = append(aaMetaSelect, pt.col("aaSeq" + rn))
+		aaSelect = append(aaSelect, pt.col("aaSeq" + rn))
+	}
+	aaMeta := concatF(loadFrames(inputs.aaVariantsTsvData, "aav", "tsv")).
+		groupBy("aaVariantKey").agg(aaAggs...).
+		select(aaMetaSelect...)
+	withLabel(
+		totals(loadFrames(inputs.aaAbundanceData, "aaab", "parquet")).
+			join(aaMeta, { how: "left", on: ["variantKey"] })
+	).select(aaSelect...).sort(["variantKey"]).save("aaProperties.tsv", { xsvType: "tsv" })
 
 	result := wf.run()
 
