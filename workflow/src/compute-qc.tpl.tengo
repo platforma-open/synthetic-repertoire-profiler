@@ -1,0 +1,39 @@
+// Cross-sample QC merge.
+//
+// Concatenates the per-sample qcRow.parquet files (one row each, already
+// carrying sampleId) into a single qc.tsv.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+units := import("@platforma-sdk/workflow-tengo:units")
+
+self.awaitState("InputsLocked")
+self.awaitState("qcRowsData", "ResourceReady")
+
+self.body(func(inputs) {
+	wf := pt.workflow().mem(2 * units.GiB).cpu(1)
+
+	rmMap := inputs.qcRowsData.inputs()
+	frames := []
+	for sKey in maps.getKeys(rmMap) {
+		frames = append(frames, wf.frame({
+			file: rmMap[sKey],
+			xsvType: "parquet"
+		}, { id: "qc_" + string(len(frames)) }))
+	}
+	ll.assert(len(frames) > 0, "no per-sample QC rows to merge")
+
+	merged := frames[0]
+	if len(frames) > 1 {
+		merged = pt.concat(frames)
+	}
+	merged.sort(["sampleId"]).save("qc.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return {
+		qcTable: result.getFile("qc.tsv")
+	}
+})

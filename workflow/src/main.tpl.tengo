@@ -1,0 +1,722 @@
+// Amplicon Repertoire Profiling — main workflow template.
+//
+// Per sample (one FASTQ pair = one processColumn group over lane/readIndex):
+//   parse -> .mic -> repertoire analyze -> variant / aa / state-matrix TSVs + qc.json
+// Then a cross-sample aggregate turns the per-sample variants.tsv into one
+// PColumn frame per distinct variant (sequence, label, total reads, sample count).
+
+wf := import("@platforma-sdk/workflow-tengo:workflow")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+file := import("@platforma-sdk/workflow-tengo:file")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+render := import("@platforma-sdk/workflow-tengo:render")
+xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+strings := import("@platforma-sdk/workflow-tengo:strings")
+columnSpecs := import(":column-specs")
+regionConfig := import(":region-config")
+json := import("json")
+
+prerunTpl := assets.importTemplate(":prerun")
+repertoirePipelineTpl := assets.importTemplate(":repertoire-pipeline")
+aggregateVariantsTpl := assets.importTemplate(":aggregate-variants")
+aggregateStateMatrixTpl := assets.importTemplate(":aggregate-state-matrix")
+aggregateRegionAnnotationTpl := assets.importTemplate(":aggregate-region-annotation")
+aggregateLinkersTpl := assets.importTemplate(":aggregate-linkers")
+aggregateKnownTpl := assets.importTemplate(":aggregate-known")
+processKnownSetTpl := assets.importTemplate(":process-known-set")
+computeQcTpl := assets.importTemplate(":compute-qc")
+
+// Resource allocation defaults. User overrides via perProcessMemGB/perProcessCPUs.
+defaultXsvMemGB := 8
+defaultXsvCPUs := 2
+defaultMitoolMemGB := 16 // per-sample mitool parse + analyze
+defaultMitoolCPUs := 4
+
+// Prerun drives the file uploads (parent FASTA / known-set TSVs) so they finish
+// during staging.
+wf.setPreRun(prerunTpl)
+
+wf.prepare(func(args) {
+	return { resolvedInput: wf.resolve(args.input) }
+})
+
+wf.body(func(args) {
+	blockId := wf.blockId().getDataAsJson()
+
+	traceLabel := args.customBlockLabel
+	if traceLabel == "" { traceLabel = args.defaultBlockLabel }
+	if traceLabel == "" { traceLabel = "Amplicon Repertoire Profiling" }
+
+	inputSpec := args.resolvedInput.spec
+	inputData := args.resolvedInput.data
+	fileExtension := inputSpec.domain["pl7.app/fileExtension"]
+
+	// Materialize the parent reference and known-set files. Pasted FASTA travels
+	// as a string written to a file inside the per-sample command; uploaded handles
+	// are imported via file.importFile. Prerun already drove the uploads, so
+	// file.importFile here resolves straight to the stored blob.
+	parentFastaStr := undefined
+	parentFile := undefined
+	if args.parentInputMode == "fastaSequence" {
+		parentFastaStr = args.parentSequence
+	} else {
+		parentFile = file.importFile(args.parentFileHandle).file
+	}
+
+	knownNtFile := undefined
+	if !is_undefined(args.knownNtFileHandle) {
+		knownNtFile = file.importFile(args.knownNtFileHandle).file
+	}
+	knownAaFile := undefined
+	if !is_undefined(args.knownAaFileHandle) {
+		knownAaFile = file.importFile(args.knownAaFileHandle).file
+	}
+
+	// Region scheme: feature names parsed from the same overlay JSON mitool gets.
+	rc := regionConfig.analyze(args.parentRegionsJson)
+
+	params := maps.clone({
+		fileExtension: fileExtension,
+		pattern: args.tagPattern,
+		patternParts: args.patternParts,
+		hasUmi: args.hasUmi,
+		ntStateMatrix: args.ntStateMatrix,
+		parentFastaStr: parentFastaStr,
+		parentFile: parentFile,
+		parentRegionsJson: args.parentRegionsJson,
+		emitRegionAnnotation: rc.hasRegions,
+		knownNtFile: knownNtFile,
+		knownAaFile: knownAaFile,
+		knownNtIdColumn: args.knownNtIdColumn,
+		knownNtSequenceColumn: args.knownNtSequenceColumn,
+		knownAaIdColumn: args.knownAaIdColumn,
+		knownAaSequenceColumn: args.knownAaSequenceColumn
+	}, { removeUndefs: true })
+
+	// One File-valued PColumn per analyze output, keyed by sampleId.
+	fileOutput := func(outputName) {
+		return {
+			type: "Resource",
+			spec: {
+				kind: "PColumn",
+				name: "pl7.app/repertoire/" + outputName,
+				domain: { "pl7.app/repertoire/extractionRunId": blockId },
+				valueType: "File"
+			},
+			name: outputName,
+			path: [outputName]
+		}
+	}
+
+	ntVariantAxis := columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)")
+	aaVariantAxis := columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant (aa)")
+
+	ntKnownAxis := columnSpecs.knownVariantKeyAxisSpec(blockId, "nucleotide", "Known variant (nt)")
+	aaKnownAxis := columnSpecs.knownVariantKeyAxisSpec(blockId, "aminoacid", "Known variant (aa)")
+
+	// Per-sample Xsv target: axes are the data axes; processColumn prepends the
+	// sampleId partition, yielding [sampleId, …] PARTITIONED by sampleId — the
+	// shape downstream blocks (clonotype-browser) split on.
+	xsvTarget := func(name, path, axes, columns) {
+		return {
+			type: "Xsv",
+			xsvType: "parquet",
+			settings: {
+				axes: axes,
+				columns: columns,
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			mem: string(defaultXsvMemGB) + "GiB",
+			cpu: defaultXsvCPUs,
+			name: name,
+			path: [path]
+		}
+	}
+	// Per-variant abundance (nt + aa); readCount is the downstream anchor.
+	ntAbundanceXsv := xsvTarget("ntAbundanceXsv", "ntAbundance", [ntVariantAxis], columnSpecs.perSampleAbundanceColumns())
+	aaAbundanceXsv := xsvTarget("aaAbundanceXsv", "aaAbundance", [aaVariantAxis], columnSpecs.perSampleAbundanceColumns())
+	// Known-level per-sample abundance + synonymous spread (always declared;
+	// the per-sample parquets are empty when nothing is assigned — added to the
+	// frame below only when a known set was supplied).
+	knownNtAbundanceXsv := xsvTarget("knownNtAbundanceXsv", "knownNtAbundance", [ntKnownAxis], columnSpecs.knownAbundanceColumns())
+	knownAaAbundanceXsv := xsvTarget("knownAaAbundanceXsv", "knownAaAbundance", [aaKnownAxis], columnSpecs.knownAbundanceColumns())
+	// Declared-member synonymous spread, keyed by the known-aa entity.
+	aaConvergenceXsv := xsvTarget("aaConvergenceXsv", "aaConvergence", [aaKnownAxis], columnSpecs.convergenceColumns())
+
+	// Per-sample step reports (ResourceMap keyed [step, format]; processColumn
+	// prepends sampleId). Feeds the sample report panel (json charts + txt views)
+	// and the Main-page Alignments cell (align/json).
+	reportsOutput := {
+		type: "ResourceMap",
+		name: "reports",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/repertoire/report",
+			domain: { "pl7.app/repertoire/extractionRunId": blockId },
+			valueType: "File",
+			axesSpec: [{
+				type: "String",
+				name: "pl7.app/repertoire/report/step",
+				annotations: { "pl7.app/label": "Pipeline step" }
+			}, {
+				type: "String",
+				name: "pl7.app/repertoire/report/format",
+				annotations: { "pl7.app/label": "Report format" },
+				domain: { "pl7.app/dense": string(json.encode(["json", "txt"])) }
+			}]
+		}
+	}
+
+	// Per-sample analyze log (Log-valued PColumn keyed by sampleId) — carries
+	// progress markers + the run summary for the Progress column and Logs view.
+	logsOutput := {
+		type: "Resource",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/repertoire/extractionRunId": blockId },
+			valueType: "Log"
+		},
+		name: "logs",
+		path: ["logs"]
+	}
+
+	targetOutputs := [
+		// Parse output — surfaced for deduplication. mitool parse writes the .mic
+		// in non-deterministic record order, so it must be retained by content
+		// hash to survive reruns without a CID conflict (see repertoire-pipeline).
+		fileOutput("parsedMic"),
+		fileOutput("variantsTsv"),
+		fileOutput("aaVariantsTsv"),
+		fileOutput("aaStateMatrixTsv"),
+		fileOutput("regionAnnotationTsv"),
+		fileOutput("qcJson"),
+		fileOutput("paramsJson"),
+		fileOutput("ntAbundance"),
+		fileOutput("aaAbundance"),
+		fileOutput("knownDesignedNt"),
+		fileOutput("knownDesignedAa"),
+		fileOutput("aaConvergence"),
+		fileOutput("qcRow"),
+		reportsOutput,
+		ntAbundanceXsv,
+		aaAbundanceXsv,
+		knownNtAbundanceXsv,
+		knownAaAbundanceXsv,
+		aaConvergenceXsv,
+		logsOutput
+	]
+
+	perSampleResults := pframes.processColumn(
+		{ spec: inputSpec, data: inputData },
+		repertoirePipelineTpl,
+		targetOutputs,
+		{
+			aggregate: [
+				{ name: "pl7.app/sequencing/lane", optional: true },
+				{ name: "pl7.app/sequencing/readIndex", optional: true }
+			],
+			passAggregationAxesNames: true,
+			// Residual group key (== sampleId) flows to the per-sample template so
+			// it can stamp the QC row.
+			passKey: true,
+			traceSteps: [{
+				type: "milaboratories.synthetic-repertoire-profiler",
+				id: blockId,
+				importance: 20,
+				label: traceLabel
+			}],
+			extra: { params: params },
+			metaExtra: {
+				mitoolMemGB: is_undefined(args.perProcessMemGB) ? defaultMitoolMemGB : args.perProcessMemGB,
+				mitoolCPUs: is_undefined(args.perProcessCPUs) ? defaultMitoolCPUs : args.perProcessCPUs
+			}
+		}
+	)
+
+	// Cross-sample / cross-variant properties (nt + aa): one ephemeral reads the
+	// per-sample abundance parquets (totals) + raw variant TSVs (sample-independent
+	// metadata) and emits per-variant property tables.
+	aggVarsRun := render.createEphemeral(aggregateVariantsTpl, {
+		ntAbundanceData: perSampleResults.outputData("ntAbundance"),
+		aaAbundanceData: perSampleResults.outputData("aaAbundance"),
+		variantsTsvData: perSampleResults.outputData("variantsTsv"),
+		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
+		ntRegionCols: rc.ntRegionNames,
+		aaRegionCols: rc.aaRegionNames
+	})
+	importProps := func(file, axis, isAa, regionNames) {
+		return xsv.importFile(
+			file,
+			"tsv",
+			{
+				axes: [axis],
+				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{
+				splitDataAndSpec: true,
+				cpu: 1,
+				mem: string(defaultXsvMemGB) + "GiB"
+			}
+		)
+	}
+	ntPropsCols := importProps(aggVarsRun.output("ntProperties"), ntVariantAxis, false, rc.ntRegionNames)
+	aaPropsCols := importProps(aggVarsRun.output("aaProperties"), aaVariantAxis, true, rc.aaRegionNames)
+
+	// aa state matrix [variantKey(aa), parentId, position] -> state, deduped
+	// cross-sample.
+	stateMatrixRun := render.createEphemeral(aggregateStateMatrixTpl, {
+		aaStateMatrixData: perSampleResults.outputData("aaStateMatrixTsv")
+	})
+	aaStateMatrixCols := xsv.importFile(
+		stateMatrixRun.output("aaStateMatrix"),
+		"tsv",
+		{
+			axes: [
+				aaVariantAxis,
+				columnSpecs.parentIdAxisSpec("Parent"),
+				columnSpecs.positionAxisSpec("aminoacid", "Position (aa)")
+			],
+			columns: columnSpecs.stateMatrixColumns("aminoacid"),
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		{
+			splitDataAndSpec: true,
+			cpu: 1,
+			mem: string(defaultXsvMemGB) + "GiB"
+		}
+	)
+
+	// Region membership [parentId, position(aa)] -> region, deduped cross-sample.
+	// Only when the run defines regions (else there is no annotation to import).
+	regionAnnotationCols := undefined
+	if rc.hasRegions {
+		regionAnnRun := render.createEphemeral(aggregateRegionAnnotationTpl, {
+			regionAnnotationData: perSampleResults.outputData("regionAnnotationTsv")
+		})
+		regionAnnotationCols = xsv.importFile(
+			regionAnnRun.output("regionAnnotation"),
+			"tsv",
+			{
+				axes: [
+					columnSpecs.parentIdAxisSpec("Parent"),
+					columnSpecs.positionAxisSpec("aminoacid", "Position (aa)")
+				],
+				columns: columnSpecs.regionAnnotationColumns(),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{
+				splitDataAndSpec: true,
+				cpu: 1,
+				mem: string(defaultXsvMemGB) + "GiB"
+			}
+		)
+	}
+
+	// Linkers (nt→aa, parent→nt, parent→aa). One-side leads in the axes.
+	linkersRun := render.createEphemeral(aggregateLinkersTpl, {
+		variantsTsvData: perSampleResults.outputData("variantsTsv"),
+		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv")
+	})
+	importLinker := func(file, axes, name) {
+		return xsv.importFile(
+			file,
+			"tsv",
+			{
+				axes: axes,
+				columns: columnSpecs.linkerColumns(name),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{
+				splitDataAndSpec: true,
+				cpu: 1,
+				mem: string(defaultXsvMemGB) + "GiB"
+			}
+		)
+	}
+	ntToAaCols := importLinker(
+		linkersRun.output("ntToAa"),
+		[
+			columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant (aa)", "aaKey"),
+			columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")
+		],
+		"pl7.app/repertoire/aaToNt"
+	)
+	parentNtCols := importLinker(
+		linkersRun.output("parentNt"),
+		[
+			columnSpecs.parentIdAxisSpec("Parent"),
+			columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")
+		],
+		"pl7.app/repertoire/parentLink"
+	)
+	parentAaCols := importLinker(
+		linkersRun.output("parentAa"),
+		[
+			columnSpecs.parentIdAxisSpec("Parent"),
+			columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant (aa)", "aaKey")
+		],
+		"pl7.app/repertoire/parentLink"
+	)
+
+	// Assemble the variant PColumns into a frame with provenance. The nt and aa
+	// abundance anchors are otherwise spec-identical, so a high-importance level
+	// trace step ("NT Variants" / "AA Variants") distinguishes them in downstream
+	// dataset pickers.
+	blockStep := {
+		type: "milaboratories.synthetic-repertoire-profiler",
+		id: blockId,
+		importance: 20,
+		label: traceLabel
+	}
+	levelStep := func(alphabet, label) {
+		return {
+			type: "milaboratories.synthetic-repertoire-profiler.level",
+			id: blockId + "." + alphabet,
+			importance: 80,
+			label: label
+		}
+	}
+	baseTrace := pSpec.makeTrace(inputSpec, blockStep)
+	ntTrace := pSpec.makeTrace(inputSpec, blockStep, levelStep("nt", "NT Variants"))
+	aaTrace := pSpec.makeTrace(inputSpec, blockStep, levelStep("aa", "AA Variants"))
+
+	variantsPfBuilder := pframes.pFrameBuilder()
+	// Per-sample abundance ([sampleId, variantKey], partitioned by sampleId) — the
+	// downstream anchor. nt + aa.
+	for columnName in perSampleResults.listXsvColumns("ntAbundanceXsv") {
+		variantsPfBuilder.add(
+			"perSampleNt/" + columnName,
+			ntTrace.inject(perSampleResults.outputSpec("ntAbundanceXsv", columnName)),
+			perSampleResults.outputData("ntAbundanceXsv", columnName)
+		)
+	}
+	for columnName in perSampleResults.listXsvColumns("aaAbundanceXsv") {
+		variantsPfBuilder.add(
+			"perSampleAa/" + columnName,
+			aaTrace.inject(perSampleResults.outputSpec("aaAbundanceXsv", columnName)),
+			perSampleResults.outputData("aaAbundanceXsv", columnName)
+		)
+	}
+	// Per-variant cross-sample columns ([variantKey]): label, sequence, totals,
+	// (aa) ntVariantCount.
+	for k, v in ntPropsCols {
+		variantsPfBuilder.add("perVariantNt/" + k, ntTrace.inject(v.spec), v.data)
+	}
+	for k, v in aaPropsCols {
+		variantsPfBuilder.add("perVariantAa/" + k, aaTrace.inject(v.spec), v.data)
+	}
+	// aa state matrix — exported in the variants frame for the companion heat-map
+	// block. No in-block view by design; visualization is the companion block's job.
+	for k, v in aaStateMatrixCols {
+		variantsPfBuilder.add("stateMatrixAa/" + k, aaTrace.inject(v.spec), v.data)
+	}
+	// Region membership (parent-derived; colours the aa state-matrix heat map).
+	if !is_undefined(regionAnnotationCols) {
+		for k, v in regionAnnotationCols {
+			variantsPfBuilder.add("regionAnnotation/" + k, baseTrace.inject(v.spec), v.data)
+		}
+	}
+	// Linkers — into the exported variants frame for downstream traversal.
+	for k, v in ntToAaCols {
+		variantsPfBuilder.add("aaToNt/" + k, baseTrace.inject(v.spec), v.data)
+	}
+	for k, v in parentNtCols {
+		variantsPfBuilder.add("parentNt/" + k, ntTrace.inject(v.spec), v.data)
+	}
+	for k, v in parentAaCols {
+		variantsPfBuilder.add("parentAa/" + k, aaTrace.inject(v.spec), v.data)
+	}
+
+	// --- known-set overlay (when an nt and/or aa known set was supplied) -------
+	// Exact-match (budget 0) overlay derived from the assigned variants: known
+	// linkers, distance-to-nearest, and per-level known tables (id + sequence +
+	// linked abundance). knownVariantKey = hash of the (matched == known)
+	// sequence. nt assignment needs --known; aa assignment runs with --known-aa
+	// or is derived from --known. Metadata / unmatched designed entries /
+	// convergence are handled separately.
+	knownVariantsNtPf := undefined
+	knownVariantsAaPf := undefined
+	unmatchedVariantsNtPf := undefined
+	if !is_undefined(knownNtFile) || !is_undefined(knownAaFile) {
+		knownRun := render.createEphemeral(aggregateKnownTpl, {
+			variantsTsvData: perSampleResults.outputData("variantsTsv"),
+			aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
+			knownDesignedNtData: perSampleResults.outputData("knownDesignedNt"),
+			knownDesignedAaData: perSampleResults.outputData("knownDesignedAa"),
+			aaConvergenceData: perSampleResults.outputData("aaConvergence")
+		})
+		importKnown := func(file, axes, columns) {
+			return xsv.importFile(file, "tsv", {
+				axes: axes,
+				columns: columns,
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			}, {
+				splitDataAndSpec: true,
+				cpu: 1,
+				mem: string(defaultXsvMemGB) + "GiB"
+			})
+		}
+
+		// Dynamic import-column specs for the mapped metadata fields. The column
+		// id is the sanitized header — must match process-known-set's aliases.
+		metadataImportColumns := func(descriptors) {
+			cols := []
+			for c in descriptors {
+				cid := strings.substituteSpecialCharacters(c.header)
+				cols = append(cols, {
+					column: cid,
+					id: cid,
+					allowNA: true,
+					naRegex: "",
+					spec: {
+						name: "pl7.app/knownVariantMetadata/" + cid,
+						valueType: c.type,
+						annotations: {
+							"pl7.app/label": c.header,
+							"pl7.app/table/visibility": "default"
+						}
+					}
+				})
+			}
+			return cols
+		}
+
+		// Read one level's known TSV and import its metadata columns, keyed by the
+		// known-variant axis (so it joins the known linker). undefined when no
+		// metadata was mapped.
+		importKnownMetadata := func(knownFile, assignedKeysFile, seqCol, descriptors, axis) {
+			if is_undefined(descriptors) || len(descriptors) == 0 {
+				return undefined
+			}
+			metaRun := render.createEphemeral(processKnownSetTpl, {
+				knownFile: knownFile,
+				assignedKeysFile: assignedKeysFile,
+				sequenceColumn: seqCol,
+				metadataColumns: descriptors
+			})
+			return importKnown(metaRun.output("metadata"), [axis], metadataImportColumns(descriptors))
+		}
+		// nt overlay — only when an nt known set ran (otherwise the nt tables are
+		// empty; skip importing them).
+		if !is_undefined(knownNtFile) {
+			knownLinkerNtCols := importKnown(
+				knownRun.output("knownLinkerNt"),
+				[ntKnownAxis, columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")],
+				columnSpecs.linkerColumns("pl7.app/repertoire/knownLink")
+			)
+			ntDistanceCols := importKnown(knownRun.output("ntDistance"), [ntVariantAxis], columnSpecs.knownDistanceColumns(false))
+			knownNtCols := importKnown(knownRun.output("knownNt"), [ntKnownAxis], columnSpecs.knownVariantColumns("nucleotide", true))
+			knownNtMetaCols := importKnownMetadata(knownNtFile, knownRun.output("knownNt"), args.knownNtSequenceColumn, args.knownNtMetadata, ntKnownAxis)
+
+			for k, v in knownLinkerNtCols {
+				variantsPfBuilder.add("knownLinkerNt/" + k, ntTrace.inject(v.spec), v.data)
+			}
+			for k, v in ntDistanceCols {
+				variantsPfBuilder.add("knownNt/" + k, ntTrace.inject(v.spec), v.data)
+			}
+			for k, v in knownNtCols {
+				variantsPfBuilder.add("knownVariantNt/" + k, ntTrace.inject(v.spec), v.data)
+			}
+			if !is_undefined(knownNtMetaCols) {
+				for k, v in knownNtMetaCols {
+					variantsPfBuilder.add("knownMetaNt/" + k, ntTrace.inject(v.spec), v.data)
+				}
+			}
+
+			// knownAaToNt linker (designed nt→aa). The linker's two axes are both
+			// knownVariantKey (aa one-side leads, nt many-side follows) — distinct
+			// TSV column names per axis. (Synonymous count + convergence summary are
+			// keyed [knownVariantKey(aa)] and handled in the aa block / table below.)
+			aaKnownAxisLink := columnSpecs.knownVariantKeyAxisSpec(blockId, "aminoacid", "Known variant (aa)", "knownKeyAa")
+			ntKnownAxisLink := columnSpecs.knownVariantKeyAxisSpec(blockId, "nucleotide", "Known variant (nt)", "knownKeyNt")
+			knownAaToNtCols := importKnown(
+				knownRun.output("knownAaToNt"),
+				[aaKnownAxisLink, ntKnownAxisLink],
+				columnSpecs.linkerColumns("pl7.app/repertoire/knownAaToNt")
+			)
+			for k, v in knownAaToNtCols {
+				variantsPfBuilder.add("knownAaToNt/" + k, baseTrace.inject(v.spec), v.data)
+			}
+
+			// Known nt× sample abundance.
+			for columnName in perSampleResults.listXsvColumns("knownNtAbundanceXsv") {
+				variantsPfBuilder.add(
+					"knownAbundanceNt/" + columnName,
+					ntTrace.inject(perSampleResults.outputSpec("knownNtAbundanceXsv", columnName)),
+					perSampleResults.outputData("knownNtAbundanceXsv", columnName)
+				)
+			}
+
+			knownVariantsNtPfBuilder := pframes.pFrameBuilder()
+			for k, v in knownNtCols {
+				knownVariantsNtPfBuilder.add(k, ntTrace.inject(v.spec), v.data)
+			}
+			if !is_undefined(knownNtMetaCols) {
+				for k, v in knownNtMetaCols {
+					knownVariantsNtPfBuilder.add("meta_" + k, ntTrace.inject(v.spec), v.data)
+				}
+			}
+			knownVariantsNtPf = knownVariantsNtPfBuilder.build()
+
+			// unmatched designed nt entries (dropouts) — id + sequence, no
+			// abundance (they were never observed). Its own frame/page so it does
+			// not introduce blank-abundance rows into the assigned Known Variants table.
+			unmatchedNtCols := importKnown(
+				knownRun.output("unmatchedNt"),
+				[ntKnownAxis],
+				columnSpecs.knownVariantColumns("nucleotide", false)
+			)
+			unmatchedNtPfBuilder := pframes.pFrameBuilder()
+			for k, v in unmatchedNtCols {
+				unmatchedNtPfBuilder.add(k, ntTrace.inject(v.spec), v.data)
+			}
+			unmatchedVariantsNtPf = unmatchedNtPfBuilder.build()
+		}
+
+		// aa overlay — runs whenever any known set is present (aa is derived from
+		// the nt set when only --known is given).
+		knownLinkerAaCols := importKnown(
+			knownRun.output("knownLinkerAa"),
+			[aaKnownAxis, columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant (aa)", "aaKey")],
+			columnSpecs.linkerColumns("pl7.app/repertoire/knownLink")
+		)
+		aaDistanceCols := importKnown(knownRun.output("aaDistance"), [aaVariantAxis], columnSpecs.knownDistanceColumns(true))
+		knownAaCols := importKnown(knownRun.output("knownAa"), [aaKnownAxis], columnSpecs.knownVariantColumns("aminoacid", true))
+		knownAaMetaCols := importKnownMetadata(knownAaFile, knownRun.output("knownAa"), args.knownAaSequenceColumn, args.knownAaMetadata, aaKnownAxis)
+
+		for k, v in knownLinkerAaCols {
+			variantsPfBuilder.add("knownLinkerAa/" + k, aaTrace.inject(v.spec), v.data)
+		}
+		for k, v in aaDistanceCols {
+			variantsPfBuilder.add("knownAa/" + k, aaTrace.inject(v.spec), v.data)
+		}
+		for k, v in knownAaCols {
+			variantsPfBuilder.add("knownVariantAa/" + k, aaTrace.inject(v.spec), v.data)
+		}
+		if !is_undefined(knownAaMetaCols) {
+			for k, v in knownAaMetaCols {
+				variantsPfBuilder.add("knownMetaAa/" + k, aaTrace.inject(v.spec), v.data)
+			}
+		}
+		// Known aa× sample abundance + synonymous-spread QC ([sampleId,
+		// variantKey(aa)]).
+		for columnName in perSampleResults.listXsvColumns("knownAaAbundanceXsv") {
+			variantsPfBuilder.add(
+				"knownAbundanceAa/" + columnName,
+				aaTrace.inject(perSampleResults.outputSpec("knownAaAbundanceXsv", columnName)),
+				perSampleResults.outputData("knownAaAbundanceXsv", columnName)
+			)
+		}
+		for columnName in perSampleResults.listXsvColumns("aaConvergenceXsv") {
+			variantsPfBuilder.add(
+				"convergence/" + columnName,
+				aaTrace.inject(perSampleResults.outputSpec("aaConvergenceXsv", columnName)),
+				perSampleResults.outputData("aaConvergenceXsv", columnName)
+			)
+		}
+
+		// Declared synonymous count + cross-sample convergence summary, both keyed
+		// [knownVariantKey(aa)] — added to the export and the AA table below.
+		knownSynCountCols := importKnown(knownRun.output("knownSynCount"), [aaKnownAxis], columnSpecs.knownSynCountColumns())
+		knownConvergenceCols := importKnown(knownRun.output("knownConvergence"), [aaKnownAxis], columnSpecs.convergenceSummaryColumns())
+		for k, v in knownSynCountCols {
+			variantsPfBuilder.add("knownSynCount/" + k, aaTrace.inject(v.spec), v.data)
+		}
+		for k, v in knownConvergenceCols {
+			variantsPfBuilder.add("knownConvergence/" + k, aaTrace.inject(v.spec), v.data)
+		}
+
+		knownVariantsAaPfBuilder := pframes.pFrameBuilder()
+		for k, v in knownAaCols {
+			knownVariantsAaPfBuilder.add(k, aaTrace.inject(v.spec), v.data)
+		}
+		if !is_undefined(knownAaMetaCols) {
+			for k, v in knownAaMetaCols {
+				knownVariantsAaPfBuilder.add("meta_" + k, aaTrace.inject(v.spec), v.data)
+			}
+		}
+		for k, v in knownSynCountCols {
+			knownVariantsAaPfBuilder.add("syn_" + k, aaTrace.inject(v.spec), v.data)
+		}
+		for k, v in knownConvergenceCols {
+			knownVariantsAaPfBuilder.add("conv_" + k, aaTrace.inject(v.spec), v.data)
+		}
+		knownVariantsAaPf = knownVariantsAaPfBuilder.build()
+	}
+
+	variantsPf := variantsPfBuilder.build()
+
+	// QC report frame: merge per-sample qcRow parquets into one qc.tsv, then
+	// import as a [sampleId]-keyed PFrame. Surfaced as the `qc` output the model
+	// resolves into the QC Report table.
+	qcRun := render.createEphemeral(computeQcTpl, {
+		qcRowsData: perSampleResults.outputData("qcRow")
+	})
+	qcColumns := xsv.importFile(
+		qcRun.output("qcTable"),
+		"tsv",
+		columnSpecs.qcColumns(inputSpec.axesSpec[0]),
+		{
+			splitDataAndSpec: true,
+			cpu: 1,
+			mem: string(defaultXsvMemGB) + "GiB"
+		}
+	)
+	qcPfBuilder := pframes.pFrameBuilder()
+	for k, v in qcColumns {
+		qcPfBuilder.add(k, baseTrace.inject(v.spec), v.data)
+	}
+	qcPf := qcPfBuilder.build()
+
+	outputs := {
+		// Kept reachable so the parsed .mic is persisted by content hash (dedup)
+		// and recovered on rerun rather than recomputed (non-deterministic bytes).
+		parsedMic: perSampleResults.outputData("parsedMic"),
+		variantsTsv: perSampleResults.output("variantsTsv"),
+		aaVariantsTsv: perSampleResults.output("aaVariantsTsv"),
+		aaStateMatrixTsv: perSampleResults.output("aaStateMatrixTsv"),
+		// outputData so the model can resolve("qcJson") + parseResourceMap it
+		// (the per-sample qc.json is written at the end of analyze → its
+		// presence is the per-sample "done" signal).
+		qcJson: perSampleResults.outputData("qcJson"),
+		paramsJson: perSampleResults.output("paramsJson"),
+		// Per-sample QC metrics PFrame (sampleId axis) for the QC Report table.
+		qc: pframes.exportFrame(qcPf),
+		// Per-sample step reports ([sampleId, step, format] -> file) for the
+		// sample report panel + Main-page Alignments cell. exportColumnData makes
+		// each file a downloadable Blob (getFileHandle/getContentJson need an
+		// exported file, not a raw Blob resource).
+		reports: pframes.exportColumnData(perSampleResults.outputData("reports")),
+		// Return the resource-map DATA under the "logs" key so the model can
+		// resolve("logs") + parseResourceMap it (a plain output() reads back as
+		// an opaque std/map).
+		logs: perSampleResults.outputData("logs")
+	}
+	// Known Variants tables — present only when the matching known set ran.
+	if !is_undefined(knownVariantsNtPf) {
+		outputs.knownVariantsNt = pframes.exportFrame(knownVariantsNtPf)
+	}
+	if !is_undefined(knownVariantsAaPf) {
+		outputs.knownVariantsAa = pframes.exportFrame(knownVariantsAaPf)
+	}
+	if !is_undefined(unmatchedVariantsNtPf) {
+		outputs.unmatchedVariantsNt = pframes.exportFrame(unmatchedVariantsNtPf)
+	}
+
+	return {
+		outputs: outputs,
+		exports: {
+			variants: variantsPf
+		}
+	}
+})
