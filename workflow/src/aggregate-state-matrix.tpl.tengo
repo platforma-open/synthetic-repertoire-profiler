@@ -1,0 +1,52 @@
+// Cross-sample state-matrix aggregation (ephemeral).
+//
+// The state matrix is a property of the variant (its states relative to a parent),
+// so it is identical in every sample a variant appears in. This concatenates the
+// per-sample aa-state-matrix TSVs and dedups by [variantKey, parentId, position],
+// yielding one cross-variant table:
+//   aaStateMatrix.tsv  [variantKey(aa), parentId, position] -> state
+//
+// (The first TSV column is named `variantKey` by mitool but holds the aa variant
+// key — it matches the aa variant axis column name directly.)
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+units := import("@platforma-sdk/workflow-tengo:units")
+
+self.defineOutputs("aaStateMatrix")
+
+self.awaitState("InputsLocked")
+self.awaitState("aaStateMatrixData", "ResourceReady")
+
+self.body(func(inputs) {
+	wf := pt.workflow().mem(4 * units.GiB).cpu(2)
+
+	frames := []
+	rmMap := inputs.aaStateMatrixData.inputs()
+	for sKey in maps.getKeys(rmMap) {
+		frames = append(frames, wf.frame({
+			file: rmMap[sKey],
+			xsvType: "tsv"
+		}, { id: "sm_" + string(len(frames)) }))
+	}
+	ll.assert(len(frames) > 0, "no aa-state-matrix frames")
+
+	merged := frames[0]
+	if len(frames) > 1 {
+		merged = pt.concat(frames)
+	}
+
+	merged.
+		groupBy("variantKey", "parentId", "position").
+		agg(pt.col("state").cast("String").first().alias("state")).
+		sort(["variantKey", "parentId", "position"]).
+		save("aaStateMatrix.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return {
+		aaStateMatrix: result.getFile("aaStateMatrix.tsv")
+	}
+})

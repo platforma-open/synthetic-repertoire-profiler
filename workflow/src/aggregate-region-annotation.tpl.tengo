@@ -1,0 +1,48 @@
+// Cross-sample region-annotation aggregation (ephemeral).
+//
+// Region membership ([parentId, position] -> region) is parent-derived, so it is
+// identical in every sample. Concatenate the per-sample region-annotation TSVs
+// and dedup by [parentId, position]:
+//   regionAnnotation.tsv  [parentId, position] -> region
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+units := import("@platforma-sdk/workflow-tengo:units")
+
+self.defineOutputs("regionAnnotation")
+
+self.awaitState("InputsLocked")
+self.awaitState("regionAnnotationData", "ResourceReady")
+
+self.body(func(inputs) {
+	wf := pt.workflow().mem(2 * units.GiB).cpu(1)
+
+	frames := []
+	rmMap := inputs.regionAnnotationData.inputs()
+	for sKey in maps.getKeys(rmMap) {
+		frames = append(frames, wf.frame({
+			file: rmMap[sKey],
+			xsvType: "tsv"
+		}, { id: "ra_" + string(len(frames)) }))
+	}
+	ll.assert(len(frames) > 0, "no region-annotation frames")
+
+	merged := frames[0]
+	if len(frames) > 1 {
+		merged = pt.concat(frames)
+	}
+
+	merged.
+		groupBy("parentId", "position").
+		agg(pt.col("region").cast("String").first().alias("region")).
+		sort(["parentId", "position"]).
+		save("regionAnnotation.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return {
+		regionAnnotation: result.getFile("regionAnnotation.tsv")
+	}
+})

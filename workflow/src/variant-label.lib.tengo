@@ -1,0 +1,39 @@
+// Variant label generation — hash-based.
+//
+// The label is derived from a base64-alphanumeric hash of the variant's own
+// SEQUENCE (not mitool's hex variantKey): strip digits → first 5 chars →
+// uppercase → "V-XXXXX". Collisions on the 5-char prefix get a rank suffix
+// "V-XXXXX-N", ranked deterministically by the hash. Must be computed
+// cross-sample so a variant's label is stable across the run.
+
+addVariantLabelColumnsPt := func(df, hashCol, variantLabelCol, pt) {
+	prefixTempCol := variantLabelCol + "_prefix_temp"
+	rankTempCol := variantLabelCol + "_rank_temp"
+
+	df = df.withColumns(
+		pt.col(hashCol).
+			strReplace("\\d", "", { replaceAll: true }).
+			strSlice(0, 5).
+			strToUpper().
+			alias(prefixTempCol)
+	)
+
+	df = df.withColumns(
+		pt.rank(pt.col(hashCol)).
+			over(pt.col(prefixTempCol)).
+			alias(rankTempCol)
+	)
+
+	df = df.withColumns(
+		pt.when(pt.col(rankTempCol).gt(pt.lit(1))).
+			then(pt.concatStr([pt.lit("V"), pt.col(prefixTempCol), pt.col(rankTempCol).cast("String")], { delimiter: "-" })).
+			otherwise(pt.concatStr([pt.lit("V"), pt.col(prefixTempCol)], { delimiter: "-" })).
+			alias(variantLabelCol)
+	)
+
+	return df.withoutColumns(prefixTempCol, rankTempCol)
+}
+
+export {
+	addVariantLabelColumnsPt: addVariantLabelColumnsPt
+}

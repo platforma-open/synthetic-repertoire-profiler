@@ -1,0 +1,150 @@
+// Cross-sample variant aggregation (ephemeral).
+//
+// Reads the per-sample resource maps — nt/aa abundance parquets (for totals) and
+// the raw variants/aa-variants TSVs (for sample-independent metadata) — and emits
+// per-variant property tables:
+//   ntProperties.tsv  [variantKey]      -> label, sequence, mutations, mutationCount, totals
+//   aaProperties.tsv  [variantKey(aa)]  -> + ntVariantCount
+//
+// Keys are mitool's content hashes (variantKey / aaVariantKey); the aa key is
+// aliased to "variantKey" so both levels share the variant-axis column name. The
+// display LABEL is V-XXXXX(-N), derived cross-sample from a hash of the variant's
+// own sequence. mitool's `mutations` (colon-separated milib designator) and
+// `mutationCount` are carried as columns.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+units := import("@platforma-sdk/workflow-tengo:units")
+
+variantLabel := import(":variant-label")
+
+self.defineOutputs("ntProperties", "aaProperties")
+
+self.awaitState("InputsLocked")
+self.awaitState("ntAbundanceData", "ResourceReady")
+self.awaitState("aaAbundanceData", "ResourceReady")
+self.awaitState("variantsTsvData", "ResourceReady")
+self.awaitState("aaVariantsTsvData", "ResourceReady")
+
+self.body(func(inputs) {
+	wf := pt.workflow().mem(4 * units.GiB).cpu(2)
+
+	loadFrames := func(rmData, idPrefix, format) {
+		frames := []
+		rmMap := rmData.inputs()
+		for sKey in maps.getKeys(rmMap) {
+			frames = append(frames, wf.frame({
+				file: rmMap[sKey],
+				xsvType: format
+			}, { id: idPrefix + "_" + string(len(frames)) }))
+		}
+		ll.assert(len(frames) > 0, "no frames for " + idPrefix)
+		return frames
+	}
+	concatF := func(frames) {
+		if len(frames) == 1 {
+			return frames[0]
+		}
+		return pt.concat(frames)
+	}
+
+	// Cross-sample totals from the per-sample abundance parquets ([variantKey,
+	// readCount, readFraction], one row per variantKey per sample).
+	totals := func(frames) {
+		return concatF(frames).groupBy("variantKey").agg(
+			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
+			pt.col("readFraction").cast("Double").mean().alias("readFractionMean"),
+			pt.col("readCount").count().alias("sampleCount")
+		)
+	}
+
+	withLabel := func(df) {
+		return variantLabel.addVariantLabelColumnsPt(
+			df.withColumns(
+				pt.col("sequence").hash("sha256", "base64_alphanumeric", 120).alias("_seqHash")
+			),
+			"_seqHash",
+			"variantLabel",
+			pt
+		)
+	}
+
+	// Per-region sequence columns (nSeq<name>/aaSeq<name>) carried through when the
+	// run defines regions. Names come from main (parsed from the regions overlay).
+	ntRegionCols := is_undefined(inputs.ntRegionCols) ? [] : inputs.ntRegionCols
+	aaRegionCols := is_undefined(inputs.aaRegionCols) ? [] : inputs.aaRegionCols
+
+	// --- nt level ---
+	ntAggs := [
+		pt.col("ntSequence").first().alias("sequence"),
+		pt.col("mutations").cast("String").first().alias("mutations"),
+		pt.col("mutationCount").cast("Int").first().alias("mutationCount")
+	]
+	ntSelect := [
+		pt.col("variantKey"),
+		pt.col("variantLabel"),
+		pt.col("sequence"),
+		pt.col("mutations"),
+		pt.col("mutationCount"),
+		pt.col("readCountTotal"),
+		pt.col("readFractionMean"),
+		pt.col("sampleCount")
+	]
+	for rn in ntRegionCols {
+		ntAggs = append(ntAggs, pt.col("nSeq" + rn).cast("String").first().alias("nSeq" + rn))
+		ntSelect = append(ntSelect, pt.col("nSeq" + rn))
+	}
+	ntMeta := concatF(loadFrames(inputs.variantsTsvData, "ntv", "tsv")).
+		groupBy("variantKey").agg(ntAggs...)
+	withLabel(
+		totals(loadFrames(inputs.ntAbundanceData, "ntab", "parquet")).
+			join(ntMeta, { how: "left", on: ["variantKey"] })
+	).select(ntSelect...).sort(["variantKey"]).save("ntProperties.tsv", { xsvType: "tsv" })
+
+	// --- aa level (metadata keyed by aaVariantKey -> aliased to variantKey) ---
+	aaAggs := [
+		pt.col("aaSequence").first().alias("sequence"),
+		pt.col("mutations").cast("String").first().alias("mutations"),
+		pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
+		pt.col("ntVariantCount").cast("Int").first().alias("ntVariantCount")
+	]
+	aaMetaSelect := [
+		pt.col("aaVariantKey").alias("variantKey"),
+		pt.col("sequence"),
+		pt.col("mutations"),
+		pt.col("mutationCount"),
+		pt.col("ntVariantCount")
+	]
+	aaSelect := [
+		pt.col("variantKey"),
+		pt.col("variantLabel"),
+		pt.col("sequence"),
+		pt.col("mutations"),
+		pt.col("mutationCount"),
+		pt.col("readCountTotal"),
+		pt.col("readFractionMean"),
+		pt.col("sampleCount"),
+		pt.col("ntVariantCount")
+	]
+	for rn in aaRegionCols {
+		aaAggs = append(aaAggs, pt.col("aaSeq" + rn).cast("String").first().alias("aaSeq" + rn))
+		aaMetaSelect = append(aaMetaSelect, pt.col("aaSeq" + rn))
+		aaSelect = append(aaSelect, pt.col("aaSeq" + rn))
+	}
+	aaMeta := concatF(loadFrames(inputs.aaVariantsTsvData, "aav", "tsv")).
+		groupBy("aaVariantKey").agg(aaAggs...).
+		select(aaMetaSelect...)
+	withLabel(
+		totals(loadFrames(inputs.aaAbundanceData, "aaab", "parquet")).
+			join(aaMeta, { how: "left", on: ["variantKey"] })
+	).select(aaSelect...).sort(["variantKey"]).save("aaProperties.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return {
+		ntProperties: result.getFile("ntProperties.tsv"),
+		aaProperties: result.getFile("aaProperties.tsv")
+	}
+})
