@@ -10,14 +10,14 @@ json := import("json")
 //   hasRegions      : at least one parent has a non-empty region partition
 //   ntRegionNames   : union of named-region names (first-seen order)
 //   aaRegionNames   : those codon-aligned at frame 0 (begin%3==0 && end%3==0)
-//   assemblyFeature : the assembly-feature name if a single one is used, else undefined
+//   completeFeatureName : the complete-feature name if a single one is used, else undefined
 analyze := func(parentRegionsJson) {
 	res := {
 		enabled: false,
 		hasRegions: false,
 		ntRegionNames: [],
 		aaRegionNames: [],
-		assemblyFeature: undefined
+		completeFeatureName: undefined
 	}
 	if is_undefined(parentRegionsJson) || parentRegionsJson == "" {
 		return res
@@ -34,8 +34,8 @@ analyze := func(parentRegionsJson) {
 	afSet := {}
 	for pid in maps.getKeys(parents) {
 		ps := parents[pid]
-		if !is_undefined(ps.assemblyFeature) && ps.assemblyFeature != "" {
-			afSet[ps.assemblyFeature] = true
+		if !is_undefined(ps.completeFeatureName) && ps.completeFeatureName != "" {
+			afSet[ps.completeFeatureName] = true
 		}
 		regions := ps.regions
 		if is_undefined(regions) {
@@ -59,7 +59,7 @@ analyze := func(parentRegionsJson) {
 
 	afNames := maps.getKeys(afSet)
 	if len(afNames) == 1 {
-		res.assemblyFeature = afNames[0]
+		res.completeFeatureName = afNames[0]
 	}
 	return res
 }

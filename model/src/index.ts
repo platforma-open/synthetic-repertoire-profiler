@@ -48,7 +48,7 @@ export type ParentRegionConfig = {
   parentId: string;
   scheme: RegionScheme;
   /** Optional name for the whole-variant feature (e.g. `VDJRegion`). */
-  assemblyFeature?: string;
+  completeFeatureName?: string;
   regions: RegionDef[];
 };
 
@@ -67,15 +67,15 @@ export function buildParentRegionsJson(
     string,
     {
       scheme: RegionScheme;
-      assemblyFeature?: string;
+      completeFeatureName?: string;
       regions: { name: string; begin: number; end: number }[];
     }
   > = {};
   for (const c of configs ?? []) {
-    const af = c.assemblyFeature?.trim() || undefined;
+    const af = c.completeFeatureName?.trim() || undefined;
     if (c.scheme === "none" && !af) continue; // nothing to carry for this parent
     if (af && !FEATURE_NAME_RE.test(af))
-      throw new Error(`Assembly feature name '${af}' must be alphanumeric/underscore.`);
+      throw new Error(`Complete feature name '${af}' must be alphanumeric/underscore.`);
 
     let pos = 0;
     const regions = c.regions.map((r) => {
@@ -110,7 +110,7 @@ export function buildParentRegionsJson(
 
     parents[c.parentId] = {
       scheme: c.scheme,
-      assemblyFeature: af,
+      completeFeatureName: af,
       regions: c.scheme === "none" ? [] : regions,
     };
   }
