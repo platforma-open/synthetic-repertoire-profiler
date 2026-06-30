@@ -235,7 +235,7 @@ ACGTACGT..."
     <PlFileInput
       :model-value="app.model.data.knownNtFileHandle"
       label="Known NT variants"
-      :extensions="['tsv', 'csv']"
+      :extensions="['tsv']"
       clearable
       @update:model-value="(f) => setKnownFile('nt', f)"
     >
@@ -271,7 +271,7 @@ ACGTACGT..."
     <PlFileInput
       :model-value="app.model.data.knownAaFileHandle"
       label="Known AA variants"
-      :extensions="['tsv', 'csv']"
+      :extensions="['tsv']"
       clearable
       @update:model-value="(f) => setKnownFile('aa', f)"
     >
