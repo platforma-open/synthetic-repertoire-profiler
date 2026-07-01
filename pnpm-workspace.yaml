@@ -8,7 +8,7 @@ catalog:
   "@milaboratories/helpers": 1.14.2
   ag-grid-enterprise: ~34.1.2
   ag-grid-vue3: ~34.1.2
-  "@platforma-open/milaboratories.software-mitool": 2.3.1-102-main
+  "@platforma-open/milaboratories.software-mitool": 2.3.1-133-main
   "@platforma-sdk/model": 1.79.20
   "@platforma-sdk/ui-vue": 1.79.20
   "@platforma-sdk/workflow-tengo": 6.6.5
