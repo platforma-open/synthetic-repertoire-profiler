@@ -305,13 +305,15 @@ ACGTACGT..."
   </PlAccordionSection>
 
   <PlAccordionSection label="Advanced Settings">
-    <PlCheckbox v-model="app.model.data.ntStateMatrix">
-      Produce nucleotide-level state matrix
+    <PlCheckbox v-model="app.model.data.exportNt">
+      Export nucleotide-level results
       <PlTooltip class="info" position="top">
         <template #tooltip>
-          Enable this to emit the nucleotide-level position state matrix in addition to amino
-          acid-level, whose primary use is detecting synthesis artifacts (bad triplets / hairpins)
-          via under-represented variants.
+          Off by default: only amino-acid-level results are exported. Enable this to also export
+          every nucleotide-level column — nt variants and sequences, per-sample nt abundance, the nt
+          state matrix, parent→nt and nt↔aa linkers, and the nt known-set overlay. The nt state
+          matrix is useful for detecting synthesis artifacts (bad triplets / hairpins) via
+          under-represented variants.
         </template>
       </PlTooltip>
     </PlCheckbox>
