@@ -53,6 +53,11 @@ wf.body(func(args) {
 	inputData := args.resolvedInput.data
 	fileExtension := inputSpec.domain["pl7.app/fileExtension"]
 
+	// Opt-in nucleotide-level export (off by default). Gates the nt state matrix
+	// computation (via params) and every nt-related column added to the exported
+	// `variants` frame below. When off, only the aa level is exported.
+	exportNt := args.exportNt
+
 	// Materialize the parent reference and known-set files. Pasted FASTA travels
 	// as a string written to a file inside the per-sample command; uploaded handles
 	// are imported via file.importFile. Prerun already drove the uploads, so
@@ -82,7 +87,7 @@ wf.body(func(args) {
 		pattern: args.tagPattern,
 		patternParts: args.patternParts,
 		hasUmi: args.hasUmi,
-		ntStateMatrix: args.ntStateMatrix,
+		exportNt: exportNt,
 		parentFastaStr: parentFastaStr,
 		parentFile: parentFile,
 		parentRegionsJson: args.parentRegionsJson,
@@ -192,6 +197,7 @@ wf.body(func(args) {
 		fileOutput("variantsTsv"),
 		fileOutput("aaVariantsTsv"),
 		fileOutput("aaStateMatrixTsv"),
+		fileOutput("ntStateMatrixTsv"),
 		fileOutput("regionAnnotationTsv"),
 		fileOutput("qcJson"),
 		fileOutput("paramsJson"),
@@ -268,30 +274,39 @@ wf.body(func(args) {
 	ntPropsCols := importProps(aggVarsRun.output("ntProperties"), ntVariantAxis, false, rc.ntRegionNames)
 	aaPropsCols := importProps(aggVarsRun.output("aaProperties"), aaVariantAxis, true, rc.aaRegionNames)
 
-	// aa state matrix [variantKey(aa), parentId, position] -> state, deduped
-	// cross-sample.
-	stateMatrixRun := render.createEphemeral(aggregateStateMatrixTpl, {
-		aaStateMatrixData: perSampleResults.outputData("aaStateMatrixTsv")
-	})
-	aaStateMatrixCols := xsv.importFile(
-		stateMatrixRun.output("aaStateMatrix"),
-		"tsv",
-		{
-			axes: [
-				aaVariantAxis,
-				columnSpecs.parentIdAxisSpec("Parent"),
-				columnSpecs.positionAxisSpec("aminoacid", "Position (aa)")
-			],
-			columns: columnSpecs.stateMatrixColumns("aminoacid"),
-			storageFormat: "Parquet",
-			partitionKeyLength: 0
-		},
-		{
-			splitDataAndSpec: true,
-			cpu: 1,
-			mem: string(defaultXsvMemGB) + "GiB"
-		}
-	)
+	// State matrix [variantKey, parentId, position] -> state, deduped cross-sample.
+	// aa always; nt only when nt export is enabled (its per-sample TSV is an empty
+	// placeholder otherwise — see repertoire-pipeline). Same ephemeral aggregate
+	// serves both levels.
+	importStateMatrix := func(perSampleOutput, variantAxis, alphabet, posLabel) {
+		smRun := render.createEphemeral(aggregateStateMatrixTpl, {
+			stateMatrixData: perSampleResults.outputData(perSampleOutput)
+		})
+		return xsv.importFile(
+			smRun.output("stateMatrix"),
+			"tsv",
+			{
+				axes: [
+					variantAxis,
+					columnSpecs.parentIdAxisSpec("Parent"),
+					columnSpecs.positionAxisSpec(alphabet, posLabel)
+				],
+				columns: columnSpecs.stateMatrixColumns(alphabet),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{
+				splitDataAndSpec: true,
+				cpu: 1,
+				mem: string(defaultXsvMemGB) + "GiB"
+			}
+		)
+	}
+	aaStateMatrixCols := importStateMatrix("aaStateMatrixTsv", aaVariantAxis, "aminoacid", "Position (aa)")
+	ntStateMatrixCols := undefined
+	if exportNt {
+		ntStateMatrixCols = importStateMatrix("ntStateMatrixTsv", ntVariantAxis, "nucleotide", "Position (nt)")
+	}
 
 	// Region membership [parentId, position(aa)] -> region, deduped cross-sample.
 	// Only when the run defines regions (else there is no annotation to import).
@@ -391,13 +406,15 @@ wf.body(func(args) {
 
 	variantsPfBuilder := pframes.pFrameBuilder()
 	// Per-sample abundance ([sampleId, variantKey], partitioned by sampleId) — the
-	// downstream anchor. nt + aa.
-	for columnName in perSampleResults.listXsvColumns("ntAbundanceXsv") {
-		variantsPfBuilder.add(
-			"perSampleNt/" + columnName,
-			ntTrace.inject(perSampleResults.outputSpec("ntAbundanceXsv", columnName)),
-			perSampleResults.outputData("ntAbundanceXsv", columnName)
-		)
+	// downstream anchor. nt (gated by exportNt) + aa (always).
+	if exportNt {
+		for columnName in perSampleResults.listXsvColumns("ntAbundanceXsv") {
+			variantsPfBuilder.add(
+				"perSampleNt/" + columnName,
+				ntTrace.inject(perSampleResults.outputSpec("ntAbundanceXsv", columnName)),
+				perSampleResults.outputData("ntAbundanceXsv", columnName)
+			)
+		}
 	}
 	for columnName in perSampleResults.listXsvColumns("aaAbundanceXsv") {
 		variantsPfBuilder.add(
@@ -407,9 +424,11 @@ wf.body(func(args) {
 		)
 	}
 	// Per-variant cross-sample columns ([variantKey]): label, sequence, totals,
-	// (aa) ntVariantCount.
-	for k, v in ntPropsCols {
-		variantsPfBuilder.add("perVariantNt/" + k, ntTrace.inject(v.spec), v.data)
+	// (aa) ntVariantCount. nt gated by exportNt.
+	if exportNt {
+		for k, v in ntPropsCols {
+			variantsPfBuilder.add("perVariantNt/" + k, ntTrace.inject(v.spec), v.data)
+		}
 	}
 	for k, v in aaPropsCols {
 		variantsPfBuilder.add("perVariantAa/" + k, aaTrace.inject(v.spec), v.data)
@@ -419,18 +438,28 @@ wf.body(func(args) {
 	for k, v in aaStateMatrixCols {
 		variantsPfBuilder.add("stateMatrixAa/" + k, aaTrace.inject(v.spec), v.data)
 	}
+	// nt state matrix — same, only when nt export is enabled.
+	if exportNt {
+		for k, v in ntStateMatrixCols {
+			variantsPfBuilder.add("stateMatrixNt/" + k, ntTrace.inject(v.spec), v.data)
+		}
+	}
 	// Region membership (parent-derived; colours the aa state-matrix heat map).
 	if !is_undefined(regionAnnotationCols) {
 		for k, v in regionAnnotationCols {
 			variantsPfBuilder.add("regionAnnotation/" + k, baseTrace.inject(v.spec), v.data)
 		}
 	}
-	// Linkers — into the exported variants frame for downstream traversal.
-	for k, v in ntToAaCols {
-		variantsPfBuilder.add("aaToNt/" + k, baseTrace.inject(v.spec), v.data)
-	}
-	for k, v in parentNtCols {
-		variantsPfBuilder.add("parentNt/" + k, ntTrace.inject(v.spec), v.data)
+	// Linkers — into the exported variants frame for downstream traversal. The
+	// nt↔aa linker and parent→nt linker reference the nt variant axis, so they are
+	// meaningful only when the nt columns are exported (gated). parent→aa always.
+	if exportNt {
+		for k, v in ntToAaCols {
+			variantsPfBuilder.add("aaToNt/" + k, baseTrace.inject(v.spec), v.data)
+		}
+		for k, v in parentNtCols {
+			variantsPfBuilder.add("parentNt/" + k, ntTrace.inject(v.spec), v.data)
+		}
 	}
 	for k, v in parentAaCols {
 		variantsPfBuilder.add("parentAa/" + k, aaTrace.inject(v.spec), v.data)
@@ -518,43 +547,53 @@ wf.body(func(args) {
 			knownNtCols := importKnown(knownRun.output("knownNt"), [ntKnownAxis], columnSpecs.knownVariantColumns("nucleotide", true))
 			knownNtMetaCols := importKnownMetadata(knownNtFile, knownRun.output("knownNt"), args.knownNtSequenceColumn, args.knownNtMetadata, ntKnownAxis)
 
-			for k, v in knownLinkerNtCols {
-				variantsPfBuilder.add("knownLinkerNt/" + k, ntTrace.inject(v.spec), v.data)
-			}
-			for k, v in ntDistanceCols {
-				variantsPfBuilder.add("knownNt/" + k, ntTrace.inject(v.spec), v.data)
-			}
-			for k, v in knownNtCols {
-				variantsPfBuilder.add("knownVariantNt/" + k, ntTrace.inject(v.spec), v.data)
-			}
-			if !is_undefined(knownNtMetaCols) {
-				for k, v in knownNtMetaCols {
-					variantsPfBuilder.add("knownMetaNt/" + k, ntTrace.inject(v.spec), v.data)
+			// The nt known-set overlay is exported only when nt export is enabled;
+			// its columns key on the nt (variant/known) axes. The block-local Known
+			// Variants (NT) / Unmatched (NT) tables below are built regardless — they
+			// are views driven by the uploaded known-nt set, not the export toggle.
+			if exportNt {
+				for k, v in knownLinkerNtCols {
+					variantsPfBuilder.add("knownLinkerNt/" + k, ntTrace.inject(v.spec), v.data)
+				}
+				for k, v in ntDistanceCols {
+					variantsPfBuilder.add("knownNt/" + k, ntTrace.inject(v.spec), v.data)
+				}
+				for k, v in knownNtCols {
+					variantsPfBuilder.add("knownVariantNt/" + k, ntTrace.inject(v.spec), v.data)
+				}
+				if !is_undefined(knownNtMetaCols) {
+					for k, v in knownNtMetaCols {
+						variantsPfBuilder.add("knownMetaNt/" + k, ntTrace.inject(v.spec), v.data)
+					}
 				}
 			}
 
-			// knownAaToNt linker (designed nt→aa). The linker's two axes are both
-			// knownVariantKey (aa one-side leads, nt many-side follows) — distinct
-			// TSV column names per axis. (Synonymous count + convergence summary are
-			// keyed [knownVariantKey(aa)] and handled in the aa block / table below.)
-			aaKnownAxisLink := columnSpecs.knownVariantKeyAxisSpec(blockId, "aminoacid", "Known variant (aa)", "knownKeyAa")
-			ntKnownAxisLink := columnSpecs.knownVariantKeyAxisSpec(blockId, "nucleotide", "Known variant (nt)", "knownKeyNt")
-			knownAaToNtCols := importKnown(
-				knownRun.output("knownAaToNt"),
-				[aaKnownAxisLink, ntKnownAxisLink],
-				columnSpecs.linkerColumns("pl7.app/repertoire/knownAaToNt")
-			)
-			for k, v in knownAaToNtCols {
-				variantsPfBuilder.add("knownAaToNt/" + k, baseTrace.inject(v.spec), v.data)
-			}
-
-			// Known nt× sample abundance.
-			for columnName in perSampleResults.listXsvColumns("knownNtAbundanceXsv") {
-				variantsPfBuilder.add(
-					"knownAbundanceNt/" + columnName,
-					ntTrace.inject(perSampleResults.outputSpec("knownNtAbundanceXsv", columnName)),
-					perSampleResults.outputData("knownNtAbundanceXsv", columnName)
+			// knownAaToNt linker (designed nt→aa) + known nt× sample abundance —
+			// both reference the nt known axis, exported only when nt export is on.
+			if exportNt {
+				// The knownAaToNt linker's two axes are both knownVariantKey (aa
+				// one-side leads, nt many-side follows) — distinct TSV column names
+				// per axis. (Synonymous count + convergence summary are keyed
+				// [knownVariantKey(aa)] and handled in the aa block / table below.)
+				aaKnownAxisLink := columnSpecs.knownVariantKeyAxisSpec(blockId, "aminoacid", "Known variant (aa)", "knownKeyAa")
+				ntKnownAxisLink := columnSpecs.knownVariantKeyAxisSpec(blockId, "nucleotide", "Known variant (nt)", "knownKeyNt")
+				knownAaToNtCols := importKnown(
+					knownRun.output("knownAaToNt"),
+					[aaKnownAxisLink, ntKnownAxisLink],
+					columnSpecs.linkerColumns("pl7.app/repertoire/knownAaToNt")
 				)
+				for k, v in knownAaToNtCols {
+					variantsPfBuilder.add("knownAaToNt/" + k, baseTrace.inject(v.spec), v.data)
+				}
+
+				// Known nt× sample abundance.
+				for columnName in perSampleResults.listXsvColumns("knownNtAbundanceXsv") {
+					variantsPfBuilder.add(
+						"knownAbundanceNt/" + columnName,
+						ntTrace.inject(perSampleResults.outputSpec("knownNtAbundanceXsv", columnName)),
+						perSampleResults.outputData("knownNtAbundanceXsv", columnName)
+					)
+				}
 			}
 
 			knownVariantsNtPfBuilder := pframes.pFrameBuilder()
