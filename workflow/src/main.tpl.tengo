@@ -271,7 +271,12 @@ wf.body(func(args) {
 			}
 		)
 	}
-	ntPropsCols := importProps(aggVarsRun.output("ntProperties"), ntVariantAxis, false, rc.ntRegionNames)
+	// aa properties always; nt properties only when exported (skip the import
+	// entirely otherwise — nothing downstream consumes them).
+	ntPropsCols := undefined
+	if exportNt {
+		ntPropsCols = importProps(aggVarsRun.output("ntProperties"), ntVariantAxis, false, rc.ntRegionNames)
+	}
 	aaPropsCols := importProps(aggVarsRun.output("aaProperties"), aaVariantAxis, true, rc.aaRegionNames)
 
 	// State matrix [variantKey, parentId, position] -> state, deduped cross-sample.
@@ -357,22 +362,28 @@ wf.body(func(args) {
 			}
 		)
 	}
-	ntToAaCols := importLinker(
-		linkersRun.output("ntToAa"),
-		[
-			columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant (aa)", "aaKey"),
-			columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")
-		],
-		"pl7.app/repertoire/aaToNt"
-	)
-	parentNtCols := importLinker(
-		linkersRun.output("parentNt"),
-		[
-			columnSpecs.parentIdAxisSpec("Parent"),
-			columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")
-		],
-		"pl7.app/repertoire/parentLink"
-	)
+	// nt→aa and parent→nt linkers reference the nt variant axis, so they are
+	// imported only when nt export is enabled. parent→aa always.
+	ntToAaCols := undefined
+	parentNtCols := undefined
+	if exportNt {
+		ntToAaCols = importLinker(
+			linkersRun.output("ntToAa"),
+			[
+				columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant (aa)", "aaKey"),
+				columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")
+			],
+			"pl7.app/repertoire/aaToNt"
+		)
+		parentNtCols = importLinker(
+			linkersRun.output("parentNt"),
+			[
+				columnSpecs.parentIdAxisSpec("Parent"),
+				columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")
+			],
+			"pl7.app/repertoire/parentLink"
+		)
+	}
 	parentAaCols := importLinker(
 		linkersRun.output("parentAa"),
 		[
@@ -538,12 +549,9 @@ wf.body(func(args) {
 		// nt overlay — only when an nt known set ran (otherwise the nt tables are
 		// empty; skip importing them).
 		if !is_undefined(knownNtFile) {
-			knownLinkerNtCols := importKnown(
-				knownRun.output("knownLinkerNt"),
-				[ntKnownAxis, columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")],
-				columnSpecs.linkerColumns("pl7.app/repertoire/knownLink")
-			)
-			ntDistanceCols := importKnown(knownRun.output("ntDistance"), [ntVariantAxis], columnSpecs.knownDistanceColumns(false))
+			// knownNtCols / knownNtMetaCols feed both the export and the block-local
+			// Known Variants (NT) table, so they are always imported. The linker and
+			// distance columns are export-only — imported inside the exportNt gate.
 			knownNtCols := importKnown(knownRun.output("knownNt"), [ntKnownAxis], columnSpecs.knownVariantColumns("nucleotide", true))
 			knownNtMetaCols := importKnownMetadata(knownNtFile, knownRun.output("knownNt"), args.knownNtSequenceColumn, args.knownNtMetadata, ntKnownAxis)
 
@@ -552,6 +560,12 @@ wf.body(func(args) {
 			// Variants (NT) / Unmatched (NT) tables below are built regardless — they
 			// are views driven by the uploaded known-nt set, not the export toggle.
 			if exportNt {
+				knownLinkerNtCols := importKnown(
+					knownRun.output("knownLinkerNt"),
+					[ntKnownAxis, columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")],
+					columnSpecs.linkerColumns("pl7.app/repertoire/knownLink")
+				)
+				ntDistanceCols := importKnown(knownRun.output("ntDistance"), [ntVariantAxis], columnSpecs.knownDistanceColumns(false))
 				for k, v in knownLinkerNtCols {
 					variantsPfBuilder.add("knownLinkerNt/" + k, ntTrace.inject(v.spec), v.data)
 				}
