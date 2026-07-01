@@ -163,8 +163,13 @@ export type BlockData = {
   knownAaMetadataColumns: string[];
   knownAaImportError?: string;
 
-  // Opt-in nt-level state matrix; OFF by default (aa state matrix is always on).
-  ntStateMatrix: boolean;
+  // Opt-in nucleotide-level export; OFF by default. When on, the workflow emits
+  // the nt state matrix and exports every nt-related column (nt variants,
+  // per-sample nt abundance, nt sequences, parent→nt + nt↔aa linkers, and the nt
+  // known-set overlay) into the downstream `variants` frame. When off, only the
+  // amino-acid level is exported. (Was `ntStateMatrix`, which only toggled the nt
+  // state matrix — migrated forward below.)
+  exportNt: boolean;
 
   // Optional per-sample mitool resource overrides (Advanced). Empty = workflow
   // defaults. Passed to the parse + analyze exec steps.
@@ -200,26 +205,36 @@ export type BlockArgs = {
   knownAaIdColumn?: string;
   knownAaSequenceColumn?: string;
   knownAaMetadata?: KnownColumnInfo[];
-  ntStateMatrix: boolean;
+  exportNt: boolean;
   perProcessMemGB?: number;
   perProcessCPUs?: number;
   defaultBlockLabel: string;
   customBlockLabel: string;
 };
 
-const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
-  parentInputMode: "fastaSequence" as ParentInputMode,
-  defaultBlockLabel: "",
-  knownNtMetadataColumns: [],
-  knownAaMetadataColumns: [],
-  // Default pattern: insert capture on each mate, no UMI/anchors (paired-end).
-  tagPattern: "^(R1:*)\\^(R2:*)",
-  ntStateMatrix: false,
-  qcTableState: createPlDataTableStateV2(),
-  knownVariantsNtTableState: createPlDataTableStateV2(),
-  knownVariantsAaTableState: createPlDataTableStateV2(),
-  unmatchedVariantsNtTableState: createPlDataTableStateV2(),
-}));
+/** v1 data shape: the toggle was `ntStateMatrix` (nt state matrix only). v2
+ *  renames it to `exportNt` (governs all nt export). */
+type BlockDataV1 = Omit<BlockData, "exportNt"> & { ntStateMatrix: boolean };
+
+const dataModel = new DataModelBuilder()
+  .from<BlockDataV1>("v1")
+  .migrate<BlockData>("v2", ({ ntStateMatrix, ...rest }) => ({
+    ...rest,
+    exportNt: ntStateMatrix ?? false,
+  }))
+  .init(() => ({
+    parentInputMode: "fastaSequence" as ParentInputMode,
+    defaultBlockLabel: "",
+    knownNtMetadataColumns: [],
+    knownAaMetadataColumns: [],
+    // Default pattern: insert capture on each mate, no UMI/anchors (paired-end).
+    tagPattern: "^(R1:*)\\^(R2:*)",
+    exportNt: false,
+    qcTableState: createPlDataTableStateV2(),
+    knownVariantsNtTableState: createPlDataTableStateV2(),
+    knownVariantsAaTableState: createPlDataTableStateV2(),
+    unmatchedVariantsNtTableState: createPlDataTableStateV2(),
+  }));
 
 const DNA_IUPAC_RE = /^[ACGTacgtMKRYWSBDHVNmkrywsbdhvn]*$/;
 
@@ -523,7 +538,7 @@ export const platforma = BlockModelV3.create(dataModel)
             data.knownAaSequenceColumn,
           )
         : undefined,
-      ntStateMatrix: data.ntStateMatrix,
+      exportNt: data.exportNt,
       perProcessMemGB: data.perProcessMemGB,
       perProcessCPUs: data.perProcessCPUs,
       // Workflow trace label: the selected dataset's name (snapshotted by the

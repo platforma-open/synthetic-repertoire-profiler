@@ -1,13 +1,14 @@
-// Cross-sample state-matrix aggregation (ephemeral).
+// Cross-sample state-matrix aggregation (ephemeral). Level-neutral: used for both
+// the aa and the nt state matrix (identical TSV schema, one invocation each).
 //
 // The state matrix is a property of the variant (its states relative to a parent),
 // so it is identical in every sample a variant appears in. This concatenates the
-// per-sample aa-state-matrix TSVs and dedups by [variantKey, parentId, position],
+// per-sample state-matrix TSVs and dedups by [variantKey, parentId, position],
 // yielding one cross-variant table:
-//   aaStateMatrix.tsv  [variantKey(aa), parentId, position] -> state
+//   stateMatrix.tsv  [variantKey, parentId, position] -> state
 //
-// (The first TSV column is named `variantKey` by mitool but holds the aa variant
-// key — it matches the aa variant axis column name directly.)
+// (mitool names the first TSV column `variantKey` in both the aa and nt exports;
+// it holds the aa/nt variant key respectively, matching the variant axis column.)
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
@@ -15,23 +16,23 @@ maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 units := import("@platforma-sdk/workflow-tengo:units")
 
-self.defineOutputs("aaStateMatrix")
+self.defineOutputs("stateMatrix")
 
 self.awaitState("InputsLocked")
-self.awaitState("aaStateMatrixData", "ResourceReady")
+self.awaitState("stateMatrixData", "ResourceReady")
 
 self.body(func(inputs) {
 	wf := pt.workflow().mem(4 * units.GiB).cpu(2)
 
 	frames := []
-	rmMap := inputs.aaStateMatrixData.inputs()
+	rmMap := inputs.stateMatrixData.inputs()
 	for sKey in maps.getKeys(rmMap) {
 		frames = append(frames, wf.frame({
 			file: rmMap[sKey],
 			xsvType: "tsv"
 		}, { id: "sm_" + string(len(frames)) }))
 	}
-	ll.assert(len(frames) > 0, "no aa-state-matrix frames")
+	ll.assert(len(frames) > 0, "no state-matrix frames")
 
 	merged := frames[0]
 	if len(frames) > 1 {
@@ -42,11 +43,11 @@ self.body(func(inputs) {
 		groupBy("variantKey", "parentId", "position").
 		agg(pt.col("state").cast("String").first().alias("state")).
 		sort(["variantKey", "parentId", "position"]).
-		save("aaStateMatrix.tsv", { xsvType: "tsv" })
+		save("stateMatrix.tsv", { xsvType: "tsv" })
 
 	result := wf.run()
 
 	return {
-		aaStateMatrix: result.getFile("aaStateMatrix.tsv")
+		stateMatrix: result.getFile("stateMatrix.tsv")
 	}
 })
