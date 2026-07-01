@@ -1,8 +1,8 @@
 ---
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.model': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.ui': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.block': minor
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.model': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.ui': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.block': patch
 ---
 
 Make nucleotide-level export opt-in via a single "Export nucleotide-level results" checkbox (off by default).
