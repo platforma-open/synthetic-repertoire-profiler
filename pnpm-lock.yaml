@@ -19,11 +19,11 @@ catalogs:
       specifier: 1.3.0
       version: 1.3.0
     '@platforma-open/milaboratories.software-mitool':
-      specifier: 2.3.1-102-main
-      version: 2.3.1-102-main
+      specifier: 2.3.1-133-main
+      version: 2.3.1-133-main
     '@platforma-sdk/block-tools':
-      specifier: 2.11.5
-      version: 2.11.5
+      specifier: 2.11.6
+      version: 2.11.6
     '@platforma-sdk/model':
       specifier: 1.79.20
       version: 1.79.20
@@ -31,8 +31,8 @@ catalogs:
       specifier: 4.0.11
       version: 4.0.11
     '@platforma-sdk/test':
-      specifier: 1.79.22
-      version: 1.79.22
+      specifier: 1.79.23
+      version: 1.79.23
     '@platforma-sdk/ui-vue':
       specifier: 1.79.20
       version: 1.79.20
@@ -51,6 +51,9 @@ catalogs:
     turbo:
       specifier: ~2.8.11
       version: 2.8.21
+    typescript:
+      specifier: ~5.6.3
+      version: 5.6.3
     vitest:
       specifier: ~4.0.18
       version: 4.0.18
@@ -74,10 +77,10 @@ importers:
         version: 2.29.8(@types/node@26.0.0)
       '@milaboratories/ts-builder':
         specifier: 'catalog:'
-        version: 1.6.0(@types/node@26.0.0)(esbuild@0.27.7)(rollup@4.62.0)(vue@3.5.24(typescript@5.9.3))(yaml@2.9.0)
+        version: 1.6.0(@types/node@26.0.0)(esbuild@0.27.7)(rollup@4.62.0)(vue@3.5.24(typescript@6.0.3))(yaml@2.9.0)
       '@platforma-sdk/block-tools':
         specifier: 'catalog:'
-        version: 2.11.5(@types/node@26.0.0)
+        version: 2.11.6(@types/node@26.0.0)
       shx:
         specifier: 'catalog:'
         version: 0.4.0
@@ -86,7 +89,13 @@ importers:
         version: 2.8.21
 
   block:
-    dependencies:
+    devDependencies:
+      '@milaboratories/ts-builder':
+        specifier: 'catalog:'
+        version: 1.6.0(@types/node@26.0.0)(esbuild@0.27.7)(rollup@4.62.0)(vue@3.5.24(typescript@5.6.3))(yaml@2.9.0)
+      '@milaboratories/ts-configs':
+        specifier: 'catalog:'
+        version: 1.3.0
       '@platforma-open/milaboratories.synthetic-repertoire-profiler.model':
         specifier: workspace:*
         version: link:../model
@@ -96,13 +105,18 @@ importers:
       '@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow':
         specifier: workspace:*
         version: link:../workflow
-    devDependencies:
       '@platforma-sdk/block-tools':
         specifier: 'catalog:'
-        version: 2.11.5(@types/node@26.0.0)
+        version: 2.11.6(@types/node@26.0.0)
+      '@platforma-sdk/model':
+        specifier: 'catalog:'
+        version: 1.79.20
       shx:
         specifier: 'catalog:'
         version: 0.4.0
+      typescript:
+        specifier: 'catalog:'
+        version: 5.6.3
 
   model:
     dependencies:
@@ -127,7 +141,7 @@ importers:
         version: 1.3.0
       '@platforma-sdk/block-tools':
         specifier: 'catalog:'
-        version: 2.11.5(@types/node@26.0.0)
+        version: 2.11.6(@types/node@26.0.0)
 
   test:
     dependencies:
@@ -143,7 +157,7 @@ importers:
         version: 1.3.0
       '@platforma-sdk/test':
         specifier: 'catalog:'
-        version: 1.79.22(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)(vite@7.3.5(@types/node@26.0.0)(lightningcss@1.32.0)(yaml@2.9.0))
+        version: 1.79.23(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)(vite@7.3.5(@types/node@26.0.0)(lightningcss@1.32.0)(yaml@2.9.0))
       vitest:
         specifier: 'catalog:'
         version: 4.0.18(@types/node@26.0.0)(lightningcss@1.32.0)(yaml@2.9.0)
@@ -186,7 +200,7 @@ importers:
     dependencies:
       '@platforma-open/milaboratories.software-mitool':
         specifier: 'catalog:'
-        version: 2.3.1-102-main
+        version: 2.3.1-133-main
       '@platforma-sdk/workflow-tengo':
         specifier: 'catalog:'
         version: 6.6.5
@@ -196,7 +210,7 @@ importers:
         version: 4.0.11
       '@platforma-sdk/test':
         specifier: 'catalog:'
-        version: 1.79.22(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.27.7)(yaml@2.9.0))
+        version: 1.79.23(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.27.7)(yaml@2.9.0))
       shx:
         specifier: 'catalog:'
         version: 0.4.0
@@ -1022,8 +1036,8 @@ packages:
   '@milaboratories/pl-http@1.2.4':
     resolution: {integrity: sha512-QKmhx+WEvJCV9dUy/SBdQk/ApaJ5ewBFgm/b+XPlS10SusAdqUUTGvK5+hq8YSuUMXlHb/dk++UtI5YlDuDl2Q==}
 
-  '@milaboratories/pl-middle-layer@1.64.40':
-    resolution: {integrity: sha512-d71/T3zlTtunFgVum28FLhlZuKuwpT591B2ZfZVO6Jamd8nY54CxcBmIsIG4xVTqitvsQhNFiAJdkoYgXE6Inw==}
+  '@milaboratories/pl-middle-layer@1.64.41':
+    resolution: {integrity: sha512-6xXwmTaaImd6HQ2PZgUWGf1gXsfgEPz3zWQsmaUaPMyMusjPVynPCX2hnThqrPVf54mEMlvc3HTGaC+dofDF0g==}
     engines: {node: '>=22.19.0'}
 
   '@milaboratories/pl-model-backend@1.4.9':
@@ -1602,8 +1616,8 @@ packages:
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
     engines: {node: '>=14'}
 
-  '@platforma-open/milaboratories.software-mitool@2.3.1-102-main':
-    resolution: {integrity: sha512-U1Gq4X7HT1/GaF6nfBTZXh9870suiAtZFCP1PB9+quIhrWt0rb0n2lCC1oaOgPKwB6VtGztdnUFkfg7XHBh7Yg==}
+  '@platforma-open/milaboratories.software-mitool@2.3.1-133-main':
+    resolution: {integrity: sha512-1ycdwJ1V+ZLcd08sP0u62ZUguz1mpPS0grDEugd8Z1Rj8EXf+l3yWyhd7NRf/U2fi3mLVBUj14JcQJF5TvTSpw==}
 
   '@platforma-open/milaboratories.software-ptabler.schema@1.15.15':
     resolution: {integrity: sha512-zvPuRZgQyxjED+txJVgWHUOPeRp4TG1jOrJOtuw9WnwxFiHNjQHIB+Xe1j8f6skgMqZgRSQvEbhRvqbWjGmhKQ==}
@@ -1632,8 +1646,8 @@ packages:
   '@platforma-open/milaboratories.software-small-binaries@2.1.1':
     resolution: {integrity: sha512-KN1PR7YgUUfx1dxh/TtcoWpSZbOXbRxXzQuJ505qHuXuE0spYwC7bXnvJsEYbEwRcPMa0foTrjBnPNORE4yr+Q==}
 
-  '@platforma-sdk/block-tools@2.11.5':
-    resolution: {integrity: sha512-dM4KLiJLz3zQgJfJklq9M8/Q5yTIiaDLZ2ui1o0fsKoe3wB+cGA0VJCNAjjgLeKmvZd6zqd+2OmXpCn5pOBn+g==}
+  '@platforma-sdk/block-tools@2.11.6':
+    resolution: {integrity: sha512-CyekNfqEildNeTrkjAeaWC7ah+skGMb3d/crSZSgCWACPIVQwg2oRZiJliwmJU/ylcTONPDAef7DYOtmfXsgtw==}
     hasBin: true
 
   '@platforma-sdk/blocks-deps-updater@2.2.0':
@@ -1648,8 +1662,8 @@ packages:
     engines: {node: '>=22'}
     hasBin: true
 
-  '@platforma-sdk/test@1.79.22':
-    resolution: {integrity: sha512-So8pT0S0+bDmLHdhPPmHRz3cDdNeghDybL3dfbMKittrKF27WD6FaUqFOV96CtPpo4/bhDnZ8wL4ZUdXKChynA==}
+  '@platforma-sdk/test@1.79.23':
+    resolution: {integrity: sha512-vb5K4Rtjy5ogom3fBYpOxvKL+Nb50iURUdd1vjzN3pcQGx47omBnDr9YvNvUsRC3INhZibLzy44dUKD2la/IMw==}
 
   '@platforma-sdk/ui-vue@1.79.20':
     resolution: {integrity: sha512-VwBG8MKV1M2KMR2PgW+o6uxJJRCFGihaRsnkzLL8HGKM/Vr9k3FY/V929B1XAhU5y9wb1g7fKNJvy9JNEq5GiQ==}
@@ -4325,6 +4339,11 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  typescript@5.6.3:
+    resolution: {integrity: sha512-hjcS1mhfuyi4WW8IWtjP7brDrG2cuDZukyrYrSauoXGNgx0S7zceP07adYkJycEr56BOUTNPzbInooiN3fn1qw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
@@ -5985,7 +6004,7 @@ snapshots:
     dependencies:
       undici: 7.16.0
 
-  '@milaboratories/pl-middle-layer@1.64.40(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)':
+  '@milaboratories/pl-middle-layer@1.64.41(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)':
     dependencies:
       '@milaboratories/computable': 2.9.5
       '@milaboratories/helpers': 1.14.2
@@ -6004,7 +6023,7 @@ snapshots:
       '@milaboratories/pl-tree': 1.12.14
       '@milaboratories/resolve-helper': 1.1.3
       '@milaboratories/ts-helpers': 1.8.3
-      '@platforma-sdk/block-tools': 2.11.5(@types/node@26.0.0)
+      '@platforma-sdk/block-tools': 2.11.6(@types/node@26.0.0)
       '@platforma-sdk/model': 1.79.20
       '@platforma-sdk/workflow-tengo': 6.6.5
       canonicalize: 2.1.0
@@ -6076,10 +6095,10 @@ snapshots:
 
   '@milaboratories/tengo-tester@1.6.4': {}
 
-  '@milaboratories/ts-builder@1.6.0(@types/node@26.0.0)(esbuild@0.27.7)(rollup@4.62.0)(vue@3.5.24(typescript@5.9.3))(yaml@2.9.0)':
+  '@milaboratories/ts-builder@1.6.0(@types/node@26.0.0)(esbuild@0.27.7)(rollup@4.62.0)(vue@3.5.24(typescript@5.6.3))(yaml@2.9.0)':
     dependencies:
       '@milaboratories/ts-configs': 1.3.0
-      '@vitejs/plugin-vue': 6.0.7(vite@8.0.16(@types/node@26.0.0)(esbuild@0.27.7)(yaml@2.9.0))(vue@3.5.24(typescript@5.9.3))
+      '@vitejs/plugin-vue': 6.0.7(vite@8.0.16(@types/node@26.0.0)(esbuild@0.27.7)(yaml@2.9.0))(vue@3.5.24(typescript@5.6.3))
       commander: 15.0.0
       jsonc-parser: 3.3.1
       oxfmt: 0.35.0
@@ -6563,7 +6582,7 @@ snapshots:
   '@pkgjs/parseargs@0.11.0':
     optional: true
 
-  '@platforma-open/milaboratories.software-mitool@2.3.1-102-main': {}
+  '@platforma-open/milaboratories.software-mitool@2.3.1-133-main': {}
 
   '@platforma-open/milaboratories.software-ptabler.schema@1.15.15':
     dependencies:
@@ -6591,7 +6610,7 @@ snapshots:
       '@platforma-open/milaboratories.software-small-binaries.mnz-client': 1.6.5
       '@platforma-open/milaboratories.software-small-binaries.table-converter': 1.3.5
 
-  '@platforma-sdk/block-tools@2.11.5(@types/node@26.0.0)':
+  '@platforma-sdk/block-tools@2.11.6(@types/node@26.0.0)':
     dependencies:
       '@aws-sdk/client-s3': 3.859.0
       '@inquirer/prompts': 7.10.1(@types/node@26.0.0)
@@ -6640,11 +6659,11 @@ snapshots:
       commander: 15.0.0
       winston: 3.19.0
 
-  '@platforma-sdk/test@1.79.22(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)(vite@7.3.5(@types/node@26.0.0)(lightningcss@1.32.0)(yaml@2.9.0))':
+  '@platforma-sdk/test@1.79.23(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)(vite@7.3.5(@types/node@26.0.0)(lightningcss@1.32.0)(yaml@2.9.0))':
     dependencies:
       '@milaboratories/computable': 2.9.5
       '@milaboratories/pl-client': 3.12.0
-      '@milaboratories/pl-middle-layer': 1.64.40(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)
+      '@milaboratories/pl-middle-layer': 1.64.41(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)
       '@milaboratories/pl-tree': 1.12.14
       '@platforma-sdk/model': 1.79.20
       '@vitest/coverage-istanbul': 4.1.9(vitest@4.0.18(@types/node@26.0.0)(lightningcss@1.32.0)(yaml@2.9.0))
@@ -6670,11 +6689,11 @@ snapshots:
       - supports-color
       - vite
 
-  '@platforma-sdk/test@1.79.22(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.27.7)(yaml@2.9.0))':
+  '@platforma-sdk/test@1.79.23(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.27.7)(yaml@2.9.0))':
     dependencies:
       '@milaboratories/computable': 2.9.5
       '@milaboratories/pl-client': 3.12.0
-      '@milaboratories/pl-middle-layer': 1.64.40(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)
+      '@milaboratories/pl-middle-layer': 1.64.41(@bytecodealliance/preview2-shim@0.17.9)(@types/node@26.0.0)
       '@milaboratories/pl-tree': 1.12.14
       '@platforma-sdk/model': 1.79.20
       '@vitest/coverage-istanbul': 4.1.9(vitest@4.1.9)
@@ -7334,11 +7353,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@vitejs/plugin-vue@6.0.7(vite@8.0.16(@types/node@26.0.0)(esbuild@0.27.7)(yaml@2.9.0))(vue@3.5.24(typescript@5.9.3))':
+  '@vitejs/plugin-vue@6.0.7(vite@8.0.16(@types/node@26.0.0)(esbuild@0.27.7)(yaml@2.9.0))(vue@3.5.24(typescript@5.6.3))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.0.16(@types/node@26.0.0)(esbuild@0.27.7)(yaml@2.9.0)
-      vue: 3.5.24(typescript@5.9.3)
+      vue: 3.5.24(typescript@5.6.3)
 
   '@vitejs/plugin-vue@6.0.7(vite@8.0.16(@types/node@26.0.0)(esbuild@0.27.7)(yaml@2.9.0))(vue@3.5.24(typescript@6.0.3))':
     dependencies:
@@ -7565,11 +7584,11 @@ snapshots:
       '@vue/shared': 3.5.24
       csstype: 3.2.3
 
-  '@vue/server-renderer@3.5.24(vue@3.5.24(typescript@5.9.3))':
+  '@vue/server-renderer@3.5.24(vue@3.5.24(typescript@5.6.3))':
     dependencies:
       '@vue/compiler-ssr': 3.5.24
       '@vue/shared': 3.5.24
-      vue: 3.5.24(typescript@5.9.3)
+      vue: 3.5.24(typescript@5.6.3)
 
   '@vue/server-renderer@3.5.24(vue@3.5.24(typescript@6.0.3))':
     dependencies:
@@ -9428,6 +9447,8 @@ snapshots:
 
   typescript@5.4.5: {}
 
+  typescript@5.6.3: {}
+
   typescript@5.9.3: {}
 
   typescript@6.0.3: {}
@@ -9638,15 +9659,15 @@ snapshots:
       '@vue/language-core': 3.3.5
       typescript: 5.9.3
 
-  vue@3.5.24(typescript@5.9.3):
+  vue@3.5.24(typescript@5.6.3):
     dependencies:
       '@vue/compiler-dom': 3.5.24
       '@vue/compiler-sfc': 3.5.24
       '@vue/runtime-dom': 3.5.24
-      '@vue/server-renderer': 3.5.24(vue@3.5.24(typescript@5.9.3))
+      '@vue/server-renderer': 3.5.24(vue@3.5.24(typescript@5.6.3))
       '@vue/shared': 3.5.24
     optionalDependencies:
-      typescript: 5.9.3
+      typescript: 5.6.3
 
   vue@3.5.24(typescript@6.0.3):
     dependencies:
