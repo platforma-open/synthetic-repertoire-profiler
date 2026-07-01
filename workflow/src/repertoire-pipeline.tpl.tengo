@@ -20,7 +20,7 @@ units := import("@platforma-sdk/workflow-tengo:units")
 
 json := import("json")
 
-self.defineOutputs("parsedMic", "variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "logs")
+self.defineOutputs("parsedMic", "variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "logs")
 
 // Progress marker prefix — mitool emits `[==PROGRESS==]<stage>: <pct>% ETA: …`
 // on stderr when MI_PROGRESS_PREFIX is set; the block scrapes it for the
@@ -45,7 +45,9 @@ self.body(func(inputs) {
 	pattern := params.pattern
 	parts := params.patternParts
 	hasUmi := params.hasUmi
-	ntStateMatrix := params.ntStateMatrix
+	// Opt-in nt export: gates the nt state matrix computation here; main gates the
+	// nt column exports. Defensive default when the param is absent (removeUndefs).
+	exportNt := !is_undefined(params.exportNt) && params.exportNt
 	parentFastaStr := params.parentFastaStr
 	parentFile := params.parentFile
 	parentRegionsJson := params.parentRegionsJson
@@ -188,7 +190,7 @@ self.body(func(inputs) {
 			analyzeBuilder = analyzeBuilder.arg("--aa-id-column").arg(knownAaIdColumn)
 		}
 	}
-	if ntStateMatrix {
+	if exportNt {
 		analyzeBuilder = analyzeBuilder.arg("--nt-state-matrix")
 	}
 	analyzeBuilder = analyzeBuilder.
@@ -218,6 +220,9 @@ self.body(func(inputs) {
 		saveFile("out.aa-state-matrix.tsv").
 		saveFile("out.qc.json").
 		saveFile("out.params.json")
+	if exportNt {
+		analyzeBuilder = analyzeBuilder.saveFile("out.nt-state-matrix.tsv")
+	}
 	if emitRegionAnnotation {
 		analyzeBuilder = analyzeBuilder.saveFile("out.region-annotation.tsv")
 	}
@@ -400,6 +405,18 @@ self.body(func(inputs) {
 		).save("emptyRegionAnnotation.tsv", { xsvType: "tsv" })
 	}
 
+	// nt-state-matrix placeholder (right header, 0 rows) when nt export is off, so
+	// the `ntStateMatrixTsv` per-sample output is always present. Same headers mitool
+	// writes (variantKey, parentId, position, state); main imports it only when exportNt.
+	if !exportNt {
+		vAbund.filter(pt.lit(false)).select(
+			pt.col("variantKey").cast("String").alias("variantKey"),
+			pt.col("variantKey").cast("String").alias("parentId"),
+			pt.col("variantKey").cast("String").alias("position"),
+			pt.col("variantKey").cast("String").alias("state")
+		).save("emptyNtStateMatrix.tsv", { xsvType: "tsv" })
+	}
+
 	// --- Per-sample QC row -------------------------------------------------
 	// Recomputes the scalar fields of RepertoireQc.Report from the raw analyze
 	// TSVs (qc.json itself is nested JSON, not directly importable). ptabler
@@ -469,6 +486,7 @@ self.body(func(inputs) {
 		variantsTsv: analyzeCmd.getFile("out.variants.tsv"),
 		aaVariantsTsv: analyzeCmd.getFile("out.aa-variants.tsv"),
 		aaStateMatrixTsv: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
+		ntStateMatrixTsv: exportNt ? analyzeCmd.getFile("out.nt-state-matrix.tsv") : ptResult.getFile("emptyNtStateMatrix.tsv"),
 		regionAnnotationTsv: emitRegionAnnotation ? analyzeCmd.getFile("out.region-annotation.tsv") : ptResult.getFile("emptyRegionAnnotation.tsv"),
 		qcJson: analyzeCmd.getFile("out.qc.json"),
 		reports: reportsMap.build(),
