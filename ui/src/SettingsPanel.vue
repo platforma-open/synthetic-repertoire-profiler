@@ -336,16 +336,16 @@ ACGTACGT..."
     <PlNumberField
       v-model="app.model.data.maxMutationFraction"
       label="Max nucleotide mutations fraction"
-      :min-value="0"
+      :min-value="0.01"
       :max-value="1"
       :step="0.01"
       :clearable="true"
     >
       <template #tooltip>
         Ignore variants where too large a share of the sequence differs from the parent — the limit
-        scales with each parent's length instead of being a fixed count. Enter a value from 0 to 1:
-        for example, 0.1 allows up to 10% of positions to differ from the parent. Leave empty to
-        keep all (default).
+        scales with each parent's length instead of being a fixed count. Enter a value above 0 and
+        up to 1: for example, 0.1 allows up to 10% of positions to differ from the parent. Leave
+        empty to keep all (default).
       </template>
     </PlNumberField>
 
