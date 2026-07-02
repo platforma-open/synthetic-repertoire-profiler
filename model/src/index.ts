@@ -498,16 +498,15 @@ export const platforma = BlockModelV3.create(dataModel)
     // Mutation-load filter (Advanced): positive when set (empty = mitool default,
     // off). maxMutations counts alignment edit ops (positive integer);
     // maxMutationFraction is mutations / parentLength (0 < f ≤ 1). Both feed
-    // mitool's align-step filter.
-    if (
-      data.maxMutations !== undefined &&
-      (!Number.isInteger(data.maxMutations) || data.maxMutations < 1)
-    )
+    // mitool's align-step filter. Normalize null → undefined first: a cleared
+    // PlNumberField can rehydrate as null, which must read as "not set" — both for
+    // validation and so a cleared field projects identically to a never-set one
+    // (else the staleness gate fires on an edit that changes nothing).
+    const maxMutations = data.maxMutations ?? undefined;
+    const maxMutationFraction = data.maxMutationFraction ?? undefined;
+    if (maxMutations !== undefined && (!Number.isInteger(maxMutations) || maxMutations < 1))
       throw new Error("Max mutations must be a positive integer.");
-    if (
-      data.maxMutationFraction !== undefined &&
-      (data.maxMutationFraction <= 0 || data.maxMutationFraction > 1)
-    )
+    if (maxMutationFraction !== undefined && (maxMutationFraction <= 0 || maxMutationFraction > 1))
       throw new Error("Max mutation fraction must be between 0 and 1.");
 
     // Resource overrides: positive when set (empty = workflow defaults).
@@ -565,8 +564,8 @@ export const platforma = BlockModelV3.create(dataModel)
           )
         : undefined,
       exportNt: data.exportNt,
-      maxMutations: data.maxMutations,
-      maxMutationFraction: data.maxMutationFraction,
+      maxMutations,
+      maxMutationFraction,
       perProcessMemGB: data.perProcessMemGB,
       perProcessCPUs: data.perProcessCPUs,
       // Workflow trace label: the selected dataset's name (snapshotted by the
