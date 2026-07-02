@@ -11,12 +11,16 @@ export type AlignReport = {
   notAlignedReasons?: Record<string, number>;
 };
 
-// Human labels for the known not-aligned reason codes. Unknown codes fall back
-// to the raw code so a new reason still renders (just unlabelled).
+// Human labels for the alignment outcome codes mitool writes to
+// align.report.json (Success + the FragmentAligner.NotAlignedReason enum).
+// Unknown codes fall back to the raw code so a new reason still renders.
 const categoryLabels: Record<string, string> = {
   Success: "Successfully aligned",
-  NoSeedHits: "No seed hits",
-  LowScore: "Low score",
+  NoAlignment: "No alignment to parent",
+  IncompleteParentCoverage: "Partial parent coverage",
+  TooManyMutations: "Too many mutations",
+  LowBaseQuality: "Low base quality",
+  NoInput: "No usable sequence",
 };
 
 /** Build a stacked-bar value (Aligned + each not-aligned reason) for
@@ -38,10 +42,15 @@ export function getAlignmentChartSettings(alignReport: AlignReport | undefined) 
   const viridis = Gradient("viridis");
   const magma = Gradient("magma");
 
+  // Green for the aligned share; a distinct magma shade per not-aligned reason
+  // (light→dark), so the legend reads at a glance like the mixcr reports.
   const categoryColors = {
     Success: viridis.getNthOf(2, 5),
-    NoSeedHits: magma.getNthOf(3, 9),
-    LowScore: magma.getNthOf(6, 9),
+    NoAlignment: magma.getNthOf(1, 9),
+    IncompleteParentCoverage: magma.getNthOf(3, 9),
+    TooManyMutations: magma.getNthOf(5, 9),
+    LowBaseQuality: magma.getNthOf(6, 9),
+    NoInput: magma.getNthOf(7, 9),
   } as Record<string, Color>;
 
   return {
