@@ -97,7 +97,10 @@ wf.body(func(args) {
 		knownNtIdColumn: args.knownNtIdColumn,
 		knownNtSequenceColumn: args.knownNtSequenceColumn,
 		knownAaIdColumn: args.knownAaIdColumn,
-		knownAaSequenceColumn: args.knownAaSequenceColumn
+		knownAaSequenceColumn: args.knownAaSequenceColumn,
+		// Per-fragment mutation-load filter → mitool align step (-Malign.filter.*).
+		maxMutations: args.maxMutations,
+		maxMutationFraction: args.maxMutationFraction
 	}, { removeUndefs: true })
 
 	// One File-valued PColumn per analyze output, keyed by sampleId.
