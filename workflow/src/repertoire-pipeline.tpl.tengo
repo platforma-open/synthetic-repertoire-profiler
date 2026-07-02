@@ -59,6 +59,9 @@ self.body(func(inputs) {
 	knownNtSequenceColumn := params.knownNtSequenceColumn
 	knownAaIdColumn := params.knownAaIdColumn
 	knownAaSequenceColumn := params.knownAaSequenceColumn
+	// Per-fragment mutation-load filter (undefined = mitool default, off).
+	maxMutations := params.maxMutations
+	maxMutationFraction := params.maxMutationFraction
 	mitoolCPUs := inputs.mitoolCPUs
 	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
 
@@ -169,6 +172,15 @@ self.body(func(inputs) {
 		arg("--parents").arg("parents.fa").
 		arg("--preset").arg("default").
 		arg("--budget").arg("0")
+	// Mutation-load filter: set the align step's AlignFilterParams via -M mixins.
+	// mitool has no dedicated flags for these — they live in AlignParams.filter.
+	// Attached single-token form (-M<key>=<value>), matching mixcr-amplicon-alignment.
+	if !is_undefined(maxMutations) {
+		analyzeBuilder = analyzeBuilder.arg("-Malign.filter.maxMutations=" + string(int(maxMutations)))
+	}
+	if !is_undefined(maxMutationFraction) {
+		analyzeBuilder = analyzeBuilder.arg("-Malign.filter.maxMutationFraction=" + string(maxMutationFraction))
+	}
 	if !is_undefined(parentRegionsJson) {
 		analyzeBuilder = analyzeBuilder.arg("--parent-regions").arg("parents.regions.json")
 	}

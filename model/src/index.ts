@@ -171,6 +171,14 @@ export type BlockData = {
   // state matrix — migrated forward below.)
   exportNt: boolean;
 
+  // Optional per-fragment mutation-load filter (Advanced). Applied by mitool's
+  // align step (AlignParams.filter, via -Malign.filter.*): a fragment whose
+  // alignment to the parent carries more mutations than allowed is rejected as a
+  // likely misalignment / off-target read. Empty = mitool default (off). Both may
+  // be set; mitool applies each gate independently.
+  maxMutations?: number; // reject if the alignment has more than this many mutations (edit ops)
+  maxMutationFraction?: number; // reject if mutations / parentLength exceeds this (0 < f ≤ 1)
+
   // Optional per-sample mitool resource overrides (Advanced). Empty = workflow
   // defaults. Passed to the parse + analyze exec steps.
   perProcessMemGB?: number;
@@ -206,6 +214,9 @@ export type BlockArgs = {
   knownAaSequenceColumn?: string;
   knownAaMetadata?: KnownColumnInfo[];
   exportNt: boolean;
+  // Mutation-load filter → mitool -Malign.filter.maxMutations / maxMutationFraction.
+  maxMutations?: number;
+  maxMutationFraction?: number;
   perProcessMemGB?: number;
   perProcessCPUs?: number;
   defaultBlockLabel: string;
@@ -484,6 +495,21 @@ export const platforma = BlockModelV3.create(dataModel)
         throw new Error("Select the ID column for the known amino-acid set.");
     }
 
+    // Mutation-load filter (Advanced): positive when set (empty = mitool default,
+    // off). maxMutations counts alignment edit ops (positive integer);
+    // maxMutationFraction is mutations / parentLength (0 < f ≤ 1). Both feed
+    // mitool's align-step filter.
+    if (
+      data.maxMutations !== undefined &&
+      (!Number.isInteger(data.maxMutations) || data.maxMutations < 1)
+    )
+      throw new Error("Max mutations must be a positive integer.");
+    if (
+      data.maxMutationFraction !== undefined &&
+      (data.maxMutationFraction <= 0 || data.maxMutationFraction > 1)
+    )
+      throw new Error("Max mutation fraction must be between 0 and 1.");
+
     // Resource overrides: positive when set (empty = workflow defaults).
     if (data.perProcessMemGB !== undefined && data.perProcessMemGB < 1)
       throw new Error("Memory per process must be at least 1 GB.");
@@ -539,6 +565,8 @@ export const platforma = BlockModelV3.create(dataModel)
           )
         : undefined,
       exportNt: data.exportNt,
+      maxMutations: data.maxMutations,
+      maxMutationFraction: data.maxMutationFraction,
       perProcessMemGB: data.perProcessMemGB,
       perProcessCPUs: data.perProcessCPUs,
       // Workflow trace label: the selected dataset's name (snapshotted by the
