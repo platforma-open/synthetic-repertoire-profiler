@@ -118,11 +118,11 @@ wf.body(func(args) {
 		}
 	}
 
-	ntVariantAxis := columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)")
-	aaVariantAxis := columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant (aa)")
+	ntVariantAxis := columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant nt")
+	aaVariantAxis := columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant aa")
 
-	ntKnownAxis := columnSpecs.knownVariantKeyAxisSpec(blockId, "nucleotide", "Known variant (nt)")
-	aaKnownAxis := columnSpecs.knownVariantKeyAxisSpec(blockId, "aminoacid", "Known variant (aa)")
+	ntKnownAxis := columnSpecs.knownVariantKeyAxisSpec(blockId, "nucleotide", "Known variant nt")
+	aaKnownAxis := columnSpecs.knownVariantKeyAxisSpec(blockId, "aminoacid", "Known variant aa")
 
 	// Per-sample Xsv target: axes are the data axes; processColumn prepends the
 	// sampleId partition, yielding [sampleId, …] PARTITIONED by sampleId — the
@@ -310,10 +310,10 @@ wf.body(func(args) {
 			}
 		)
 	}
-	aaStateMatrixCols := importStateMatrix("aaStateMatrixTsv", aaVariantAxis, "aminoacid", "Position (aa)")
+	aaStateMatrixCols := importStateMatrix("aaStateMatrixTsv", aaVariantAxis, "aminoacid", "Position aa")
 	ntStateMatrixCols := undefined
 	if exportNt {
-		ntStateMatrixCols = importStateMatrix("ntStateMatrixTsv", ntVariantAxis, "nucleotide", "Position (nt)")
+		ntStateMatrixCols = importStateMatrix("ntStateMatrixTsv", ntVariantAxis, "nucleotide", "Position nt")
 	}
 
 	// Region membership [parentId, position(aa)] -> region, deduped cross-sample.
@@ -329,7 +329,7 @@ wf.body(func(args) {
 			{
 				axes: [
 					columnSpecs.parentIdAxisSpec("Parent"),
-					columnSpecs.positionAxisSpec("aminoacid", "Position (aa)")
+					columnSpecs.positionAxisSpec("aminoacid", "Position aa")
 				],
 				columns: columnSpecs.regionAnnotationColumns(),
 				storageFormat: "Parquet",
@@ -373,8 +373,8 @@ wf.body(func(args) {
 		ntToAaCols = importLinker(
 			linkersRun.output("ntToAa"),
 			[
-				columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant (aa)", "aaKey"),
-				columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")
+				columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant aa", "aaKey"),
+				columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant nt", "ntKey")
 			],
 			"pl7.app/repertoire/aaToNt"
 		)
@@ -382,7 +382,7 @@ wf.body(func(args) {
 			linkersRun.output("parentNt"),
 			[
 				columnSpecs.parentIdAxisSpec("Parent"),
-				columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")
+				columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant nt", "ntKey")
 			],
 			"pl7.app/repertoire/parentLink"
 		)
@@ -391,7 +391,7 @@ wf.body(func(args) {
 		linkersRun.output("parentAa"),
 		[
 			columnSpecs.parentIdAxisSpec("Parent"),
-			columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant (aa)", "aaKey")
+			columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant aa", "aaKey")
 		],
 		"pl7.app/repertoire/parentLink"
 	)
@@ -565,7 +565,7 @@ wf.body(func(args) {
 			if exportNt {
 				knownLinkerNtCols := importKnown(
 					knownRun.output("knownLinkerNt"),
-					[ntKnownAxis, columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant (nt)", "ntKey")],
+					[ntKnownAxis, columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant nt", "ntKey")],
 					columnSpecs.linkerColumns("pl7.app/repertoire/knownLink")
 				)
 				ntDistanceCols := importKnown(knownRun.output("ntDistance"), [ntVariantAxis], columnSpecs.knownDistanceColumns(false))
@@ -592,8 +592,8 @@ wf.body(func(args) {
 				// one-side leads, nt many-side follows) — distinct TSV column names
 				// per axis. (Synonymous count + convergence summary are keyed
 				// [knownVariantKey(aa)] and handled in the aa block / table below.)
-				aaKnownAxisLink := columnSpecs.knownVariantKeyAxisSpec(blockId, "aminoacid", "Known variant (aa)", "knownKeyAa")
-				ntKnownAxisLink := columnSpecs.knownVariantKeyAxisSpec(blockId, "nucleotide", "Known variant (nt)", "knownKeyNt")
+				aaKnownAxisLink := columnSpecs.knownVariantKeyAxisSpec(blockId, "aminoacid", "Known variant aa", "knownKeyAa")
+				ntKnownAxisLink := columnSpecs.knownVariantKeyAxisSpec(blockId, "nucleotide", "Known variant nt", "knownKeyNt")
 				knownAaToNtCols := importKnown(
 					knownRun.output("knownAaToNt"),
 					[aaKnownAxisLink, ntKnownAxisLink],
@@ -643,7 +643,7 @@ wf.body(func(args) {
 		// the nt set when only --known is given).
 		knownLinkerAaCols := importKnown(
 			knownRun.output("knownLinkerAa"),
-			[aaKnownAxis, columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant (aa)", "aaKey")],
+			[aaKnownAxis, columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant aa", "aaKey")],
 			columnSpecs.linkerColumns("pl7.app/repertoire/knownLink")
 		)
 		aaDistanceCols := importKnown(knownRun.output("aaDistance"), [aaVariantAxis], columnSpecs.knownDistanceColumns(true))
