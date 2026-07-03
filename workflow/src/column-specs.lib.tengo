@@ -90,7 +90,7 @@ stateMatrixColumns := func(alphabet) {
 			name: "pl7.app/repertoire/stateMatrix",
 			valueType: "String",
 			annotations: tableAnno(70000, "default", {
-				"pl7.app/label": (alphabet == "aminoacid") ? "Mutation State (aa)" : "Mutation State (nt)",
+				"pl7.app/label": (alphabet == "aminoacid") ? "Mutation State aa" : "Mutation State nt",
 				"pl7.app/table/fontFamily": "monospace"
 			})
 		}
@@ -138,7 +138,7 @@ knownVariantColumns := func(alphabet, withAbundance) {
 			name: "pl7.app/label",
 			valueType: "String",
 			annotations: tableAnno(100000, "default", {
-				"pl7.app/label": "Known variant"
+				"pl7.app/label": "Known Variant Id"
 			})
 		}
 	}, {
@@ -160,7 +160,7 @@ knownVariantColumns := func(alphabet, withAbundance) {
 				"pl7.app/isMainSequence": "true",
 				"pl7.app/isAssemblingFeature": "true",
 				"pl7.app/table/fontFamily": "monospace",
-				"pl7.app/label": (alphabet == "aminoacid") ? "Known Sequence (aa)" : "Known Sequence (nt)"
+				"pl7.app/label": (alphabet == "aminoacid") ? "Known Sequence aa" : "Known Sequence nt"
 			})
 		}
 	}]
@@ -177,7 +177,7 @@ knownVariantColumns := func(alphabet, withAbundance) {
 					"pl7.app/isAbundance": "true",
 					"pl7.app/abundance/unit": "reads",
 					"pl7.app/abundance/normalized": "false",
-					"pl7.app/label": "Total reads"
+					"pl7.app/label": "Supporting Reads"
 				})
 			}
 		}, {
@@ -189,7 +189,7 @@ knownVariantColumns := func(alphabet, withAbundance) {
 				valueType: "Int",
 				annotations: tableAnno(85000, "default", {
 					"pl7.app/min": "1",
-					"pl7.app/label": "Number of samples"
+					"pl7.app/label": "Number of Samples"
 				})
 			}
 		})
@@ -382,7 +382,7 @@ perSampleAbundanceColumns := func() {
 				"pl7.app/abundance/normalized": "false",
 				"pl7.app/abundance/isPrimary": "true",
 				"pl7.app/isAnchor": "true",
-				"pl7.app/label": "Number of reads"
+				"pl7.app/label": "Number of Reads"
 			})
 		}
 	}, {
@@ -412,7 +412,7 @@ perSampleAbundanceColumns := func() {
 // it by {feature, alphabet}.
 regionSeqColumns := func(alphabet, regionNames) {
 	prefix := (alphabet == "aminoacid") ? "aaSeq" : "nSeq"
-	suffix := (alphabet == "aminoacid") ? " (aa)" : " (nt)"
+	suffix := (alphabet == "aminoacid") ? " aa" : " nt"
 	cols := []
 	for i := 0; i < len(regionNames); i++ {
 		rn := regionNames[i]
@@ -466,7 +466,7 @@ regionAnnotationColumns := func() {
 // relabels the whole-variant sequence feature (e.g. VDJRegion).
 aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
 	hasCompleteFeature := !is_undefined(completeFeatureName) && completeFeatureName != ""
-	seqSuffix := (alphabet == "aminoacid") ? " (aa)" : " (nt)"
+	seqSuffix := (alphabet == "aminoacid") ? " aa" : " nt"
 	seqLabel := (hasCompleteFeature ? completeFeatureName : "Sequence") + seqSuffix
 	cols := [{
 		column: "variantLabel",
@@ -475,7 +475,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
 			name: "pl7.app/label",
 			valueType: "String",
 			annotations: tableAnno(100000, "default", {
-				"pl7.app/label": "Variant"
+				"pl7.app/label": "Variant Id"
 			})
 		}
 	}, {
@@ -530,7 +530,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
 			},
 			annotations: tableAnno(94000, "default", {
 				"pl7.app/min": "0",
-				"pl7.app/label": "Mutation count"
+				"pl7.app/label": (alphabet == "aminoacid") ? "AA mutations" : "Nt mutations"
 			})
 		}
 	}, {
@@ -545,7 +545,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
 				"pl7.app/isAbundance": "true",
 				"pl7.app/abundance/unit": "reads",
 				"pl7.app/abundance/normalized": "false",
-				"pl7.app/label": "Total reads"
+				"pl7.app/label": "Supporting Reads"
 			})
 		}
 	}, {
@@ -558,7 +558,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
 			annotations: tableAnno(88000, "default", {
 				"pl7.app/min": "0",
 				"pl7.app/max": "1",
-				"pl7.app/label": "Mean read fraction",
+				"pl7.app/label": "Mean Fraction of Reads",
 				"pl7.app/format": ".2p"
 			})
 		}
@@ -571,7 +571,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
 			valueType: "Int",
 			annotations: tableAnno(85000, "default", {
 				"pl7.app/min": "1",
-				"pl7.app/label": "Number of samples"
+				"pl7.app/label": "Number of Samples"
 			})
 		}
 	}]
