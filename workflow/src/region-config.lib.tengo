@@ -64,6 +64,24 @@ analyze := func(parentRegionsJson) {
 	return res
 }
 
+// Static region config for whole-dataset vdjAutoDetect: every parent is a VDJ
+// V-domain with the canonical FR1–FR4 partition + VDJRegion whole-variant feature.
+// Region NAMES are fixed; the offsets are computed by the workflow (repseqio) and
+// live only in the mitool overlay file. All seven regions are declared aa-eligible
+// — the assemble step guarantees they are codon-aligned (else it fails), so mitool
+// emits every aaSeq{region} column and the import never references a missing one.
+vdjAuto := func() {
+	names := ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
+	return {
+		enabled: true,
+		hasRegions: true,
+		ntRegionNames: names,
+		aaRegionNames: names,
+		completeFeatureName: "VDJRegion"
+	}
+}
+
 export {
-	analyze: analyze
+	analyze: analyze,
+	vdjAuto: vdjAuto
 }

@@ -141,8 +141,14 @@ export type BlockData = {
 
   // Optional per-parent region schemes (FR/CDR or custom), keyed by parent id.
   // Empty/absent = no regions (today's behaviour). Projected to the
-  // `--parent-regions` overlay JSON in args.
+  // `--parent-regions` overlay JSON in args. Ignored while `vdjAutoDetect` is on.
   parentRegions?: ParentRegionConfig[];
+
+  // Whole-dataset germline auto-annotation. When true, EVERY parent is treated as
+  // a VDJ V-domain and its FR1–FR4 boundaries are inferred from germline in the
+  // workflow (repseqio) — the manual per-parent region editor is hidden and
+  // `parentRegions` is not projected. All-or-nothing; no mixing with manual schemes.
+  vdjAutoDetect?: boolean;
 
   // Optional known-variant set(s) — TSV with arbitrary headers, nt and/or aa.
   // May supply one, both, or neither. The columns are user-mapped (the format
@@ -201,7 +207,13 @@ export type BlockArgs = {
   parentSequence?: string;
   parentFileHandle?: ImportFileHandle;
   // `--parent-regions` overlay JSON (built from parentRegions); absent = none.
+  // Suppressed (undefined) when vdjAutoDetect is on — the workflow builds the
+  // overlay from germline inference instead.
   parentRegionsJson?: string;
+  // Whole-dataset germline auto-annotation. When true, the workflow infers every
+  // parent's FR1–FR4 from germline (repseqio) and builds the `--parent-regions`
+  // overlay itself. Absent/false = use the manual `parentRegionsJson`.
+  vdjAutoDetect?: boolean;
   knownNtFileHandle?: ImportFileHandle;
   knownAaFileHandle?: ImportFileHandle;
   // User-mapped known-set columns. ID/Sequence names go to mitool's
@@ -241,6 +253,7 @@ const dataModel = new DataModelBuilder()
     // Default pattern: insert capture on each mate, no UMI/anchors (paired-end).
     tagPattern: "^(R1:*)\\^(R2:*)",
     exportNt: false,
+    vdjAutoDetect: false,
     qcTableState: createPlDataTableStateV2(),
     knownVariantsNtTableState: createPlDataTableStateV2(),
     knownVariantsAaTableState: createPlDataTableStateV2(),
@@ -539,7 +552,12 @@ export const platforma = BlockModelV3.create(dataModel)
       // Suppress the inactive mode's field so the staleness gate ignores it.
       parentSequence: data.parentInputMode === "fastaSequence" ? data.parentSequence : undefined,
       parentFileHandle: data.parentInputMode === "fastaFile" ? data.parentFileHandle : undefined,
-      parentRegionsJson: buildParentRegionsJson(data.parentRegions),
+      // vdjAutoDetect overrides the manual overlay: the workflow infers all parents'
+      // regions from germline, so the manual parentRegions projection is suppressed.
+      parentRegionsJson: data.vdjAutoDetect
+        ? undefined
+        : buildParentRegionsJson(data.parentRegions),
+      vdjAutoDetect: data.vdjAutoDetect ? true : undefined,
       knownNtFileHandle: data.knownNtFileHandle,
       knownAaFileHandle: data.knownAaFileHandle,
       // Column mapping per level — suppressed when the level's file is absent.
