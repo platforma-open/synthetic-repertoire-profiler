@@ -50,7 +50,11 @@ self.body(func(inputs) {
 	exportNt := !is_undefined(params.exportNt) && params.exportNt
 	parentFastaStr := params.parentFastaStr
 	parentFile := params.parentFile
+	// Regions overlay for mitool: either a JSON string (manual schemes, written to
+	// file here) or a precomputed file resource (vdjAutoDetect — built once upstream).
 	parentRegionsJson := params.parentRegionsJson
+	parentRegionsFile := params.parentRegionsFile
+	hasParentRegions := !is_undefined(parentRegionsJson) || !is_undefined(parentRegionsFile)
 	emitRegionAnnotation := !is_undefined(params.emitRegionAnnotation) && params.emitRegionAnnotation
 	knownNtFile := params.knownNtFile
 	knownAaFile := params.knownAaFile
@@ -181,7 +185,7 @@ self.body(func(inputs) {
 	if !is_undefined(maxMutationFraction) {
 		analyzeBuilder = analyzeBuilder.arg("-Malign.filter.maxMutationFraction=" + string(maxMutationFraction))
 	}
-	if !is_undefined(parentRegionsJson) {
+	if hasParentRegions {
 		analyzeBuilder = analyzeBuilder.arg("--parent-regions").arg("parents.regions.json")
 	}
 	if !is_undefined(knownNtFile) {
@@ -217,6 +221,8 @@ self.body(func(inputs) {
 	}
 	if !is_undefined(parentRegionsJson) {
 		analyzeBuilder = analyzeBuilder.writeFile("parents.regions.json", parentRegionsJson)
+	} else if !is_undefined(parentRegionsFile) {
+		analyzeBuilder = analyzeBuilder.addFile("parents.regions.json", parentRegionsFile)
 	}
 	if !is_undefined(knownNtFile) {
 		analyzeBuilder = analyzeBuilder.addFile("known_nt.tsv", knownNtFile)

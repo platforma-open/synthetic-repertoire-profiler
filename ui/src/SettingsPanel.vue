@@ -228,7 +228,22 @@ ACGTACGT..."
   </PlTextField>
 
   <PlAccordionSection label="Region scheme">
-    <RegionSchemeEditor />
+    <PlCheckbox
+      :model-value="app.model.data.vdjAutoDetect ?? false"
+      @update:model-value="(v) => (app.model.data.vdjAutoDetect = v)"
+    >
+      Auto-detect VDJ regions (germline)
+      <PlTooltip class="info" position="top">
+        <template #tooltip>
+          Treats every parent as an antibody/TCR V-domain and infers its FR1–FR4 boundaries from
+          germline on Run (via repseqio), instead of you entering region lengths by hand. Parents
+          must be in-frame V-domains; a parent whose CDR3 can't be located fails the run with a
+          message so you can switch it back to manual annotation. When on, the manual per-parent
+          editor below is hidden.
+        </template>
+      </PlTooltip>
+    </PlCheckbox>
+    <RegionSchemeEditor v-if="!app.model.data.vdjAutoDetect" />
   </PlAccordionSection>
 
   <PlAccordionSection label="Known Variants">
