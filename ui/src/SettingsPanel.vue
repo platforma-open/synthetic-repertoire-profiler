@@ -210,25 +210,42 @@ ACGTACGT..."
     </template>
   </PlFileInput>
 
-  <PlTextField
-    v-model="app.model.data.tagPattern"
-    label="Tag pattern"
-    placeholder="e.g. ^N{16}CAGT(UMI:N{18})(R1:*)\^(R2:*)"
-    :error="
-      pairedEndMismatch
-        ? 'Pattern includes a Read 2 half but the selected input is single-end. Remove the R2 half or pick a paired-end input.'
-        : undefined
-    "
-  >
-    <template #tooltip>
-      Tag pattern for primer trimming, UMI extraction etc. Support MiXCR pattern syntax. Required:
-      the insert capture (R1/R2) marks the region aligned to the parent, and any UMI capture enables
-      molecule-level counting.
-    </template>
-  </PlTextField>
+  <PlAccordionSection label="Barcodes">
+    <PlTextField
+      v-model="app.model.data.tagPattern"
+      label="Tag pattern"
+      placeholder="e.g. ^N{16}CAGT(UMI:N{18})(R1:*)\^(R2:*)"
+      :error="
+        pairedEndMismatch
+          ? 'Pattern includes a Read 2 half but the selected input is single-end. Remove the R2 half or pick a paired-end input.'
+          : undefined
+      "
+    >
+      <template #tooltip>
+        Tag pattern for primer trimming, UMI extraction etc. Support MiXCR pattern syntax. Required:
+        the insert capture (R1/R2) marks the region aligned to the parent, and any UMI capture
+        enables molecule-level counting.
+      </template>
+    </PlTextField>
+  </PlAccordionSection>
 
-  <PlAccordionSection label="Region scheme">
-    <RegionSchemeEditor />
+  <PlAccordionSection label="Region annotation">
+    <PlCheckbox
+      :model-value="app.model.data.vdjAutoDetect ?? false"
+      @update:model-value="(v) => (app.model.data.vdjAutoDetect = v)"
+    >
+      Auto-detect VDJ regions (germline)
+      <PlTooltip class="info" position="top">
+        <template #tooltip>
+          Treats every parent as an antibody/TCR V-domain and infers its FR1–FR4 boundaries from
+          germline on Run (via repseqio), instead of you entering region lengths by hand. Parents
+          must be in-frame V-domains; a parent whose CDR3 can't be located fails the run with a
+          message so you can switch it back to manual annotation. When on, the manual per-parent
+          editor below is hidden.
+        </template>
+      </PlTooltip>
+    </PlCheckbox>
+    <RegionSchemeEditor v-if="!app.model.data.vdjAutoDetect" />
   </PlAccordionSection>
 
   <PlAccordionSection label="Known Variants">

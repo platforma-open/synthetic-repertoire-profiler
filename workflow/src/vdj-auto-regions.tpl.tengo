@@ -1,0 +1,143 @@
+// VDJ region auto-detection (whole-dataset `vdjAutoDetect`).
+//
+// Reuses the mixcr-amplicon-alignment germline flow to infer each parent's FR1–FR4
+// boundaries, then emits the mitool `--parent-regions` overlay JSON:
+//
+//   split (python)   parents.fa            -> vGenes.fasta / jGenes.fasta + splits.json
+//                                             (each parent cut at mid-CDR3)
+//   repseqio         fromFasta V / J -> merge -> inferPoints V(150) / J(30) -> compile
+//                                          -> referenceLibrary.json (with anchor points)
+//   assemble (python) library + splits    -> parents.regions.json (FR1..FR4, VDJRegion)
+//
+// Chain is a fixed placeholder (`IGH`, taxon 1111): repseqio inferPoints aligns
+// against the whole built-in reference regardless of chain (finding F1), so the
+// tag never restricts inference. Fail-fast (per parent) lives in the python glue.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+
+repseqioSw := assets.importSoftware("@platforma-open/milaboratories.software-repseqio:main")
+vdjToolsSw := assets.importSoftware("@platforma-open/milaboratories.synthetic-repertoire-profiler.vdj-region-tools:main")
+
+self.defineOutputs("parentRegionsJson")
+
+self.body(func(inputs) {
+	parentFastaStr := inputs.parentFastaStr
+	parentFile := inputs.parentFile
+
+	// 1) Split each parent at mid-CDR3 into a V-half and a J-half; record the
+	//    split offset per parent id (splits.json).
+	splitBuilder := exec.builder().
+		software(vdjToolsSw).
+		arg("split").
+		arg("--input").arg("parents.fa").
+		arg("--v-out").arg("vGenes.fasta").
+		arg("--j-out").arg("jGenes.fasta").
+		arg("--splits-out").arg("splits.json").
+		saveFile("vGenes.fasta").
+		saveFile("jGenes.fasta").
+		saveFile("splits.json").
+		printErrStreamToStdout().
+		cpu(1).mem("2GiB")
+	if !is_undefined(parentFastaStr) {
+		splitBuilder = splitBuilder.writeFile("parents.fa", parentFastaStr)
+	} else {
+		splitBuilder = splitBuilder.addFile("parents.fa", parentFile)
+	}
+	splitRes := splitBuilder.run()
+	vGenesFasta := splitRes.getFile("vGenes.fasta")
+	jGenesFasta := splitRes.getFile("jGenes.fasta")
+	splitsJson := splitRes.getFile("splits.json")
+
+	// 2) repseqio: build the reference library and infer anchor points.
+	vFromFasta := exec.builder().
+		software(repseqioSw).
+		arg("fromFasta").
+		arg("--chain").arg("IGH").
+		arg("--gene-type").arg("V").
+		arg("--species-name").arg("custom").
+		arg("--taxon-id").arg("1111").
+		arg("--gene-feature").arg("VRegion").
+		arg("--name-index").arg("0").
+		addFile("vGenes.fasta", vGenesFasta).
+		arg("vGenes.fasta").
+		arg("vGenes.json").saveFile("vGenes.json").
+		cpu(1).mem("4GiB").run()
+
+	jFromFasta := exec.builder().
+		software(repseqioSw).
+		arg("fromFasta").
+		arg("--chain").arg("IGH").
+		arg("--gene-type").arg("J").
+		arg("--species-name").arg("custom").
+		arg("--taxon-id").arg("1111").
+		arg("--gene-feature").arg("JRegion").
+		arg("--name-index").arg("0").
+		addFile("jGenes.fasta", jGenesFasta).
+		arg("jGenes.fasta").
+		arg("jGenes.json").saveFile("jGenes.json").
+		cpu(1).mem("4GiB").run()
+
+	mergeRes := exec.builder().
+		software(repseqioSw).
+		arg("merge").
+		addFile("vGenes.json", vFromFasta.getFile("vGenes.json")).
+		addFile("jGenes.json", jFromFasta.getFile("jGenes.json")).
+		arg("vGenes.json").
+		arg("jGenes.json").
+		arg("library.json").saveFile("library.json").
+		cpu(1).mem("4GiB").run()
+
+	inferVRes := exec.builder().
+		software(repseqioSw).
+		arg("inferPoints").
+		arg("--gene-feature").arg("VRegion").
+		arg("--min-score").arg("150").
+		arg("--force").
+		addFile("library.json", mergeRes.getFile("library.json")).
+		arg("library.json").
+		arg("library.v.json").saveFile("library.v.json").
+		addFile("vGenes.fasta", vGenesFasta).
+		cpu(1).mem("4GiB").run()
+
+	inferJRes := exec.builder().
+		software(repseqioSw).
+		arg("inferPoints").
+		arg("--gene-feature").arg("JRegion").
+		arg("--min-score").arg("30").
+		arg("--force").
+		addFile("library.json", inferVRes.getFile("library.v.json")).
+		arg("library.json").
+		arg("library.vj.json").saveFile("library.vj.json").
+		addFile("jGenes.fasta", jGenesFasta).
+		cpu(1).mem("4GiB").run()
+
+	compileRes := exec.builder().
+		software(repseqioSw).
+		arg("compile").
+		arg("--force").
+		addFile("library.json", inferJRes.getFile("library.vj.json")).
+		arg("library.json").
+		arg("referenceLibrary.json").saveFile("referenceLibrary.json").
+		addFile("vGenes.fasta", vGenesFasta).
+		addFile("jGenes.fasta", jGenesFasta).
+		cpu(1).mem("4GiB").run()
+
+	// 3) Reassemble the anchor points onto the whole parent -> mitool overlay JSON.
+	assembleRes := exec.builder().
+		software(vdjToolsSw).
+		arg("assemble").
+		arg("--library").arg("referenceLibrary.json").
+		arg("--splits").arg("splits.json").
+		arg("--out").arg("parents.regions.json").
+		addFile("referenceLibrary.json", compileRes.getFile("referenceLibrary.json")).
+		addFile("splits.json", splitsJson).
+		saveFile("parents.regions.json").
+		printErrStreamToStdout().
+		cpu(1).mem("2GiB").run()
+
+	return {
+		parentRegionsJson: assembleRes.getFile("parents.regions.json")
+	}
+})
