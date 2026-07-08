@@ -20,6 +20,7 @@ json := import("json")
 
 prerunTpl := assets.importTemplate(":prerun")
 repertoirePipelineTpl := assets.importTemplate(":repertoire-pipeline")
+vdjAutoRegionsTpl := assets.importTemplate(":vdj-auto-regions")
 aggregateVariantsTpl := assets.importTemplate(":aggregate-variants")
 aggregateStateMatrixTpl := assets.importTemplate(":aggregate-state-matrix")
 aggregateRegionAnnotationTpl := assets.importTemplate(":aggregate-region-annotation")
@@ -79,8 +80,26 @@ wf.body(func(args) {
 		knownAaFile = file.importFile(args.knownAaFileHandle).file
 	}
 
-	// Region scheme: feature names parsed from the same overlay JSON mitool gets.
-	rc := regionConfig.analyze(args.parentRegionsJson)
+	// Region scheme. Two sources of the mitool `--parent-regions` overlay:
+	//   - vdjAutoDetect ON: the workflow infers every parent's FR1–FR4 from germline
+	//     (repseqio) and writes the overlay to a FILE; region names are the fixed VDJ
+	//     set (regionConfig.vdjAuto). The manual parentRegions is ignored (model
+	//     suppresses parentRegionsJson in this mode).
+	//   - OFF: the manual overlay JSON string drives both mitool and the region names.
+	rc := undefined
+	parentRegionsJson := undefined
+	parentRegionsFile := undefined
+	if args.vdjAutoDetect {
+		rc = regionConfig.vdjAuto()
+		autoRun := render.create(vdjAutoRegionsTpl, {
+			parentFastaStr: parentFastaStr,
+			parentFile: parentFile
+		})
+		parentRegionsFile = autoRun.output("parentRegionsJson", 24 * 60 * 60 * 1000)
+	} else {
+		rc = regionConfig.analyze(args.parentRegionsJson)
+		parentRegionsJson = args.parentRegionsJson
+	}
 
 	params := maps.clone({
 		fileExtension: fileExtension,
@@ -90,7 +109,8 @@ wf.body(func(args) {
 		exportNt: exportNt,
 		parentFastaStr: parentFastaStr,
 		parentFile: parentFile,
-		parentRegionsJson: args.parentRegionsJson,
+		parentRegionsJson: parentRegionsJson,
+		parentRegionsFile: parentRegionsFile,
 		emitRegionAnnotation: rc.hasRegions,
 		knownNtFile: knownNtFile,
 		knownAaFile: knownAaFile,
