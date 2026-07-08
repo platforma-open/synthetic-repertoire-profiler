@@ -105,13 +105,14 @@ def split_parent(pid, seq):
 
 
 def write_fasta(path, records):
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         for name, seq in records:
             fh.write(f">{name}\n{seq}\n")
 
 
 def cmd_split(args):
-    parents = parse_fasta(open(args.input).read())
+    with open(args.input, encoding="utf-8") as fh:
+        parents = parse_fasta(fh.read())
     if not parents:
         die("no parent sequences found in the input FASTA.")
     v_records, j_records, splits = [], [], {}
@@ -122,12 +123,15 @@ def cmd_split(args):
         splits[pid] = {"vLen": offset}
     write_fasta(args.v_out, v_records)
     write_fasta(args.j_out, j_records)
-    json.dump(splits, open(args.splits_out, "w"))
+    with open(args.splits_out, "w", encoding="utf-8") as fh:
+        json.dump(splits, fh)
 
 
 def cmd_assemble(args):
-    library = json.load(open(args.library))
-    splits = json.load(open(args.splits))
+    with open(args.library, encoding="utf-8") as fh:
+        library = json.load(fh)
+    with open(args.splits, encoding="utf-8") as fh:
+        splits = json.load(fh)
 
     v_anchors, j_anchors = {}, {}
     for entry in library:
@@ -139,13 +143,19 @@ def cmd_assemble(args):
             elif name.endswith("_Jgene"):
                 j_anchors[name[:-len("_Jgene")]] = ap
 
+    # An anchor is "placed" only if present AND non-negative: repseqio inferPoints run
+    # with --force leaves a key present with value -1 when it can't confidently place
+    # that point, which would otherwise slip past a bare presence check and surface
+    # later as a misleading "not codon-aligned" error.
+    def placed(anchors, keys):
+        return anchors is not None and all(k in anchors and int(anchors[k]) >= 0 for k in keys)
+
     parents = {}
     for pid, split in splits.items():
         offset = int(split["vLen"])
         v = v_anchors.get(pid)
         j = j_anchors.get(pid)
-        if v is None or any(k not in v for k in V_REQUIRED) \
-                or j is None or any(k not in j for k in J_REQUIRED):
+        if not placed(v, V_REQUIRED) or not placed(j, J_REQUIRED):
             die(f"parent '{pid}': germline inference did not place all VDJ anchors "
                 f"(engineered scaffold?). Turn off VDJ auto-detect and annotate manually.")
         # V anchors are already in parent coordinates (the V-half starts at 0);
@@ -175,7 +185,8 @@ def cmd_assemble(args):
             "completeFeatureName": "VDJRegion",
             "regions": regions,
         }
-    json.dump({"version": 1, "parents": parents}, open(args.out, "w"))
+    with open(args.out, "w", encoding="utf-8") as fh:
+        json.dump({"version": 1, "parents": parents}, fh)
 
 
 def main():
