@@ -366,6 +366,36 @@ ACGTACGT..."
       </template>
     </PlNumberField>
 
+    <PlNumberField
+      v-model="app.model.data.maxAaMutations"
+      label="Max amino-acid mutations count"
+      :min-value="1"
+      :step="1"
+      :clearable="true"
+    >
+      <template #tooltip>
+        Ignore in-frame variants whose translated sequence differs from the parent by more than this
+        many amino-acid mutations. Applied after translation, so it targets variants with too many
+        coding changes regardless of the nucleotide edit count. Leave empty to keep all (default).
+      </template>
+    </PlNumberField>
+
+    <PlNumberField
+      v-model="app.model.data.maxAaMutationFraction"
+      label="Max amino-acid mutations fraction"
+      :min-value="0.01"
+      :max-value="1"
+      :step="0.01"
+      :clearable="true"
+    >
+      <template #tooltip>
+        Ignore in-frame variants where too large a share of the translated sequence differs from the
+        parent — the limit scales with each parent's amino-acid length instead of being a fixed
+        count. Enter a value above 0 and up to 1: for example, 0.1 allows up to 10% of residues to
+        differ. Leave empty to keep all (default).
+      </template>
+    </PlNumberField>
+
     <PlSectionSeparator>Resource Allocation</PlSectionSeparator>
     <PlNumberField
       v-model="app.model.data.perProcessMemGB"
