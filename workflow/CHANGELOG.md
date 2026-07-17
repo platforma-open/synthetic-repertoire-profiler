@@ -1,5 +1,17 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.workflow
 
+## 1.1.1
+
+### Patch Changes
+
+- 21fab8d: Add an amino-acid mutation-load filter (count + fraction), mirroring the existing
+  nucleotide filter. Feeds mitool's call-mutations step via
+  `-Mcall-mutations.maxAaMutations` / `-Mcall-mutations.maxAaMutationFraction`;
+  drops in-frame variants whose translated sequence diverges from the parent by more
+  than the configured amino-acid edit count / fraction. Empty = off (default).
+- Updated dependencies [21fab8d]
+  - @platforma-open/milaboratories.synthetic-repertoire-profiler.vdj-region-tools@1.1.1
+
 ## 1.1.0
 
 ### Minor Changes
