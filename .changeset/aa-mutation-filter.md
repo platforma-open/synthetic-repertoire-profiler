@@ -1,5 +1,4 @@
 ---
-"@platforma-open/milaboratories.synthetic-repertoire-profiler": patch
 "@platforma-open/milaboratories.synthetic-repertoire-profiler.vdj-region-tools": patch
 "@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow": patch
 "@platforma-open/milaboratories.synthetic-repertoire-profiler.block": patch
