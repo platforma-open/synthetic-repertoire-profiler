@@ -185,6 +185,14 @@ export type BlockData = {
   maxMutations?: number; // reject if the alignment has more than this many mutations (edit ops)
   maxMutationFraction?: number; // reject if mutations / parentLength exceeds this (0 < f ≤ 1)
 
+  // Optional per-variant amino-acid mutation-load filter (Advanced). Applied by
+  // mitool's call-mutations step (CallMutationsParams, via -Mcall-mutations.*):
+  // an in-frame variant whose aa-mutation count (aaMutations edit ops vs the
+  // aa-translated parent) exceeds the gate is dropped. Empty = mitool default
+  // (off). Both may be set; mitool applies each gate independently.
+  maxAaMutations?: number; // reject if the aa alignment has more than this many mutations (edit ops)
+  maxAaMutationFraction?: number; // reject if aaMutations / aaParentLength exceeds this (0 < f ≤ 1)
+
   // Optional per-sample mitool resource overrides (Advanced). Empty = workflow
   // defaults. Passed to the parse + analyze exec steps.
   perProcessMemGB?: number;
@@ -229,6 +237,9 @@ export type BlockArgs = {
   // Mutation-load filter → mitool -Malign.filter.maxMutations / maxMutationFraction.
   maxMutations?: number;
   maxMutationFraction?: number;
+  // AA mutation-load filter → mitool -Mcall-mutations.maxAaMutations / maxAaMutationFraction.
+  maxAaMutations?: number;
+  maxAaMutationFraction?: number;
   perProcessMemGB?: number;
   perProcessCPUs?: number;
   defaultBlockLabel: string;
@@ -345,18 +356,24 @@ export const platforma = BlockModelV3.create(dataModel)
   // length preview). Same prerun-export + ReactiveFileContent path as the known
   // sets; the pasted-FASTA mode reads `data.parentSequence` directly instead.
   .output("parentFileContent", (ctx) =>
-    ctx.prerun?.resolveAny({ field: "parentFile" })?.getFileHandle(),
+    ctx.prerun
+      ?.resolve({ field: "parentFile", assertFieldType: "Input", allowPermanentAbsence: true })
+      ?.getFileHandle(),
   )
 
   // Known-set file handles (content-readable) for the UI's column-mapping
   // discovery. The prerun exports the imported file; the UI reads its bytes via
   // ReactiveFileContent (remote files) — local files are read straight off disk.
   .output("knownNtFileContent", (ctx) =>
-    ctx.prerun?.resolveAny({ field: "knownNtFile" })?.getFileHandle(),
+    ctx.prerun
+      ?.resolve({ field: "knownNtFile", assertFieldType: "Input", allowPermanentAbsence: true })
+      ?.getFileHandle(),
   )
 
   .output("knownAaFileContent", (ctx) =>
-    ctx.prerun?.resolveAny({ field: "knownAaFile" })?.getFileHandle(),
+    ctx.prerun
+      ?.resolve({ field: "knownAaFile", assertFieldType: "Input", allowPermanentAbsence: true })
+      ?.getFileHandle(),
   )
 
   // Per-sample analyze log handles (for the Logs view).
@@ -522,6 +539,20 @@ export const platforma = BlockModelV3.create(dataModel)
     if (maxMutationFraction !== undefined && (maxMutationFraction <= 0 || maxMutationFraction > 1))
       throw new Error("Max mutation fraction must be between 0 and 1.");
 
+    // AA mutation-load filter (Advanced): aa-level analog of the above, applied
+    // by mitool's call-mutations step. Same null → undefined normalization and
+    // positivity/range gates. maxAaMutations counts aa edit ops (positive
+    // integer); maxAaMutationFraction is aaMutations / aaParentLength (0 < f ≤ 1).
+    const maxAaMutations = data.maxAaMutations ?? undefined;
+    const maxAaMutationFraction = data.maxAaMutationFraction ?? undefined;
+    if (maxAaMutations !== undefined && (!Number.isInteger(maxAaMutations) || maxAaMutations < 1))
+      throw new Error("Max amino-acid mutations must be a positive integer.");
+    if (
+      maxAaMutationFraction !== undefined &&
+      (maxAaMutationFraction <= 0 || maxAaMutationFraction > 1)
+    )
+      throw new Error("Max amino-acid mutation fraction must be between 0 and 1.");
+
     // Resource overrides: positive when set (empty = workflow defaults).
     if (data.perProcessMemGB !== undefined && data.perProcessMemGB < 1)
       throw new Error("Memory per process must be at least 1 GB.");
@@ -584,6 +615,8 @@ export const platforma = BlockModelV3.create(dataModel)
       exportNt: data.exportNt,
       maxMutations,
       maxMutationFraction,
+      maxAaMutations,
+      maxAaMutationFraction,
       perProcessMemGB: data.perProcessMemGB,
       perProcessCPUs: data.perProcessCPUs,
       // Workflow trace label: the selected dataset's name (snapshotted by the
