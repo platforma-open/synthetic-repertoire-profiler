@@ -66,6 +66,9 @@ self.body(func(inputs) {
 	// Per-fragment mutation-load filter (undefined = mitool default, off).
 	maxMutations := params.maxMutations
 	maxMutationFraction := params.maxMutationFraction
+	// Per-variant aa mutation-load filter (undefined = mitool default, off).
+	maxAaMutations := params.maxAaMutations
+	maxAaMutationFraction := params.maxAaMutationFraction
 	mitoolCPUs := inputs.mitoolCPUs
 	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
 
@@ -184,6 +187,15 @@ self.body(func(inputs) {
 	}
 	if !is_undefined(maxMutationFraction) {
 		analyzeBuilder = analyzeBuilder.arg("-Malign.filter.maxMutationFraction=" + string(maxMutationFraction))
+	}
+	// AA mutation-load gate: set the call-mutations step's CallMutationsParams via
+	// -M mixins (applied to in-frame variants after translation). The analyze CLI
+	// step name is kebab-case `call-mutations`; the params have no dedicated flags.
+	if !is_undefined(maxAaMutations) {
+		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.maxAaMutations=" + string(int(maxAaMutations)))
+	}
+	if !is_undefined(maxAaMutationFraction) {
+		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.maxAaMutationFraction=" + string(maxAaMutationFraction))
 	}
 	if hasParentRegions {
 		analyzeBuilder = analyzeBuilder.arg("--parent-regions").arg("parents.regions.json")
@@ -450,6 +462,7 @@ self.body(func(inputs) {
 	}, { id: "aaVariantsRaw" })
 
 	fs := pt.col("frameShift").cast("String").strToUpper().eq("TRUE")
+	aae := pt.col("aaMutationsExceeded").cast("String").strToUpper().eq("TRUE")
 	isAssigned := pt.col("assignStatus").cast("String").eq("ASSIGNED")
 	isUnassigned := pt.col("assignStatus").cast("String").eq("UNASSIGNED")
 	isAmbiguous := pt.col("assignStatus").cast("String").eq("AMBIGUOUS")
@@ -467,6 +480,8 @@ self.body(func(inputs) {
 		reads.sum().alias("totalReads"),
 		countWhen(fs).alias("frameShiftVariants"),
 		readsWhen(fs).alias("frameShiftReads"),
+		countWhen(aae).alias("aaMutationsExceededVariants"),
+		readsWhen(aae).alias("aaMutationsExceededReads"),
 		countWhen(isAssigned).alias("assignedVariants"),
 		readsWhen(isAssigned).alias("assignedReads"),
 		countWhen(isUnassigned).alias("unassignedVariants"),
@@ -486,6 +501,7 @@ self.body(func(inputs) {
 	}
 	vStats.join(aaStats, { how: "left", on: ["sampleId"] }).withColumns(
 		frac("frameShiftReads").alias("frameShiftReadFraction"),
+		frac("aaMutationsExceededReads").alias("aaMutationsExceededReadFraction"),
 		frac("assignedReads").alias("assignedReadFraction"),
 		frac("unassignedReads").alias("unassignedReadFraction"),
 		frac("ambiguousReads").alias("ambiguousReadFraction")
