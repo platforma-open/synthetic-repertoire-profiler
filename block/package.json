@@ -41,7 +41,7 @@
       "ui": "@platforma-open/milaboratories.synthetic-repertoire-profiler.ui/dist"
     },
     "meta": {
-      "title": "Amplicon Repertoire Profiling",
+      "title": "Amplicon Profiling",
       "description": "Profiles synthetic antibody/TCR amplicon libraries by aligning reads against user-provided parent sequences and calling mutations to build a variant repertoire.",
       "longDescription": "file:docs/description.md",
       "logo": "file:logos/block-logo.png",

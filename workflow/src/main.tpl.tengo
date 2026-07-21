@@ -1,5 +1,3 @@
-// Amplicon Repertoire Profiling — main workflow template.
-//
 // Per sample (one FASTQ pair = one processColumn group over lane/readIndex):
 //   parse -> .mic -> repertoire analyze -> variant / aa / state-matrix TSVs + qc.json
 // Then a cross-sample aggregate turns the per-sample variants.tsv into one
@@ -48,7 +46,7 @@ wf.body(func(args) {
 
 	traceLabel := args.customBlockLabel
 	if traceLabel == "" { traceLabel = args.defaultBlockLabel }
-	if traceLabel == "" { traceLabel = "Amplicon Repertoire Profiling" }
+	if traceLabel == "" { traceLabel = "Amplicon Profiling" }
 
 	inputSpec := args.resolvedInput.spec
 	inputData := args.resolvedInput.data
@@ -58,6 +56,16 @@ wf.body(func(args) {
 	// computation (via params) and every nt-related column added to the exported
 	// `variants` frame below. When off, only the aa level is exported.
 	exportNt := args.exportNt
+
+	// Restrict the exported `variants` frame to variants that matched a known entry.
+	// The model only sets this true when a known set is present. When true, every
+	// variant-keyed family in the export (per-sample abundance, per-variant
+	// properties, state matrices, linkers, distances) is filtered per level —
+	// nt keeps assignStatus == ASSIGNED, aa keeps variants carrying a knownAaKey.
+	// A level with no match signal (nt with only an aa set) exports empty.
+	exportOnlyKnown := !is_undefined(args.exportOnlyKnown) && args.exportOnlyKnown
+	// nt has a match signal only when an nt known set was supplied.
+	hasNtKnown := !is_undefined(args.knownNtFileHandle)
 
 	// Materialize the parent reference and known-set files. Pasted FASTA travels
 	// as a string written to a file inside the per-sample command; uploaded handles
@@ -107,6 +115,7 @@ wf.body(func(args) {
 		patternParts: args.patternParts,
 		hasUmi: args.hasUmi,
 		exportNt: exportNt,
+		exportOnlyKnown: exportOnlyKnown,
 		parentFastaStr: parentFastaStr,
 		parentFile: parentFile,
 		parentRegionsJson: parentRegionsJson,
@@ -369,7 +378,11 @@ wf.body(func(args) {
 	// Linkers (nt→aa, parent→nt, parent→aa). One-side leads in the axes.
 	linkersRun := render.createEphemeral(aggregateLinkersTpl, {
 		variantsTsvData: perSampleResults.outputData("variantsTsv"),
-		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv")
+		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
+		// Export-only-matched filter: nt linkers keep assignStatus == ASSIGNED
+		// (empty when no nt known set), aa linkers keep rows with a knownAaKey.
+		exportOnlyKnown: exportOnlyKnown,
+		hasNtKnown: hasNtKnown
 	})
 	importLinker := func(file, axes, name) {
 		return xsv.importFile(
@@ -511,14 +524,17 @@ wf.body(func(args) {
 	// convergence are handled separately.
 	knownVariantsNtPf := undefined
 	knownVariantsAaPf := undefined
-	unmatchedVariantsNtPf := undefined
 	if !is_undefined(knownNtFile) || !is_undefined(knownAaFile) {
 		knownRun := render.createEphemeral(aggregateKnownTpl, {
 			variantsTsvData: perSampleResults.outputData("variantsTsv"),
 			aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
 			knownDesignedNtData: perSampleResults.outputData("knownDesignedNt"),
 			knownDesignedAaData: perSampleResults.outputData("knownDesignedAa"),
-			aaConvergenceData: perSampleResults.outputData("aaConvergence")
+			aaConvergenceData: perSampleResults.outputData("aaConvergence"),
+			// When exporting only matched variants, the distance-to-known columns
+			// (variant-axis keyed, part of the export) are restricted to matched
+			// variants too, so they carry no keys absent from the filtered repertoire.
+			exportOnlyKnown: exportOnlyKnown
 		})
 		importKnown := func(file, axes, columns) {
 			return xsv.importFile(file, "tsv", {
@@ -575,16 +591,17 @@ wf.body(func(args) {
 		// nt overlay — only when an nt known set ran (otherwise the nt tables are
 		// empty; skip importing them).
 		if !is_undefined(knownNtFile) {
-			// knownNtCols / knownNtMetaCols feed both the export and the block-local
-			// Known Variants (NT) table, so they are always imported. The linker and
-			// distance columns are export-only — imported inside the exportNt gate.
+			// knownNtCols (matched only) feeds the export overlay; knownNtMetaCols
+			// feeds both the export overlay and the block-local table. The combined
+			// block-local table itself uses knownNtAll (all designed) — built below.
+			// The linker and distance columns are export-only — inside the exportNt gate.
 			knownNtCols := importKnown(knownRun.output("knownNt"), [ntKnownAxis], columnSpecs.knownVariantColumns("nucleotide", true))
 			knownNtMetaCols := importKnownMetadata(knownNtFile, knownRun.output("knownNt"), args.knownNtSequenceColumn, args.knownNtMetadata, ntKnownAxis)
 
 			// The nt known-set overlay is exported only when nt export is enabled;
 			// its columns key on the nt (variant/known) axes. The block-local Known
-			// Variants (NT) / Unmatched (NT) tables below are built regardless — they
-			// are views driven by the uploaded known-nt set, not the export toggle.
+			// Variants (NT) table below is built regardless — it is a view driven by
+			// the uploaded known-nt set, not the export toggle.
 			if exportNt {
 				knownLinkerNtCols := importKnown(
 					knownRun.output("knownLinkerNt"),
@@ -636,8 +653,19 @@ wf.body(func(args) {
 				}
 			}
 
+			// Block-local Known Variants (NT) table — EVERY designed nt entry, with
+			// the matched abundance left-joined (blank readCountTotal/sampleCount for
+			// undetected designed entries). Merges the former "Known Variants (NT)"
+			// and "Unmatched Designed (NT)" pages into one view. Metadata is
+			// matched-only (undetected rows show blank metadata cells). The exported
+			// overlay above stays matched-only (knownNtCols).
+			knownNtAllCols := importKnown(
+				knownRun.output("knownNtAll"),
+				[ntKnownAxis],
+				columnSpecs.knownVariantColumns("nucleotide", true, true)
+			)
 			knownVariantsNtPfBuilder := pframes.pFrameBuilder()
-			for k, v in knownNtCols {
+			for k, v in knownNtAllCols {
 				knownVariantsNtPfBuilder.add(k, ntTrace.inject(v.spec), v.data)
 			}
 			if !is_undefined(knownNtMetaCols) {
@@ -646,20 +674,6 @@ wf.body(func(args) {
 				}
 			}
 			knownVariantsNtPf = knownVariantsNtPfBuilder.build()
-
-			// unmatched designed nt entries (dropouts) — id + sequence, no
-			// abundance (they were never observed). Its own frame/page so it does
-			// not introduce blank-abundance rows into the assigned Known Variants table.
-			unmatchedNtCols := importKnown(
-				knownRun.output("unmatchedNt"),
-				[ntKnownAxis],
-				columnSpecs.knownVariantColumns("nucleotide", false)
-			)
-			unmatchedNtPfBuilder := pframes.pFrameBuilder()
-			for k, v in unmatchedNtCols {
-				unmatchedNtPfBuilder.add(k, ntTrace.inject(v.spec), v.data)
-			}
-			unmatchedVariantsNtPf = unmatchedNtPfBuilder.build()
 		}
 
 		// aa overlay — runs whenever any known set is present (aa is derived from
@@ -787,9 +801,6 @@ wf.body(func(args) {
 	}
 	if !is_undefined(knownVariantsAaPf) {
 		outputs.knownVariantsAa = pframes.exportFrame(knownVariantsAaPf)
-	}
-	if !is_undefined(unmatchedVariantsNtPf) {
-		outputs.unmatchedVariantsNt = pframes.exportFrame(unmatchedVariantsNtPf)
 	}
 
 	return {

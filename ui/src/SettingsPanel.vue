@@ -144,6 +144,19 @@ const aaMetadataOptions = computed(() =>
   ),
 );
 
+// "Export only known variants" — shown only when a known set is supplied. Default
+// OFF (a nullish stored value reads as false); toggling persists an explicit boolean.
+// A user-gesture write via the computed setter, not an output→data watcher — no hairpin.
+const hasKnownSet = computed(
+  () => !!(app.model.data.knownNtFileHandle || app.model.data.knownAaFileHandle),
+);
+const exportOnlyKnown = computed({
+  get: () => app.model.data.exportOnlyKnown ?? false,
+  set: (v: boolean) => {
+    app.model.data.exportOnlyKnown = v;
+  },
+});
+
 // Live validation: a pattern that captures Read 2 needs a paired-end input.
 // Read straight from the model output — never written back into data (that was
 // a hairpin). The workflow re-asserts this as defence-in-depth.
@@ -319,6 +332,16 @@ ACGTACGT..."
         placeholder="All columns"
       />
     </template>
+
+    <PlCheckbox v-if="hasKnownSet" v-model="exportOnlyKnown">
+      Export only known variants
+      <PlTooltip class="info" position="top">
+        <template #tooltip>
+          Off by default. When enabled, the exported variant repertoire is restricted to variants
+          that matched a known variant entry.
+        </template>
+      </PlTooltip>
+    </PlCheckbox>
   </PlAccordionSection>
 
   <PlAccordionSection label="Advanced Settings">
