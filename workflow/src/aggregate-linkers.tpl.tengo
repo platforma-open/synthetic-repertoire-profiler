@@ -58,6 +58,20 @@ self.body(func(inputs) {
 	vdf := loadConcat(inputs.variantsTsvData, "ntv")
 	adf := loadConcat(inputs.aaVariantsTsvData, "aav")
 
+	// Export-only-matched: restrict the linkers to matched variants so they carry
+	// no keys absent from the filtered repertoire. nt (ntToAa, parentNt) keeps
+	// assignStatus == ASSIGNED (empty when no nt known set); aa (parentAa) keeps
+	// rows carrying a knownAaKey. Frames are read all-String (inferSchema:false).
+	exportOnlyKnown := !is_undefined(inputs.exportOnlyKnown) && inputs.exportOnlyKnown
+	hasNtKnown := !is_undefined(inputs.hasNtKnown) && inputs.hasNtKnown
+	nonEmpty := func(col) {
+		return pt.col(col).cast("String").fillNull("").strLenChars().gt(pt.lit(0))
+	}
+	if exportOnlyKnown {
+		vdf = hasNtKnown ? vdf.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")) : vdf.filter(pt.lit(false))
+		adf = adf.filter(nonEmpty("knownAaKey"))
+	}
+
 	// nt → aa: nt variants carrying an aa variant key (frame-shifted have none).
 	distinctLink(
 		vdf.

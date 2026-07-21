@@ -129,7 +129,11 @@ knownVariantKeyAxisSpec := func(blockId, alphabet, label, ...rest) {
 // (name pl7.app/label + single axis ⇒ the table shows it instead of the hash
 // key), the known sequence, and (nt only) the linked exact-match variant's
 // abundance. `withAbundance` adds readCountTotal + sampleCount.
-knownVariantColumns := func(alphabet, withAbundance) {
+// `naAbundance` (optional, default false): allow the abundance columns to be
+// empty (NA). Used by the combined designed-nt table, where undetected designed
+// entries carry no readCountTotal/sampleCount.
+knownVariantColumns := func(alphabet, withAbundance, ...rest) {
+	naAbundance := len(rest) > 0 && rest[0]
 	cols := [{
 		column: "label",
 		id: "known-label",
@@ -165,10 +169,10 @@ knownVariantColumns := func(alphabet, withAbundance) {
 		}
 	}]
 	if withAbundance {
-		cols = append(cols, {
+		readCountCol := {
 			column: "readCountTotal",
 			id: "known-read-count-total",
-			allowNA: false,
+			allowNA: naAbundance,
 			spec: {
 				name: "pl7.app/readCountTotal",
 				valueType: "Long",
@@ -180,10 +184,11 @@ knownVariantColumns := func(alphabet, withAbundance) {
 					"pl7.app/label": "Supporting Reads"
 				})
 			}
-		}, {
+		}
+		sampleCountCol := {
 			column: "sampleCount",
 			id: "known-sample-count",
-			allowNA: false,
+			allowNA: naAbundance,
 			spec: {
 				name: "pl7.app/sampleCount",
 				valueType: "Int",
@@ -192,7 +197,13 @@ knownVariantColumns := func(alphabet, withAbundance) {
 					"pl7.app/label": "Number of Samples"
 				})
 			}
-		})
+		}
+		// Empty cell → NA for undetected designed entries in the combined table.
+		if naAbundance {
+			readCountCol.naRegex = ""
+			sampleCountCol.naRegex = ""
+		}
+		cols = append(cols, readCountCol, sampleCountCol)
 	}
 	return cols
 }
