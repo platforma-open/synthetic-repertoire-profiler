@@ -31,7 +31,10 @@ self.body(func(inputs) {
 			frames = append(frames, wf.frame({
 				file: rmMap[sKey],
 				xsvType: "tsv"
-			}, { id: idPrefix + "_" + string(len(frames)) }))
+			// inferSchema:false → all columns read as String, so empty and populated
+			// per-sample TSVs share one schema and the concat never hits a numeric-
+			// vs-String mismatch. All columns here are used as String keys, safe.
+			}, { id: idPrefix + "_" + string(len(frames)), inferSchema: false }))
 		}
 		ll.assert(len(frames) > 0, "no frames for " + idPrefix)
 		if len(frames) == 1 {

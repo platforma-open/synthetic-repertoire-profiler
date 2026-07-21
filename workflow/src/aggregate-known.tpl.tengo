@@ -40,10 +40,20 @@ self.body(func(inputs) {
 		rmMap := rmData.inputs()
 		for sKey in maps.getKeys(rmMap) {
 			sampleId := json.decode(sKey)[0]
+			opts := { id: idPrefix + "_" + string(len(frames)) }
+			// Disable per-file type inference on TSV reads so every sample's frame
+			// shares an identical all-String schema. An empty per-sample TSV (header
+			// only) otherwise infers all columns as String while a populated one
+			// infers numeric columns as Int64, and the concat rejects the mismatch.
+			// Every numeric column consumed below is cast explicitly, so all-String
+			// reads are safe. Parquet keeps its embedded schema.
+			if xsvType == "tsv" {
+				opts.inferSchema = false
+			}
 			frames = append(frames, wf.frame({
 				file: rmMap[sKey],
 				xsvType: xsvType
-			}, { id: idPrefix + "_" + string(len(frames)) }).withColumns(pt.lit(sampleId).alias("sampleId")))
+			}, opts).withColumns(pt.lit(sampleId).alias("sampleId")))
 		}
 		ll.assert(len(frames) > 0, "no frames for " + idPrefix)
 		if len(frames) == 1 {

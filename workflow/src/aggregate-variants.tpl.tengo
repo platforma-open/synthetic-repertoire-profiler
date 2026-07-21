@@ -31,14 +31,26 @@ self.awaitState("aaVariantsTsvData", "ResourceReady")
 self.body(func(inputs) {
 	wf := pt.workflow().mem(4 * units.GiB).cpu(2)
 
+	// TSV reads disable per-file type inference (`inferSchema: false` → every
+	// column read as String). Per-sample TSVs vary: an empty one (header only)
+	// infers every column as String, while a populated one infers numeric
+	// columns (mutationCount, ntVariantCount, readCount, ...) as Int64, so the
+	// cross-sample concat below rejects the schema mismatch. Reading all columns
+	// as String makes every frame's schema identical; the aggregations below cast
+	// each numeric column they consume, so the emitted types are unchanged.
+	// Parquet keeps its embedded schema (inferSchema is not applicable / not set).
 	loadFrames := func(rmData, idPrefix, format) {
 		frames := []
 		rmMap := rmData.inputs()
 		for sKey in maps.getKeys(rmMap) {
+			opts := { id: idPrefix + "_" + string(len(frames)) }
+			if format == "tsv" {
+				opts.inferSchema = false
+			}
 			frames = append(frames, wf.frame({
 				file: rmMap[sKey],
 				xsvType: format
-			}, { id: idPrefix + "_" + string(len(frames)) }))
+			}, opts))
 		}
 		ll.assert(len(frames) > 0, "no frames for " + idPrefix)
 		return frames
