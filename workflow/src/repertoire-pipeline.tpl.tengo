@@ -48,6 +48,11 @@ self.body(func(inputs) {
 	// Opt-in nt export: gates the nt state matrix computation here; main gates the
 	// nt column exports. Defensive default when the param is absent (removeUndefs).
 	exportNt := !is_undefined(params.exportNt) && params.exportNt
+	// Export-only-matched: when true, the per-sample abundance + state-matrix files
+	// that feed the exported `variants` frame are restricted to variants that
+	// matched a known entry (nt: assignStatus == ASSIGNED; aa: has knownAaKey). The
+	// known-overlay / QC computations below read the FULL variant set regardless.
+	exportOnlyKnown := !is_undefined(params.exportOnlyKnown) && params.exportOnlyKnown
 	parentFastaStr := params.parentFastaStr
 	parentFile := params.parentFile
 	// Regions overlay for mitool: either a JSON string (manual schemes, written to
@@ -303,12 +308,47 @@ self.body(func(inputs) {
 		file: analyzeCmd.getFile("out.variants.tsv"),
 		xsvType: "tsv"
 	}, { id: "variantsAbund" })
-	vAbund.groupBy("variantKey").agg(
+
+	// Content-hash + non-empty helpers, reused by the export-only-matched filter
+	// here and the known-level abundance / convergence computations below.
+	b6SeqHash := func(col) {
+		return pt.col(col).hash("sha256", "base64_alphanumeric", 120)
+	}
+	b6NonEmpty := func(col) {
+		return pt.col(col).cast("String").fillNull("").strLenChars().gt(pt.lit(0))
+	}
+
+	// Export-only-matched: the abundance parquets feed the exported variant
+	// repertoire (per-sample abundance columns + the cross-sample properties
+	// totals). When the filter is on, restrict them per level — nt keeps
+	// assignStatus == ASSIGNED (empty when no nt known set, so the level has no
+	// match signal), aa keeps variants whose aaVariantKey carries a knownAaKey.
+	// readCount/readFraction are unchanged (fraction stays relative to ALL reads);
+	// unmatched rows are simply dropped. Matched aa keys are reused below for the
+	// state matrix filter.
+	hasNtKnown := !is_undefined(knownNtFile)
+	matchedAaKeys := ptWf.frame({
+		file: analyzeCmd.getFile("out.aa-variants.tsv"),
+		xsvType: "tsv"
+	}, { id: "matchedAaKeys" }).
+		filter(b6NonEmpty("knownAaKey")).
+		groupBy("aaVariantKey").agg(pt.col("aaVariantKey").count().alias("_n")).
+		select(pt.col("aaVariantKey"))
+
+	ntAbundSrc := vAbund
+	if exportOnlyKnown {
+		ntAbundSrc = hasNtKnown ? vAbund.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")) : vAbund.filter(pt.lit(false))
+	}
+	ntAbundSrc.groupBy("variantKey").agg(
 		pt.col("readCount").cast("Long").sum().alias("readCount"),
 		pt.col("readFraction").cast("Double").sum().alias("readFraction")
 	).sort(["variantKey"]).save("ntAbundance.parquet")
-	vAbund.
-		filter(pt.col("aaVariantKey").cast("String").fillNull("").strLenChars().gt(pt.lit(0))).
+
+	aaAbundSrc := vAbund.filter(b6NonEmpty("aaVariantKey"))
+	if exportOnlyKnown {
+		aaAbundSrc = aaAbundSrc.join(matchedAaKeys, { how: "inner", on: ["aaVariantKey"] })
+	}
+	aaAbundSrc.
 		groupBy("aaVariantKey").agg(
 			pt.col("readCount").cast("Long").sum().alias("readCount"),
 			pt.col("readFraction").cast("Double").sum().alias("readFraction")
@@ -324,12 +364,7 @@ self.body(func(inputs) {
 	// --- known-level abundance + synonymous spread (per sample) -------------
 	// Always emitted (empty when nothing is assigned); main exposes them only
 	// when a known set was supplied. knownVariantKey = hash(matched sequence).
-	b6SeqHash := func(col) {
-		return pt.col(col).hash("sha256", "base64_alphanumeric", 120)
-	}
-	b6NonEmpty := func(col) {
-		return pt.col(col).cast("String").fillNull("").strLenChars().gt(pt.lit(0))
-	}
+	// (b6SeqHash / b6NonEmpty are defined above, reused by the export filter.)
 
 	// nt known × this sample: reads summed over assigned nt variants per known nt seq.
 	vAbund.
@@ -507,6 +542,37 @@ self.body(func(inputs) {
 		frac("ambiguousReads").alias("ambiguousReadFraction")
 	).save("qcRow.parquet")
 
+	// Export-only-matched state matrices. The exported state matrix is keyed on the
+	// variant axis, so it is restricted to matched variants too (no keys absent from
+	// the filtered repertoire). Columns are [variantKey, parentId, position, state];
+	// variantKey is the aa/nt variant key for the aa/nt matrix respectively.
+	if exportOnlyKnown {
+		smCols := func(f) {
+			return f.select(pt.col("variantKey"), pt.col("parentId"), pt.col("position"), pt.col("state"))
+		}
+		// aa: keep variantKeys (== aaVariantKey) present in matchedAaKeys.
+		aaMatchKeys := matchedAaKeys.select(pt.col("aaVariantKey").alias("variantKey"))
+		smCols(ptWf.frame({
+			file: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
+			xsvType: "tsv"
+		}, { id: "aaSmMatched", inferSchema: false }).
+			join(aaMatchKeys, { how: "inner", on: ["variantKey"] })).
+			save("aaStateMatrixMatched.tsv", { xsvType: "tsv" })
+
+		if exportNt {
+			// nt matched keys: assignStatus == ASSIGNED (empty when no nt known set).
+			ntMatchKeys := hasNtKnown ?
+				vAbund.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).groupBy("variantKey").agg(pt.col("variantKey").count().alias("_n")).select(pt.col("variantKey")) :
+				vAbund.filter(pt.lit(false)).select(pt.col("variantKey"))
+			smCols(ptWf.frame({
+				file: analyzeCmd.getFile("out.nt-state-matrix.tsv"),
+				xsvType: "tsv"
+			}, { id: "ntSmMatched", inferSchema: false }).
+				join(ntMatchKeys, { how: "inner", on: ["variantKey"] })).
+				save("ntStateMatrixMatched.tsv", { xsvType: "tsv" })
+		}
+	}
+
 	ptResult := ptWf.run()
 
 	return {
@@ -519,8 +585,8 @@ self.body(func(inputs) {
 		parsedMic: micFile,
 		variantsTsv: analyzeCmd.getFile("out.variants.tsv"),
 		aaVariantsTsv: analyzeCmd.getFile("out.aa-variants.tsv"),
-		aaStateMatrixTsv: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
-		ntStateMatrixTsv: exportNt ? analyzeCmd.getFile("out.nt-state-matrix.tsv") : ptResult.getFile("emptyNtStateMatrix.tsv"),
+		aaStateMatrixTsv: exportOnlyKnown ? ptResult.getFile("aaStateMatrixMatched.tsv") : analyzeCmd.getFile("out.aa-state-matrix.tsv"),
+		ntStateMatrixTsv: exportNt ? (exportOnlyKnown ? ptResult.getFile("ntStateMatrixMatched.tsv") : analyzeCmd.getFile("out.nt-state-matrix.tsv")) : ptResult.getFile("emptyNtStateMatrix.tsv"),
 		regionAnnotationTsv: emitRegionAnnotation ? analyzeCmd.getFile("out.region-annotation.tsv") : ptResult.getFile("emptyRegionAnnotation.tsv"),
 		qcJson: analyzeCmd.getFile("out.qc.json"),
 		reports: reportsMap.build(),

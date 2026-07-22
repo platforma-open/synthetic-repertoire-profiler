@@ -169,6 +169,15 @@ export type BlockData = {
   knownAaMetadataColumns: string[];
   knownAaImportError?: string;
 
+  // Restrict the exported variant repertoire to variants that matched a known
+  // entry. Only meaningful when a known set (nt and/or aa) is supplied; the UI
+  // shows the checkbox only then. `undefined` = the default, which is OFF (the
+  // user opts in). When ON, the whole exported `variants` frame is filtered per
+  // level — nt keeps `assignStatus == ASSIGNED`, aa keeps variants carrying a
+  // `knownAaKey`. A level with no match signal (e.g. nt with only an aa set)
+  // exports empty.
+  exportOnlyKnown?: boolean;
+
   // Opt-in nucleotide-level export; OFF by default. When on, the workflow emits
   // the nt state matrix and exports every nt-related column (nt variants,
   // per-sample nt abundance, nt sequences, parent→nt + nt↔aa linkers, and the nt
@@ -202,7 +211,6 @@ export type BlockData = {
   qcTableState: PlDataTableStateV2;
   knownVariantsNtTableState: PlDataTableStateV2;
   knownVariantsAaTableState: PlDataTableStateV2;
-  unmatchedVariantsNtTableState: PlDataTableStateV2;
 };
 
 /** Workflow-facing args projected from `BlockData` by `.args(...)`. */
@@ -233,6 +241,10 @@ export type BlockArgs = {
   knownAaIdColumn?: string;
   knownAaSequenceColumn?: string;
   knownAaMetadata?: KnownColumnInfo[];
+  // When true, the workflow restricts the exported `variants` frame to variants
+  // that matched a known entry (nt: assignStatus == ASSIGNED; aa: has knownAaKey).
+  // False when no known set is supplied (nothing to match against).
+  exportOnlyKnown: boolean;
   exportNt: boolean;
   // Mutation-load filter → mitool -Malign.filter.maxMutations / maxMutationFraction.
   maxMutations?: number;
@@ -268,13 +280,12 @@ const dataModel = new DataModelBuilder()
     qcTableState: createPlDataTableStateV2(),
     knownVariantsNtTableState: createPlDataTableStateV2(),
     knownVariantsAaTableState: createPlDataTableStateV2(),
-    unmatchedVariantsNtTableState: createPlDataTableStateV2(),
   }));
 
 const DNA_IUPAC_RE = /^[ACGTacgtMKRYWSBDHVNmkrywsbdhvn]*$/;
 
 /** Trace-label fallback when neither a custom label nor a dataset name is set. */
-const DEFAULT_BLOCK_LABEL = "Amplicon Repertoire Profiling";
+const DEFAULT_BLOCK_LABEL = "Amplicon Profiling";
 
 /** Shown as the block subtitle before a dataset is picked. */
 const NO_DATASET_LABEL = "Select dataset";
@@ -430,27 +441,17 @@ export const platforma = BlockModelV3.create(dataModel)
     return createPlDataTableV2(ctx, pCols, ctx.data.qcTableState);
   })
 
-  // Known-variant tables (only when the matching known set ran). Surfaces the
-  // matched known table (id + sequence + linked abundance) plus convergence and
-  // metadata. Plain tables keyed [knownVariantKey], no anchor → V2.
+  // Known-variant tables (only when the matching known set ran). Plain tables
+  // keyed [knownVariantKey], no anchor → V2. The NT table lists EVERY designed nt
+  // entry (id + sequence + metadata), with matched abundance where detected and
+  // blank abundance for undetected designed entries — matched and unmatched in
+  // one view.
   .outputWithStatus("knownVariantsNtTable", (ctx) => {
     const pCols = ctx.outputs
       ?.resolve({ field: "knownVariantsNt", assertFieldType: "Input", allowPermanentAbsence: true })
       ?.getPColumns();
     if (pCols === undefined) return undefined;
     return createPlDataTableV2(ctx, pCols, ctx.data.knownVariantsNtTableState);
-  })
-
-  .outputWithStatus("unmatchedVariantsNtTable", (ctx) => {
-    const pCols = ctx.outputs
-      ?.resolve({
-        field: "unmatchedVariantsNt",
-        assertFieldType: "Input",
-        allowPermanentAbsence: true,
-      })
-      ?.getPColumns();
-    if (pCols === undefined) return undefined;
-    return createPlDataTableV2(ctx, pCols, ctx.data.unmatchedVariantsNtTableState);
   })
 
   .outputWithStatus("knownVariantsAaTable", (ctx) => {
@@ -524,6 +525,9 @@ export const platforma = BlockModelV3.create(dataModel)
       if (!data.knownAaIdColumn)
         throw new Error("Select the ID column for the known amino-acid set.");
     }
+
+    // A known set (nt and/or aa) is what "export only matched" filters against.
+    const hasKnownSet = !!(data.knownNtFileHandle || data.knownAaFileHandle);
 
     // Mutation-load filter (Advanced): positive when set (empty = mitool default,
     // off). maxMutations counts alignment edit ops (positive integer);
@@ -612,6 +616,9 @@ export const platforma = BlockModelV3.create(dataModel)
             data.knownAaSequenceColumn,
           )
         : undefined,
+      // Export-only-matched: OFF by default (the user opts in via the checkbox,
+      // shown only when a known set is present). Forced false when no known set.
+      exportOnlyKnown: hasKnownSet ? (data.exportOnlyKnown ?? false) : false,
       exportNt: data.exportNt,
       maxMutations,
       maxMutationFraction,
@@ -637,7 +644,7 @@ export const platforma = BlockModelV3.create(dataModel)
   .sections((ctx) => {
     const items: {
       type: "link";
-      href: "/" | "/qc" | "/known-variants-nt" | "/known-variants-aa" | "/unmatched-nt";
+      href: "/" | "/qc" | "/known-variants-nt" | "/known-variants-aa";
       label: string;
     }[] = [
       { type: "link", href: "/", label: "Main" },
@@ -645,17 +652,15 @@ export const platforma = BlockModelV3.create(dataModel)
     ];
     // NT known analysis runs only with an nt known set (--known); aa known
     // analysis runs with an aa set (--known-aa) or is derived from the nt set.
+    // The NT page shows all designed nt entries (matched + undetected) in one table.
     if (ctx.data.knownNtFileHandle !== undefined)
       items.push({ type: "link", href: "/known-variants-nt", label: "Known Variants (NT)" });
     if (ctx.data.knownNtFileHandle !== undefined || ctx.data.knownAaFileHandle !== undefined)
       items.push({ type: "link", href: "/known-variants-aa", label: "Known Variants (AA)" });
-    // Designed nt entries that no variant matched (dropouts) — nt known set only.
-    if (ctx.data.knownNtFileHandle !== undefined)
-      items.push({ type: "link", href: "/unmatched-nt", label: "Unmatched Designed (NT)" });
     return items;
   })
 
-  .title(() => "Amplicon Repertoire Profiling")
+  .title(() => "Amplicon Profiling")
 
   // Subtitle: custom label if the user set one, else the selected dataset's
   // name (snapshotted into data by the UI on selection), else a prompt. The
