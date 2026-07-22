@@ -262,6 +262,16 @@ ACGTACGT..."
   </PlAccordionSection>
 
   <PlAccordionSection label="Known Variants">
+    <PlCheckbox v-if="hasKnownSet" v-model="exportOnlyKnown">
+      Export only known variants
+      <PlTooltip class="info" position="top">
+        <template #tooltip>
+          Off by default. When enabled, the exported variant repertoire is restricted to variants
+          that matched a known variant entry.
+        </template>
+      </PlTooltip>
+    </PlCheckbox>
+
     <PlFileInput
       :model-value="app.model.data.knownNtFileHandle"
       label="Known NT variants"
@@ -332,16 +342,6 @@ ACGTACGT..."
         placeholder="All columns"
       />
     </template>
-
-    <PlCheckbox v-if="hasKnownSet" v-model="exportOnlyKnown">
-      Export only known variants
-      <PlTooltip class="info" position="top">
-        <template #tooltip>
-          Off by default. When enabled, the exported variant repertoire is restricted to variants
-          that matched a known variant entry.
-        </template>
-      </PlTooltip>
-    </PlCheckbox>
   </PlAccordionSection>
 
   <PlAccordionSection label="Advanced Settings">
