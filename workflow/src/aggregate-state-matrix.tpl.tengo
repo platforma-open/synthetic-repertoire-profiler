@@ -27,10 +27,15 @@ self.body(func(inputs) {
 	frames := []
 	rmMap := inputs.stateMatrixData.inputs()
 	for sKey in maps.getKeys(rmMap) {
+		// inferSchema:false → all columns read as String, so empty and populated
+		// per-sample TSVs share one schema and the concat never hits a numeric-vs-
+		// String mismatch (position infers as Int64 when populated). The position
+		// axis is String (see column-specs positionAxisSpec) and state is cast to
+		// String, so no numeric type is lost.
 		frames = append(frames, wf.frame({
 			file: rmMap[sKey],
 			xsvType: "tsv"
-		}, { id: "sm_" + string(len(frames)) }))
+		}, { id: "sm_" + string(len(frames)), inferSchema: false }))
 	}
 	ll.assert(len(frames) > 0, "no state-matrix frames")
 

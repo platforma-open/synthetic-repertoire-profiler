@@ -22,10 +22,15 @@ self.body(func(inputs) {
 	frames := []
 	rmMap := inputs.regionAnnotationData.inputs()
 	for sKey in maps.getKeys(rmMap) {
+		// inferSchema:false → all columns read as String, so empty and populated
+		// per-sample TSVs share one schema and the concat never hits a numeric-vs-
+		// String mismatch (position infers as Int64 when populated). The position
+		// axis is String (see column-specs positionAxisSpec) and region is cast to
+		// String, so no numeric type is lost.
 		frames = append(frames, wf.frame({
 			file: rmMap[sKey],
 			xsvType: "tsv"
-		}, { id: "ra_" + string(len(frames)) }))
+		}, { id: "ra_" + string(len(frames)), inferSchema: false }))
 	}
 	ll.assert(len(frames) > 0, "no region-annotation frames")
 

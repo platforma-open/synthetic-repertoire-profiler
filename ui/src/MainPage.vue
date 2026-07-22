@@ -147,7 +147,7 @@ const { gridOptions } = useAgGridOptions<SampleRow>(() => ({
 
 <template>
   <PlBlockPage>
-    <template #title>Amplicon Repertoire Profiling</template>
+    <template #title>Amplicon Profiling</template>
     <template #append>
       <PlBtnGhost @click.stop="() => (settingsOpen = true)">
         Settings

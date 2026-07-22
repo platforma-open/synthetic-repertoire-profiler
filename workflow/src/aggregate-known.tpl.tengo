@@ -21,7 +21,7 @@ pt := import("@platforma-sdk/workflow-tengo:pt")
 units := import("@platforma-sdk/workflow-tengo:units")
 json := import("json")
 
-self.defineOutputs("knownLinkerNt", "knownLinkerAa", "ntDistance", "aaDistance", "knownNt", "knownAa", "knownAaToNt", "knownSynCount", "knownConvergence", "unmatchedNt")
+self.defineOutputs("knownLinkerNt", "knownLinkerAa", "ntDistance", "aaDistance", "knownNt", "knownAa", "knownAaToNt", "knownSynCount", "knownConvergence", "knownNtAll")
 
 self.awaitState("InputsLocked")
 self.awaitState("variantsTsvData", "ResourceReady")
@@ -33,6 +33,14 @@ self.awaitState("aaConvergenceData", "ResourceReady")
 self.body(func(inputs) {
 	wf := pt.workflow().mem(4 * units.GiB).cpu(2)
 
+	// Export-only-matched: the distance-to-known columns are variant-axis keyed and
+	// part of the exported `variants` frame, so under the filter they are restricted
+	// to matched variants (nt: ASSIGNED; aa: has knownAaKey) instead of all variants
+	// carrying a distance (which includes AMBIGUOUS near-misses). Everything else
+	// this template emits (known tables, linkers, unmatched designed) is inherently
+	// keyed on the known axis / already ASSIGNED-only, so it is unaffected.
+	exportOnlyKnown := !is_undefined(inputs.exportOnlyKnown) && inputs.exportOnlyKnown
+
 	// Tags each row with its sampleId (from the resource-map key) so the known
 	// table can count samples + sum reads across the run.
 	loadConcatX := func(rmData, idPrefix, xsvType) {
@@ -40,10 +48,20 @@ self.body(func(inputs) {
 		rmMap := rmData.inputs()
 		for sKey in maps.getKeys(rmMap) {
 			sampleId := json.decode(sKey)[0]
+			opts := { id: idPrefix + "_" + string(len(frames)) }
+			// Disable per-file type inference on TSV reads so every sample's frame
+			// shares an identical all-String schema. An empty per-sample TSV (header
+			// only) otherwise infers all columns as String while a populated one
+			// infers numeric columns as Int64, and the concat rejects the mismatch.
+			// Every numeric column consumed below is cast explicitly, so all-String
+			// reads are safe. Parquet keeps its embedded schema.
+			if xsvType == "tsv" {
+				opts.inferSchema = false
+			}
 			frames = append(frames, wf.frame({
 				file: rmMap[sKey],
 				xsvType: xsvType
-			}, { id: idPrefix + "_" + string(len(frames)) }).withColumns(pt.lit(sampleId).alias("sampleId")))
+			}, opts).withColumns(pt.lit(sampleId).alias("sampleId")))
 		}
 		ll.assert(len(frames) > 0, "no frames for " + idPrefix)
 		if len(frames) == 1 {
@@ -99,9 +117,14 @@ self.body(func(inputs) {
 		).
 		sort(["knownKey"]).save("knownNt.tsv", { xsvType: "tsv" })
 
-	// nt distance-to-nearest (ASSIGNED + AMBIGUOUS carry a distance)
+	// nt distance-to-nearest (ASSIGNED + AMBIGUOUS carry a distance). Under the
+	// export-only-matched filter, keep only ASSIGNED (the exported nt variants).
+	ntDistFilter := nonEmpty("nMutationsToKnown")
+	if exportOnlyKnown {
+		ntDistFilter = pt.col("assignStatus").cast("String").eq("ASSIGNED")
+	}
 	vdf.
-		filter(nonEmpty("nMutationsToKnown")).
+		filter(ntDistFilter).
 		groupBy("variantKey").
 		agg(pt.col("nMutationsToKnown").cast("Int").first().alias("distance")).
 		select(pt.col("variantKey"), pt.col("distance")).
@@ -149,8 +172,14 @@ self.body(func(inputs) {
 		).
 		sort(["knownKey"]).save("knownAa.tsv", { xsvType: "tsv" })
 
+	// aa distance-to-nearest. Under the export-only-matched filter, keep only
+	// variants carrying a knownAaKey (the exported aa variants).
+	aaDistFilter := nonEmpty("aaMutationsToKnown")
+	if exportOnlyKnown {
+		aaDistFilter = nonEmpty("knownAaKey")
+	}
 	adf.
-		filter(nonEmpty("aaMutationsToKnown")).
+		filter(aaDistFilter).
 		groupBy("aaVariantKey").
 		agg(pt.col("aaMutationsToKnown").cast("Int").first().alias("distance")).
 		select(pt.col("aaVariantKey").alias("variantKey"), pt.col("distance")).
@@ -214,9 +243,12 @@ self.body(func(inputs) {
 		sort(["knownKey"]).
 		save("knownConvergence.tsv", { xsvType: "tsv" })
 
-	// --- unmatched designed nt entries (dropouts) ---------------------------
-	// Designed nt entries (block key = hash(designed ntSequence)) that NO variant
-	// matched in any sample. designed − assigned, via a left join + null filter.
+	// --- combined designed-nt table (block-local view) ----------------------
+	// EVERY designed nt entry (block key = hash(designed ntSequence)) with the
+	// matched abundance left-joined: detected entries carry readCountTotal +
+	// sampleCount, undetected (dropout) entries carry null (shown blank). This
+	// merges the former separate "Known Variants (NT)" and "Unmatched Designed
+	// (NT)" tables into one. The EXPORT overlay stays matched-only (knownNt.tsv).
 	designedNtKeyed := loadConcat(inputs.knownDesignedNtData, "dNtU").
 		select(pt.col("knownNtId"), pt.col("ntSequence")).
 		withColumns(seqHash("ntSequence").alias("knownKey")).
@@ -225,16 +257,23 @@ self.body(func(inputs) {
 			pt.col("knownNtId").first().alias("label"),
 			pt.col("ntSequence").first().alias("sequence")
 		)
-	assignedNtKeys := ntAssigned.
+	matchedNtAbund := ntAssigned.
 		groupBy("knownKey").
-		agg(pt.col("knownKey").first().alias("_k")).
-		select(pt.col("knownKey"), pt.lit(1).alias("assigned"))
+		agg(
+			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
+			pt.col("sampleId").nUnique().alias("sampleCount")
+		)
 	designedNtKeyed.
-		join(assignedNtKeys, { how: "left", on: ["knownKey"] }).
-		filter(pt.col("assigned").fillNull(0).eq(pt.lit(0))).
-		select(pt.col("knownKey"), pt.col("label"), pt.col("sequence")).
+		join(matchedNtAbund, { how: "left", on: ["knownKey"] }).
+		select(
+			pt.col("knownKey"),
+			pt.col("label"),
+			pt.col("sequence"),
+			pt.col("readCountTotal"),
+			pt.col("sampleCount")
+		).
 		sort(["knownKey"]).
-		save("unmatchedNt.tsv", { xsvType: "tsv" })
+		save("knownNtAll.tsv", { xsvType: "tsv" })
 
 	result := wf.run()
 
@@ -248,6 +287,6 @@ self.body(func(inputs) {
 		knownAaToNt: result.getFile("knownAaToNt.tsv"),
 		knownSynCount: result.getFile("knownSynCount.tsv"),
 		knownConvergence: result.getFile("knownConvergence.tsv"),
-		unmatchedNt: result.getFile("unmatchedNt.tsv")
+		knownNtAll: result.getFile("knownNtAll.tsv")
 	}
 })
