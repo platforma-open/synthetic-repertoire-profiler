@@ -18,6 +18,7 @@ maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 units := import("@platforma-sdk/workflow-tengo:units")
 
+aggResources := import(":aggregate-resources")
 variantLabel := import(":variant-label")
 
 self.defineOutputs("ntProperties", "aaProperties")
@@ -29,7 +30,11 @@ self.awaitState("variantsTsvData", "ResourceReady")
 self.awaitState("aaVariantsTsvData", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := pt.workflow().mem(4 * units.GiB).cpu(2)
+	res := aggResources.forSamples(len(inputs.variantsTsvData.inputs()))
+	wf := pt.workflow().
+		inMediumQueue().
+		mem(res.memGB * units.GiB).
+		cpu(res.cpu)
 
 	// TSV reads disable per-file type inference (`inferSchema: false` → every
 	// column read as String). Per-sample TSVs vary: an empty one (header only)

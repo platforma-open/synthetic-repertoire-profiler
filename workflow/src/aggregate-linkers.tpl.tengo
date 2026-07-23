@@ -15,6 +15,8 @@ maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 units := import("@platforma-sdk/workflow-tengo:units")
 
+aggResources := import(":aggregate-resources")
+
 self.defineOutputs("ntToAa", "parentNt", "parentAa")
 
 self.awaitState("InputsLocked")
@@ -22,7 +24,11 @@ self.awaitState("variantsTsvData", "ResourceReady")
 self.awaitState("aaVariantsTsvData", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := pt.workflow().mem(4 * units.GiB).cpu(2)
+	res := aggResources.forSamples(len(inputs.variantsTsvData.inputs()))
+	wf := pt.workflow().
+		inMediumQueue().
+		mem(res.memGB * units.GiB).
+		cpu(res.cpu)
 
 	loadConcat := func(rmData, idPrefix) {
 		frames := []
