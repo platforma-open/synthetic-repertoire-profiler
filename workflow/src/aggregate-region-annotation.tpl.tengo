@@ -11,16 +11,22 @@ maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 units := import("@platforma-sdk/workflow-tengo:units")
 
+aggResources := import(":aggregate-resources")
+
 self.defineOutputs("regionAnnotation")
 
 self.awaitState("InputsLocked")
 self.awaitState("regionAnnotationData", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := pt.workflow().mem(2 * units.GiB).cpu(1)
+	rmMap := inputs.regionAnnotationData.inputs()
+	res := aggResources.forSamples(len(rmMap), { floorMemGB: 4, perSampleMemGB: 1, maxMemGB: 64, maxCpu: 8 })
+	wf := pt.workflow().
+		inMediumQueue().
+		mem(res.memGB * units.GiB).
+		cpu(res.cpu)
 
 	frames := []
-	rmMap := inputs.regionAnnotationData.inputs()
 	for sKey in maps.getKeys(rmMap) {
 		// inferSchema:false → all columns read as String, so empty and populated
 		// per-sample TSVs share one schema and the concat never hits a numeric-vs-

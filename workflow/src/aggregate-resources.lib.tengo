@@ -1,0 +1,29 @@
+// Sample-count-scaled resource sizing for the cross-sample aggregation ptabler runs.
+// Every aggregate-* template concatenates one frame per sample before the
+// groupBy, so peak memory grows with the number of samples.
+
+math := import("math")
+
+// Computes { memGB, cpu } for `numberOfSamples`. Optional opts override the
+// defaults tuned for the per-variant aggregations:
+//   floorMemGB      memory floor                                (default 8)
+//   perSampleMemGB  memory added per sample                     (default 2)
+//   maxMemGB        upper clamp on memory                       (default 128)
+//   maxCpu          upper clamp on CPU (cpu = clamp(samples, 1, maxCpu)) (default 16)
+forSamples := func(numberOfSamples, ...opts) {
+	o := len(opts) == 1 ? opts[0] : {}
+	floorMemGB := is_undefined(o.floorMemGB) ? 8 : o.floorMemGB
+	perSampleMemGB := is_undefined(o.perSampleMemGB) ? 2 : o.perSampleMemGB
+	maxMemGB := is_undefined(o.maxMemGB) ? 128 : o.maxMemGB
+	maxCpu := is_undefined(o.maxCpu) ? 16 : o.maxCpu
+
+	effectiveSamples := int(math.max(numberOfSamples, 3))
+	return {
+		memGB: int(math.min(maxMemGB, math.max(floorMemGB, effectiveSamples * perSampleMemGB))),
+		cpu: int(math.max(1, math.min(maxCpu, numberOfSamples)))
+	}
+}
+
+export {
+	forSamples: forSamples
+}
