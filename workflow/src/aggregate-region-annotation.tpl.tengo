@@ -20,7 +20,7 @@ self.awaitState("regionAnnotationData", "ResourceReady")
 
 self.body(func(inputs) {
 	rmMap := inputs.regionAnnotationData.inputs()
-	res := aggResources.forSamples(len(rmMap), { baseMemGB: 4, perSampleMemGB: 1, maxMemGB: 64, maxCpu: 8 })
+	res := aggResources.forSamples(len(rmMap), { floorMemGB: 4, perSampleMemGB: 1, maxMemGB: 64, maxCpu: 8 })
 	wf := pt.workflow().
 		inMediumQueue().
 		mem(res.memGB * units.GiB).
