@@ -6,20 +6,20 @@ math := import("math")
 
 // Computes { memGB, cpu } for `numberOfSamples`. Optional opts override the
 // defaults tuned for the per-variant aggregations:
-//   baseMemGB       memory floor is baseMemGB*3/2               (default 8 -> 12 GiB)
+//   floorMemGB      memory floor                                (default 8)
 //   perSampleMemGB  memory added per sample                     (default 2)
 //   maxMemGB        upper clamp on memory                       (default 128)
 //   maxCpu          upper clamp on CPU (cpu = clamp(samples, 1, maxCpu)) (default 16)
 forSamples := func(numberOfSamples, ...opts) {
 	o := len(opts) == 1 ? opts[0] : {}
-	baseMemGB := is_undefined(o.baseMemGB) ? 8 : o.baseMemGB
+	floorMemGB := is_undefined(o.floorMemGB) ? 8 : o.floorMemGB
 	perSampleMemGB := is_undefined(o.perSampleMemGB) ? 2 : o.perSampleMemGB
 	maxMemGB := is_undefined(o.maxMemGB) ? 128 : o.maxMemGB
 	maxCpu := is_undefined(o.maxCpu) ? 16 : o.maxCpu
 
 	effectiveSamples := int(math.max(numberOfSamples, 3))
 	return {
-		memGB: int(math.min(maxMemGB, math.max(baseMemGB * 3 / 2, effectiveSamples * perSampleMemGB))),
+		memGB: int(math.min(maxMemGB, math.max(floorMemGB, effectiveSamples * perSampleMemGB))),
 		cpu: int(math.max(1, math.min(maxCpu, numberOfSamples)))
 	}
 }
