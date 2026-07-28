@@ -132,7 +132,12 @@ wf.body(func(args) {
 		maxMutationFraction: args.maxMutationFraction,
 		// Per-variant aa mutation-load filter → mitool call-mutations step (-Mcall-mutations.*).
 		maxAaMutations: args.maxAaMutations,
-		maxAaMutationFraction: args.maxAaMutationFraction
+		maxAaMutationFraction: args.maxAaMutationFraction,
+		// Quality gates → mitool align step (-Malign.filter.minBaseQuality) and
+		// assemble step (-Massemble.minVariantQuality). Unlike the filters above these
+		// are ON by mitool default, so "absent" means 5 / 20, not off.
+		minBaseQuality: args.minBaseQuality,
+		minVariantQuality: args.minVariantQuality
 	}, { removeUndefs: true })
 
 	// One File-valued PColumn per analyze output, keyed by sampleId.
@@ -152,6 +157,10 @@ wf.body(func(args) {
 
 	ntVariantAxis := columnSpecs.variantKeyAxisSpec(blockId, "nucleotide", "Variant nt")
 	aaVariantAxis := columnSpecs.variantKeyAxisSpec(blockId, "aminoacid", "Variant aa")
+
+	// Mutation-count axis (X of the mutation-load distribution), per level.
+	ntMutationCountAxis := columnSpecs.mutationCountAxisSpec("nucleotide", "Nt mutations")
+	aaMutationCountAxis := columnSpecs.mutationCountAxisSpec("aminoacid", "AA mutations")
 
 	ntKnownAxis := columnSpecs.knownVariantKeyAxisSpec(blockId, "nucleotide", "Known variant nt")
 	aaKnownAxis := columnSpecs.knownVariantKeyAxisSpec(blockId, "aminoacid", "Known variant aa")
@@ -185,6 +194,10 @@ wf.body(func(args) {
 	knownAaAbundanceXsv := xsvTarget("knownAaAbundanceXsv", "knownAaAbundance", [aaKnownAxis], columnSpecs.knownAbundanceColumns())
 	// Declared-member synonymous spread, keyed by the known-aa entity.
 	aaConvergenceXsv := xsvTarget("aaConvergenceXsv", "aaConvergence", [aaKnownAxis], columnSpecs.convergenceColumns())
+	// Per-sample mutation-load histogram: [sampleId, mutationCount] -> distinct
+	// variants + reads. The Mutation Count Histogram page's only data source.
+	ntMutationHistogramXsv := xsvTarget("ntMutationHistogramXsv", "ntMutationHistogram", [ntMutationCountAxis], columnSpecs.mutationHistogramColumns("nucleotide"))
+	aaMutationHistogramXsv := xsvTarget("aaMutationHistogramXsv", "aaMutationHistogram", [aaMutationCountAxis], columnSpecs.mutationHistogramColumns("aminoacid"))
 
 	// Per-sample step reports (ResourceMap keyed [step, format]; processColumn
 	// prepends sampleId). Feeds the sample report panel (json charts + txt views)
@@ -245,6 +258,8 @@ wf.body(func(args) {
 		reportsOutput,
 		ntAbundanceXsv,
 		aaAbundanceXsv,
+		ntMutationHistogramXsv,
+		aaMutationHistogramXsv,
 		knownNtAbundanceXsv,
 		knownAaAbundanceXsv,
 		aaConvergenceXsv,
@@ -514,6 +529,24 @@ wf.body(func(args) {
 	for k, v in parentAaCols {
 		variantsPfBuilder.add("parentAa/" + k, aaTrace.inject(v.spec), v.data)
 	}
+
+	// --- Mutation-histogram plot frame ----------------------------------------
+	mutationHistogramPfBuilder := pframes.pFrameBuilder()
+	addMutationHistogram := func(prefix, xsvName, trace) {
+		for columnName in perSampleResults.listXsvColumns(xsvName) {
+			mutationHistogramPfBuilder.add(
+				prefix + columnName,
+				trace.inject(perSampleResults.outputSpec(xsvName, columnName)),
+				perSampleResults.outputData(xsvName, columnName)
+			)
+		}
+	}
+	// aa always; nt only when nt export is on (same gating as the rest of the block).
+	if exportNt {
+		addMutationHistogram("nt/", "ntMutationHistogramXsv", ntTrace)
+	}
+	addMutationHistogram("aa/", "aaMutationHistogramXsv", aaTrace)
+	mutationHistogramPf := mutationHistogramPfBuilder.build()
 
 	// --- known-set overlay (when an nt and/or aa known set was supplied) -------
 	// Exact-match (budget 0) overlay derived from the assigned variants: known
@@ -785,6 +818,8 @@ wf.body(func(args) {
 		paramsJson: perSampleResults.output("paramsJson"),
 		// Per-sample QC metrics PFrame (sampleId axis) for the QC Report table.
 		qc: pframes.exportFrame(qcPf),
+		// Per-sample mutation histogram PFrame for the Mutation Count Histogram page.
+		mutationHistogram: pframes.exportFrame(mutationHistogramPf),
 		// Per-sample step reports ([sampleId, step, format] -> file) for the
 		// sample report panel + Main-page Alignments cell. exportColumnData makes
 		// each file a downloadable Blob (getFileHandle/getContentJson need an
