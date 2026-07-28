@@ -97,6 +97,74 @@ stateMatrixColumns := func(alphabet) {
 	}]
 }
 
+// Mutation-count axis: how many mutations a variant carries relative to its
+// parent — the X dimension of the mutation-load distribution. Values are plain
+// integers, the same in every run, so NO run scoping; nt and aa mutation counts
+// are different quantities, hence the alphabet domain. Deliberately reuses the
+// per-variant `mutationCount` column name: same quantity, promoted to a key.
+mutationCountAxisSpec := func(alphabet, label) {
+	return {
+		column: "mutationCount",
+		spec: {
+			name: "pl7.app/repertoire/mutationCount",
+			type: "Int",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: {
+				"pl7.app/label": label,
+				"pl7.app/table/visibility": "default",
+				"pl7.app/table/orderPriority": "110000"
+			}
+		}
+	}
+}
+
+// Mutation-load distribution values ([sampleId, mutationCount]): how many
+// distinct variants a sample carries at each mutation count, and how many reads
+// support them. Per-sample only — a cross-sample total is NOT the sum of these
+// (a variant seen in three samples is one unique variant), and a second set of
+// columns for it only made the plot's column picker ambiguous.
+mutationHistogramColumns := func(alphabet) {
+	return [{
+		column: "variantCount",
+		id: "variant-count",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/variantCount",
+			valueType: "Long",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(100000, "default", {
+				"pl7.app/min": "1",
+				"pl7.app/label": "Unique Variants"
+			})
+		}
+	}, {
+		column: "readCount",
+		id: "bin-read-count",
+		allowNA: false,
+		spec: {
+			// Reuses the per-variant per-sample abundance name; the alphabet domain
+			// plus the mutation-count axis keep it a distinct column.
+			name: "pl7.app/readCount",
+			valueType: "Long",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(90000, "default", {
+				"pl7.app/min": "1",
+				"pl7.app/isAbundance": "true",
+				"pl7.app/abundance/unit": "reads",
+				"pl7.app/abundance/normalized": "false",
+				"pl7.app/abundance/aggregated": "true",
+				"pl7.app/label": "Reads"
+			})
+		}
+	}]
+}
+
 // Known-variant axis: one distinct known (designed) sequence. Hash of the known
 // sequence (nt or aa), scoped to the run. Distinct axis from `variantKey` — the
 // known linker bridges the two.
@@ -524,7 +592,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
 			domain: {
 				"pl7.app/alphabet": alphabet
 			},
-			annotations: tableAnno(95000, "hidden", {
+			annotations: tableAnno(95000, "default", {
 				"pl7.app/table/fontFamily": "monospace",
 				"pl7.app/label": "Mutations"
 			})
@@ -680,6 +748,8 @@ export {
 	variantKeyAxisSpec: variantKeyAxisSpec,
 	parentIdAxisSpec: parentIdAxisSpec,
 	positionAxisSpec: positionAxisSpec,
+	mutationCountAxisSpec: mutationCountAxisSpec,
+	mutationHistogramColumns: mutationHistogramColumns,
 	stateMatrixColumns: stateMatrixColumns,
 	knownVariantKeyAxisSpec: knownVariantKeyAxisSpec,
 	knownVariantColumns: knownVariantColumns,

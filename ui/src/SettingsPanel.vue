@@ -419,6 +419,42 @@ ACGTACGT..."
       </template>
     </PlNumberField>
 
+    <PlSectionSeparator>Quality Filter</PlSectionSeparator>
+    <PlNumberField
+      v-model="app.model.data.minBaseQuality"
+      label="Min base quality"
+      :min-value="0"
+      :max-value="58"
+      :step="1"
+      :clearable="true"
+    >
+      <template #tooltip>
+        Discard a read if any of its bases that overlap the parent sequence falls below this Phred
+        quality. Bases outside the overlap — adapter tails and read overhang — are ignored, since
+        they never reach the reported variant. Set 0 to keep every read regardless of quality. Leave
+        empty for the default of 5.
+      </template>
+    </PlNumberField>
+
+    <PlNumberField
+      v-model="app.model.data.minVariantQuality"
+      label="Min variant quality"
+      :min-value="0"
+      :max-value="58"
+      :step="1"
+      :clearable="true"
+    >
+      <template #tooltip>
+        Discard a variant if its combined quality falls below this Phred at any single position.
+        Quality accumulates across the reads supporting a variant, so a variant seen in only one or
+        two reads is the most likely to be dropped — raise this to keep only well-supported
+        variants, lower it to keep rare ones. Because the check applies to the worst position across
+        the whole parent, it gets stricter as the parent gets longer: on a long parent with noisy
+        reads the default of 20 can remove most variants. Set 0 to keep every variant. Leave empty
+        for the default of 20.
+      </template>
+    </PlNumberField>
+
     <PlSectionSeparator>Resource Allocation</PlSectionSeparator>
     <PlNumberField
       v-model="app.model.data.perProcessMemGB"

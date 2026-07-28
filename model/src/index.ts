@@ -1,6 +1,9 @@
+import type { GraphMakerState } from "@milaboratories/graph-maker";
 import type {
   ImportFileHandle,
   InferOutputsType,
+  PColumnIdAndSpec,
+  PFrameHandle,
   PlDataTableStateV2,
   PObjectSpec,
   PlRef,
@@ -202,6 +205,14 @@ export type BlockData = {
   maxAaMutations?: number; // reject if the aa alignment has more than this many mutations (edit ops)
   maxAaMutationFraction?: number; // reject if aaMutations / aaParentLength exceeds this (0 < f ≤ 1)
 
+  // minBaseQuality → align step (AlignParams.filter): reject a fragment if ANY
+  // read base inside the parent-covered span is below this Phred. Bases outside
+  // the span (overhang, adapter tails) are ignored.
+  minBaseQuality?: number;
+  // minVariantQuality → assemble step (AssembleParams): drop a variant whose
+  // aggregated per-position quality dips below this Phred at ANY position.
+  minVariantQuality?: number;
+
   // Optional per-sample mitool resource overrides (Advanced). Empty = workflow
   // defaults. Passed to the parse + analyze exec steps.
   perProcessMemGB?: number;
@@ -211,6 +222,7 @@ export type BlockData = {
   qcTableState: PlDataTableStateV2;
   knownVariantsNtTableState: PlDataTableStateV2;
   knownVariantsAaTableState: PlDataTableStateV2;
+  graphStateMutationHistogram: GraphMakerState;
 };
 
 /** Workflow-facing args projected from `BlockData` by `.args(...)`. */
@@ -252,6 +264,10 @@ export type BlockArgs = {
   // AA mutation-load filter → mitool -Mcall-mutations.maxAaMutations / maxAaMutationFraction.
   maxAaMutations?: number;
   maxAaMutationFraction?: number;
+  // Quality gates → mitool -Malign.filter.minBaseQuality / -Massemble.minVariantQuality.
+  // Absent = mitool defaults (5 / 20), which are ON — not off.
+  minBaseQuality?: number;
+  minVariantQuality?: number;
   perProcessMemGB?: number;
   perProcessCPUs?: number;
   defaultBlockLabel: string;
@@ -260,13 +276,33 @@ export type BlockArgs = {
 
 /** v1 data shape: the toggle was `ntStateMatrix` (nt state matrix only). v2
  *  renames it to `exportNt` (governs all nt export). */
-type BlockDataV1 = Omit<BlockData, "exportNt"> & { ntStateMatrix: boolean };
+type BlockDataV1 = Omit<BlockDataV2, "exportNt"> & { ntStateMatrix: boolean };
+
+/** v2 data shape: no Mutation Count Histogram page (its GraphMaker state is v3). */
+type BlockDataV2 = Omit<BlockData, "graphStateMutationHistogram">;
+
+/** Initial state of the Mutation Count Histogram plot: bar layer over the
+ *  per-sample unique-variant counts. The axis mapping comes from the page's
+ *  `defaultOptions`; the bar layer's `height: "max"` is exact because, once
+ *  faceted by sample, each panel holds exactly one row per mutation count. */
+const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
+  title: "Mutation Count Histogram",
+  template: "bar",
+  currentTab: null,
+};
 
 const dataModel = new DataModelBuilder()
   .from<BlockDataV1>("v1")
-  .migrate<BlockData>("v2", ({ ntStateMatrix, ...rest }) => ({
+  .migrate<BlockDataV2>("v2", ({ ntStateMatrix, ...rest }) => ({
     ...rest,
     exportNt: ntStateMatrix ?? false,
+  }))
+  // Adds the Mutation Count Histogram plot state. New fields must come as a NEW
+  // step — editing an already-deployed migration body has no effect on projects
+  // already tagged with that version.
+  .migrate<BlockData>("v3", (v2) => ({
+    ...v2,
+    graphStateMutationHistogram: { ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE },
   }))
   .init(() => ({
     parentInputMode: "fastaSequence" as ParentInputMode,
@@ -280,12 +316,17 @@ const dataModel = new DataModelBuilder()
     qcTableState: createPlDataTableStateV2(),
     knownVariantsNtTableState: createPlDataTableStateV2(),
     knownVariantsAaTableState: createPlDataTableStateV2(),
+    graphStateMutationHistogram: { ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE },
   }));
 
 const DNA_IUPAC_RE = /^[ACGTacgtMKRYWSBDHVNmkrywsbdhvn]*$/;
 
 /** Trace-label fallback when neither a custom label nor a dataset name is set. */
 const DEFAULT_BLOCK_LABEL = "Amplicon Profiling";
+
+/** milib's `SequenceQuality.MAX_QUALITY_VALUE` — the ceiling for both quality
+ *  gates. A threshold above it can never be met, so nothing would pass. */
+export const MAX_PHRED_QUALITY = 58;
 
 /** Shown as the block subtitle before a dataset is picked. */
 const NO_DATASET_LABEL = "Select dataset";
@@ -454,6 +495,50 @@ export const platforma = BlockModelV3.create(dataModel)
     return createPlDataTableV2(ctx, pCols, ctx.data.knownVariantsNtTableState);
   })
 
+  // Mutation Count Histogram page (GraphMaker, `discrete`/bar). Note the plot is
+  // a bar chart over pre-aggregated counts, not GraphMaker's `histogram` chart
+  // type: the sibling "Cluster Size Histogram" pages bin a raw per-item column and
+  // let GraphMaker count, which cannot be split per sample. The workflow emits a frame
+  // holding only the per-sample mutation histograms — GraphMaker cannot count
+  // rows, so the counts are pre-aggregated, and anything else here would just be
+  // an unusable option in the plot's column picker. Single-axis sample metadata
+  // from upstream is pulled in so the user can facet / group by sample group
+  // instead of by sample.
+  .outputWithStatus("mutationHistogramPf", (ctx): PFrameHandle | undefined => {
+    const pCols = ctx.outputs
+      ?.resolve({
+        field: "mutationHistogram",
+        assertFieldType: "Input",
+        allowPermanentAbsence: true,
+      })
+      ?.getPColumns();
+    if (pCols === undefined) return undefined;
+    const inputRef = ctx.data.input;
+    // `ctx.createPFrame` (not createPFrameForGraphs): the latter walks the result
+    // pool and would pull in this block's own `variants` export — including the
+    // state matrix — filling the picker with unusable options.
+    const sampleMeta =
+      inputRef !== undefined
+        ? (ctx.resultPool.getAnchoredPColumns({ main: inputRef }, [
+            { axes: [{ anchor: "main", idx: 0 }] },
+          ]) ?? [])
+        : [];
+    return ctx.createPFrame([...pCols, ...sampleMeta]);
+  })
+
+  // Specs of the plot frame's own columns — the page picks its default axis
+  // mapping from these (upstream metadata is deliberately absent here).
+  .output("mutationHistogramPCols", (ctx): PColumnIdAndSpec[] | undefined =>
+    ctx.outputs
+      ?.resolve({
+        field: "mutationHistogram",
+        assertFieldType: "Input",
+        allowPermanentAbsence: true,
+      })
+      ?.getPColumns()
+      ?.map((c) => ({ columnId: c.id, spec: c.spec }) satisfies PColumnIdAndSpec),
+  )
+
   .outputWithStatus("knownVariantsAaTable", (ctx) => {
     const pCols = ctx.outputs
       ?.resolve({ field: "knownVariantsAa", assertFieldType: "Input", allowPermanentAbsence: true })
@@ -557,6 +642,22 @@ export const platforma = BlockModelV3.create(dataModel)
     )
       throw new Error("Max amino-acid mutation fraction must be between 0 and 1.");
 
+    // Quality gates (Advanced): same null → undefined normalization as above, but
+    // note the different "empty" semantics — these are ON at mitool's defaults
+    // (5 / 20) when absent, so empty is not "no filtering". 0 is the way to
+    // disable (a 0 threshold accepts everything, Phred being non-negative), which
+    // is why the floor here is 0 and not 1. The ceiling is milib's
+    // MAX_QUALITY_VALUE (58): above it, nothing can ever pass.
+    const minBaseQuality = data.minBaseQuality ?? undefined;
+    const minVariantQuality = data.minVariantQuality ?? undefined;
+    const checkQuality = (v: number | undefined, label: string) => {
+      if (v === undefined) return;
+      if (!Number.isInteger(v) || v < 0 || v > MAX_PHRED_QUALITY)
+        throw new Error(`${label} must be an integer between 0 and ${MAX_PHRED_QUALITY}.`);
+    };
+    checkQuality(minBaseQuality, "Min base quality");
+    checkQuality(minVariantQuality, "Min variant quality");
+
     // Resource overrides: positive when set (empty = workflow defaults).
     if (data.perProcessMemGB !== undefined && data.perProcessMemGB < 1)
       throw new Error("Memory per process must be at least 1 GB.");
@@ -624,6 +725,8 @@ export const platforma = BlockModelV3.create(dataModel)
       maxMutationFraction,
       maxAaMutations,
       maxAaMutationFraction,
+      minBaseQuality,
+      minVariantQuality,
       perProcessMemGB: data.perProcessMemGB,
       perProcessCPUs: data.perProcessCPUs,
       // Workflow trace label: the selected dataset's name (snapshotted by the
@@ -644,11 +747,13 @@ export const platforma = BlockModelV3.create(dataModel)
   .sections((ctx) => {
     const items: {
       type: "link";
-      href: "/" | "/qc" | "/known-variants-nt" | "/known-variants-aa";
+      href: "/" | "/qc" | "/mutation-histogram" | "/known-variants-nt" | "/known-variants-aa";
       label: string;
     }[] = [
       { type: "link", href: "/", label: "Main" },
       { type: "link", href: "/qc", label: "QC Report" },
+      // Always listed: the plot's empty state carries its own call to action.
+      { type: "link", href: "/mutation-histogram", label: "Mutation Count Histogram" },
     ];
     // NT known analysis runs only with an nt known set (--known); aa known
     // analysis runs with an aa set (--known-aa) or is derived from the nt set.

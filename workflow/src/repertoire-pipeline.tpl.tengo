@@ -20,7 +20,7 @@ units := import("@platforma-sdk/workflow-tengo:units")
 
 json := import("json")
 
-self.defineOutputs("parsedMic", "variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "logs")
+self.defineOutputs("parsedMic", "variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "logs")
 
 // Progress marker prefix — mitool emits `[==PROGRESS==]<stage>: <pct>% ETA: …`
 // on stderr when MI_PROGRESS_PREFIX is set; the block scrapes it for the
@@ -74,6 +74,10 @@ self.body(func(inputs) {
 	// Per-variant aa mutation-load filter (undefined = mitool default, off).
 	maxAaMutations := params.maxAaMutations
 	maxAaMutationFraction := params.maxAaMutationFraction
+	// Quality gates (undefined = mitool default, which is ON: 5 for minBaseQuality,
+	// 20 for minVariantQuality). 0 disables — Phred is never negative.
+	minBaseQuality := params.minBaseQuality
+	minVariantQuality := params.minVariantQuality
 	mitoolCPUs := inputs.mitoolCPUs
 	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
 
@@ -201,6 +205,16 @@ self.body(func(inputs) {
 	}
 	if !is_undefined(maxAaMutationFraction) {
 		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.maxAaMutationFraction=" + string(maxAaMutationFraction))
+	}
+	// Quality gates. minBaseQuality is an align-step filter param; minVariantQuality
+	// belongs to the assemble step, whose -M prefix mitool only accepts from the
+	// version that added "assemble" to the analyze mixin whitelist — older mitool
+	// rejects `-Massemble.*` outright rather than ignoring it.
+	if !is_undefined(minBaseQuality) {
+		analyzeBuilder = analyzeBuilder.arg("-Malign.filter.minBaseQuality=" + string(int(minBaseQuality)))
+	}
+	if !is_undefined(minVariantQuality) {
+		analyzeBuilder = analyzeBuilder.arg("-Massemble.minVariantQuality=" + string(int(minVariantQuality)))
 	}
 	if hasParentRegions {
 		analyzeBuilder = analyzeBuilder.arg("--parent-regions").arg("parents.regions.json")
@@ -529,6 +543,35 @@ self.body(func(inputs) {
 		pt.col("aaVariantKey").count().alias("aaVariants")
 	)
 
+	// Per-sample mutation-load histogram
+	histogram := func(df, keyCol) {
+		return df.
+			groupBy(keyCol).agg(
+				pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
+				pt.col("readCount").cast("Long").sum().alias("readCount")
+			).
+			groupBy("mutationCount").agg(
+				pt.col(keyCol).count().alias("variantCount"),
+				pt.col("readCount").cast("Long").sum().alias("readCount")
+			).
+			select(pt.col("mutationCount"), pt.col("variantCount"), pt.col("readCount")).
+			sort(["mutationCount"])
+	}
+	histogram(vdf, "variantKey").save("ntMutationHistogram.parquet")
+
+	// aa level: the aa mutation count lives in aa-variants.tsv, the reads come from
+	// the nt members (variants.tsv), same derivation as the aa abundance above.
+	aaMutations := adf.
+		groupBy("aaVariantKey").
+		agg(pt.col("mutationCount").cast("Int").first().alias("mutationCount"))
+	histogram(
+		vdf.
+			filter(b6NonEmpty("aaVariantKey")).
+			groupBy("aaVariantKey").agg(pt.col("readCount").cast("Long").sum().alias("readCount")).
+			join(aaMutations, { how: "inner", on: ["aaVariantKey"] }),
+		"aaVariantKey"
+	).save("aaMutationHistogram.parquet")
+
 	frac := func(numCol) {
 		return pt.when(pt.col("totalReads").gt(pt.lit(0))).then(
 			pt.col(numCol).cast("Double").truediv(pt.col("totalReads").cast("Double"))
@@ -605,6 +648,10 @@ self.body(func(inputs) {
 		knownDesignedNt: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-nt.tsv") : ptResult.getFile("emptyKnownDesignedNt.tsv"),
 		knownDesignedAa: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-aa.tsv") : ptResult.getFile("emptyKnownDesignedAa.tsv"),
 		qcRow: ptResult.getFile("qcRow.parquet"),
+		// Per-sample mutation-load histograms ([mutationCount] -> variants + reads,
+		// sampleId stamped in) for the Mutation Distribution page.
+		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),
+		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet"),
 		// analyze stdout (stderr merged in) carries the align/assemble progress
 		// markers + the run summary — the per-sample Progress + Logs source.
 		logs: analyzeCmd.getStdoutStream()
