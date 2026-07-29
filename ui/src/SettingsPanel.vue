@@ -175,20 +175,14 @@ const pairedEndMismatch = computed(() => {
   return app.model.outputs.inputIsPairedEnd === false;
 });
 
-// Snapshot the picked dataset's name into data on selection — the model's
-// args-only `.subtitle` reads it from there (it can't resolve the label live) —
-// and fit the tag pattern to the dataset's read structure. Both are user-gesture
-// writes, not output→data watchEffects, so neither is a hairpin.
+// Both writes happen on the user gesture, never in a watcher on the outputs —
+// that loop would be a hairpin. `.subtitle` is args-only, so it needs the dataset
+// label snapshotted here.
 //
-// The pattern is refitted ONLY while it is still one of the two defaults: a
-// pattern the user actually edited (UMI, anchors, fixed lengths) must survive a
-// dataset switch. If the edited pattern then disagrees with the dataset, the
-// mismatch warning below covers it and the workflow asserts as a backstop.
-//
-// The paired-end fact comes from `inputPairedEndByRef`, keyed by ref — NOT from
-// `inputIsPairedEnd`, which derives from `data.input` and therefore still
-// describes the previous dataset while this handler runs. Datasets with an
-// unknown read structure are absent from the map, and the pattern is left alone.
+// The pattern is refitted only while it is still a default, so an edited pattern
+// (UMI, anchors, fixed lengths) survives a dataset switch. Paired-endedness comes
+// from the by-ref map because `inputIsPairedEnd` still describes the previous
+// dataset while this handler runs.
 type InputRef = NonNullable<typeof app.model.data.input>;
 function onSelectInput(ref: InputRef | undefined) {
   app.model.data.input = ref;
@@ -420,8 +414,6 @@ ACGTACGT..."
     </PlRow>
 
     <PlSectionSeparator>Mutation Filter</PlSectionSeparator>
-    <!-- Count and fraction are two ways of expressing the same gate, so each pair
-         sits on one line. mitool applies them independently when both are set. -->
     <PlRow>
       <PlNumberField
         v-model="app.model.data.maxMutations"
