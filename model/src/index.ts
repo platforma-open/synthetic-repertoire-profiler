@@ -278,28 +278,15 @@ export type BlockArgs = {
  *  renames it to `exportNt` (governs all nt export). */
 type BlockDataV1 = Omit<BlockDataV2, "exportNt"> & { ntStateMatrix: boolean };
 
-/** v2 data shape: no Mutation Count Histogram page (its GraphMaker state is v3). */
 type BlockDataV2 = Omit<BlockData, "graphStateMutationHistogram">;
 
-/** Initial state of the Mutation Count Histogram plot: bar layer over the
- *  per-sample unique-variant counts. The axis mapping comes from the page's
- *  `defaultOptions`; the bar layer's `height: "max"` is exact because, once
- *  faceted by sample, each panel holds exactly one row per mutation count. */
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
   template: "bar",
   currentTab: null,
   layersSettings: {
-    // A FIXED fill, which is what switches the per-bar colouring off. Left unset
-    // (`null`, the layer default), graph-maker maps fill to the primary grouping
-    // — here the mutation count — so every bar gets its own colour plus a colour
-    // legend that only repeats what the X axis already says. #99e099 is the fill
-    // the other histogram pages use (sequence-properties, tcr-clustering,
-    // titeseq-analysis).
-    //
-    // Consequence: the fill stays fixed even if the user adds a secondary
-    // grouping — the automatic colour-by applies only while fill is unset. A
-    // mapping can be picked back up in the layer settings.
+    // A fixed fill is what disables the colouring: left unset, graph-maker maps
+    // fill to the primary grouping (here the mutation count) and colours every bar.
     bar: { fillColor: "#99e099" },
   },
 };
@@ -310,9 +297,8 @@ const dataModel = new DataModelBuilder()
     ...rest,
     exportNt: ntStateMatrix ?? false,
   }))
-  // Adds the Mutation Count Histogram plot state. New fields must come as a NEW
-  // step — editing an already-deployed migration body has no effect on projects
-  // already tagged with that version.
+  // New fields must come as a NEW step: editing a deployed migration body has no
+  // effect on projects already tagged with that version.
   .migrate<BlockData>("v3", (v2) => ({
     ...v2,
     graphStateMutationHistogram: { ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE },
@@ -345,33 +331,24 @@ export const MAX_PHRED_QUALITY = 58;
 /** Shown as the block subtitle before a dataset is picked. */
 const NO_DATASET_LABEL = "Select dataset";
 
-/** Default tag patterns — the insert is the whole read on every available mate.
- *  `\` separates the two read halves (see `parsePattern`). The UI fits one of
- *  these to the picked dataset's read structure on selection. */
+/** Default tag patterns; `\` separates the two read halves. */
 export const DEFAULT_TAG_PATTERN_PAIRED = "^(R1:*)\\^(R2:*)";
 export const DEFAULT_TAG_PATTERN_SINGLE = "^(R1:*)";
 
-/** True while the pattern is still untouched — either empty or exactly one of the
- *  two defaults. Guards the auto-fit on dataset selection so a pattern the user
- *  actually edited (UMI, anchors, fixed lengths) is never overwritten. */
+/** True while the pattern is untouched (empty or one of the defaults) — the guard
+ *  that keeps the auto-fit from overwriting a pattern the user edited. */
 export function isDefaultTagPattern(pattern: string | undefined): boolean {
   const p = (pattern ?? "").replace(/\s+/g, "");
   return p === "" || p === DEFAULT_TAG_PATTERN_PAIRED || p === DEFAULT_TAG_PATTERN_SINGLE;
 }
 
-/** Stable key for a `PlRef` — matches how the UI already compares refs. Used to
- *  key the per-option read-structure map the UI snapshots from. */
 export function plRefKey(ref: PlRef): string {
   return `${ref.blockId}/${ref.name}`;
 }
 
-/** Read structure of a FASTQ dataset spec:
- *    true      — the readIndex axis lists R2, so the dataset is paired-end
- *    false     — no readIndex axis at all: one file per sample, single-end
- *                (the shape the workflow handles as keyLength 0)
- *    undefined — the axis is present but its readIndices domain is missing or
- *                unparseable, so the structure is unknown; callers must not guess.
- */
+/** Paired-end? true = the readIndex axis lists R2; false = no readIndex axis at
+ *  all, i.e. one file per sample; undefined = axis present but readIndices
+ *  unreadable, so the structure is unknown and callers must not guess. */
 function specIsPairedEnd(spec: PObjectSpec): boolean | undefined {
   if (!isPColumnSpec(spec)) return undefined;
   const axis = spec.axesSpec.find((a) => a.name === "pl7.app/sequencing/readIndex");
@@ -417,9 +394,7 @@ export const platforma = BlockModelV3.create(dataModel)
     return ctx.resultPool.findLabelsForColumnAxis(spec, 0);
   })
 
-  // Whether the selected input carries an R2 read (paired-end). Consumed by the
-  // UI (SettingsPanel) to validate the pattern shape live; never written back
-  // into data (that was a hairpin).
+  // Must not be written back into data — that loop would be a hairpin.
   .output("inputIsPairedEnd", (ctx): boolean | undefined => {
     const inputRef = ctx.data.input;
     if (inputRef === undefined) return undefined;
@@ -428,12 +403,8 @@ export const platforma = BlockModelV3.create(dataModel)
     return specIsPairedEnd(inputSpec);
   })
 
-  // Read structure of EVERY offered dataset, keyed by ref — not just the selected
-  // one. This is what lets the UI fit the tag pattern to a dataset at the moment
-  // it is picked: `inputIsPairedEnd` above is derived from `data.input`, so during
-  // the selection handler it still describes the PREVIOUS dataset. Datasets whose
-  // structure cannot be determined are omitted, so the UI can tell "single-end"
-  // from "unknown" and leave the pattern alone in the latter case.
+  // Keyed by ref because `inputIsPairedEnd` derives from `data.input`, and so still
+  // describes the previous dataset while a selection handler runs.
   .output("inputPairedEndByRef", (ctx): Record<string, boolean> | undefined => {
     const options = ctx.resultPool.getOptions(isFastqInput);
     if (options === undefined) return undefined;
@@ -560,15 +531,8 @@ export const platforma = BlockModelV3.create(dataModel)
     return createPlDataTableV2(ctx, pCols, ctx.data.knownVariantsNtTableState);
   })
 
-  // Mutation Count Histogram page (GraphMaker, `discrete`/bar). Note the plot is
-  // a bar chart over pre-aggregated counts, not GraphMaker's `histogram` chart
-  // type: the sibling "Cluster Size Histogram" pages bin a raw per-item column and
-  // let GraphMaker count, which cannot be split per sample. The workflow emits a frame
-  // holding only the per-sample mutation histograms — GraphMaker cannot count
-  // rows, so the counts are pre-aggregated, and anything else here would just be
-  // an unusable option in the plot's column picker. Single-axis sample metadata
-  // from upstream is pulled in so the user can facet / group by sample group
-  // instead of by sample.
+  // Upstream single-axis sample metadata is added so the plot can facet by sample
+  // group, not just by sample.
   .outputWithStatus("mutationHistogramPf", (ctx): PFrameHandle | undefined => {
     const pCols = ctx.outputs
       ?.resolve({
@@ -579,9 +543,8 @@ export const platforma = BlockModelV3.create(dataModel)
       ?.getPColumns();
     if (pCols === undefined) return undefined;
     const inputRef = ctx.data.input;
-    // `ctx.createPFrame` (not createPFrameForGraphs): the latter walks the result
-    // pool and would pull in this block's own `variants` export — including the
-    // state matrix — filling the picker with unusable options.
+    // `createPFrameForGraphs` would walk the result pool and pull in this block's
+    // own `variants` export, state matrix included, filling the picker with junk.
     const sampleMeta =
       inputRef !== undefined
         ? (ctx.resultPool.getAnchoredPColumns({ main: inputRef }, [
@@ -591,8 +554,8 @@ export const platforma = BlockModelV3.create(dataModel)
     return ctx.createPFrame([...pCols, ...sampleMeta]);
   })
 
-  // Specs of the plot frame's own columns — the page picks its default axis
-  // mapping from these (upstream metadata is deliberately absent here).
+  // The page's default axis mapping picks from these — own columns only, no
+  // upstream metadata.
   .output("mutationHistogramPCols", (ctx): PColumnIdAndSpec[] | undefined =>
     ctx.outputs
       ?.resolve({

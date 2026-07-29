@@ -194,8 +194,7 @@ wf.body(func(args) {
 	knownAaAbundanceXsv := xsvTarget("knownAaAbundanceXsv", "knownAaAbundance", [aaKnownAxis], columnSpecs.knownAbundanceColumns())
 	// Declared-member synonymous spread, keyed by the known-aa entity.
 	aaConvergenceXsv := xsvTarget("aaConvergenceXsv", "aaConvergence", [aaKnownAxis], columnSpecs.convergenceColumns())
-	// Per-sample mutation-load histogram: [sampleId, mutationCount] -> distinct
-	// variants + reads. The Mutation Count Histogram page's only data source.
+	// Per-sample mutation-load histogram — feeds the in-block plot, not exported.
 	ntMutationHistogramXsv := xsvTarget("ntMutationHistogramXsv", "ntMutationHistogram", [ntMutationCountAxis], columnSpecs.mutationHistogramColumns("nucleotide"))
 	aaMutationHistogramXsv := xsvTarget("aaMutationHistogramXsv", "aaMutationHistogram", [aaMutationCountAxis], columnSpecs.mutationHistogramColumns("aminoacid"))
 
@@ -818,7 +817,6 @@ wf.body(func(args) {
 		paramsJson: perSampleResults.output("paramsJson"),
 		// Per-sample QC metrics PFrame (sampleId axis) for the QC Report table.
 		qc: pframes.exportFrame(qcPf),
-		// Per-sample mutation histogram PFrame for the Mutation Count Histogram page.
 		mutationHistogram: pframes.exportFrame(mutationHistogramPf),
 		// Per-sample step reports ([sampleId, step, format] -> file) for the
 		// sample report panel + Main-page Alignments cell. exportColumnData makes

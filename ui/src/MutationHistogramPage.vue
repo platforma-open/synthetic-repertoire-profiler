@@ -11,24 +11,14 @@ const MUTATION_COUNT_AXIS = "pl7.app/repertoire/mutationCount";
 const SAMPLE_ID_AXIS = "pl7.app/sampleId";
 const ALPHABET_DOMAIN = "pl7.app/alphabet";
 
-/** Level of a mutation-bin column, read off its mutation-count axis. */
 const alphabetOf = (spec: PColumnSpec) =>
   spec.axesSpec.find((a) => a.name === MUTATION_COUNT_AXIS)?.domain?.[ALPHABET_DOMAIN];
 
-// Bar chart: X = mutation count, height = number of distinct variants carrying
-// that many mutations, one panel per sample. A histogram in substance, but NOT
-// GraphMaker's `histogram` chart type — that one bins a raw per-item column and
-// counts rows (what the sibling "Cluster Size Histogram" pages do), which cannot
-// be split per sample and has a fixed bin count. Here the counts come
-// pre-aggregated from the workflow as [sampleId, mutationCount] -> variantCount,
-// and the bar layer renders them.
+// Deliberately not GraphMaker's `histogram` chart type: that bins a raw column and
+// counts rows, which cannot be split per sample. The counts are pre-aggregated in
+// the workflow instead and the bar layer renders them.
 //
-// Faceting by sample is a default, not a constraint: the value can be switched to
-// reads, the facet moved to a sample-group metadata column, and the layer changed
-// to box/violin for the across-sample spread at each mutation count.
-//
-// The aa level is always present; nt columns exist only when nucleotide export is
-// on, so aa is preferred and nt is the fallback.
+// aa is preferred because nt columns exist only when nucleotide export is on.
 const defaultOptions = computed((): PredefinedGraphOption<"discrete">[] | undefined => {
   const pCols = app.model.outputs.mutationHistogramPCols;
   if (!pCols || pCols.length === 0) return undefined;
@@ -48,9 +38,8 @@ const defaultOptions = computed((): PredefinedGraphOption<"discrete">[] | undefi
     { inputName: "y", selectedSource: variantCount.spec },
     { inputName: "primaryGrouping", selectedSource: mutationCountAxis },
   ];
-  // One panel per sample. Faceting also consumes the sample dimension, which is
-  // what keeps each bar exact: per panel there is exactly one row per mutation
-  // count, so the bar layer's `height: "max"` is the value itself.
+  // Faceting consumes the sample dimension, which is what keeps each bar exact:
+  // one row per mutation count per panel, so `height: "max"` is the value itself.
   if (sampleAxis) options.push({ inputName: "facetBy", selectedSource: sampleAxis });
   return options;
 });

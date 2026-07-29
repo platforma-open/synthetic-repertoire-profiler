@@ -559,8 +559,8 @@ self.body(func(inputs) {
 	}
 	histogram(vdf, "variantKey").save("ntMutationHistogram.parquet")
 
-	// aa level: the aa mutation count lives in aa-variants.tsv, the reads come from
-	// the nt members (variants.tsv), same derivation as the aa abundance above.
+	// The aa mutation count lives in aa-variants.tsv; the reads come from its nt
+	// members in variants.tsv.
 	aaMutations := adf.
 		groupBy("aaVariantKey").
 		agg(pt.col("mutationCount").cast("Int").first().alias("mutationCount"))
@@ -648,8 +648,7 @@ self.body(func(inputs) {
 		knownDesignedNt: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-nt.tsv") : ptResult.getFile("emptyKnownDesignedNt.tsv"),
 		knownDesignedAa: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-aa.tsv") : ptResult.getFile("emptyKnownDesignedAa.tsv"),
 		qcRow: ptResult.getFile("qcRow.parquet"),
-		// Per-sample mutation-load histograms ([mutationCount] -> variants + reads,
-		// sampleId stamped in) for the Mutation Distribution page.
+		// No sampleId column — processColumn supplies the sample key from the partition.
 		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),
 		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet"),
 		// analyze stdout (stderr merged in) carries the align/assemble progress

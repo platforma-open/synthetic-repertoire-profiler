@@ -97,11 +97,8 @@ stateMatrixColumns := func(alphabet) {
 	}]
 }
 
-// Mutation-count axis: how many mutations a variant carries relative to its
-// parent — the X dimension of the mutation-load distribution. Values are plain
-// integers, the same in every run, so NO run scoping; nt and aa mutation counts
-// are different quantities, hence the alphabet domain. Deliberately reuses the
-// per-variant `mutationCount` column name: same quantity, promoted to a key.
+// Mutation-count axis. No run scoping: the values are plain integers, identical
+// in every run. The alphabet domain keeps nt and aa counts distinct.
 mutationCountAxisSpec := func(alphabet, label) {
 	return {
 		column: "mutationCount",
@@ -120,11 +117,8 @@ mutationCountAxisSpec := func(alphabet, label) {
 	}
 }
 
-// Mutation-load distribution values ([sampleId, mutationCount]): how many
-// distinct variants a sample carries at each mutation count, and how many reads
-// support them. Per-sample only — a cross-sample total is NOT the sum of these
-// (a variant seen in three samples is one unique variant), and a second set of
-// columns for it only made the plot's column picker ambiguous.
+// Per-sample mutation-load counts. Summing variantCount across samples does NOT
+// give unique variants — a variant seen in three samples counts three times.
 mutationHistogramColumns := func(alphabet) {
 	return [{
 		column: "variantCount",
@@ -146,8 +140,8 @@ mutationHistogramColumns := func(alphabet) {
 		id: "bin-read-count",
 		allowNA: false,
 		spec: {
-			// Reuses the per-variant per-sample abundance name; the alphabet domain
-			// plus the mutation-count axis keep it a distinct column.
+			// Same name as the per-variant abundance; the alphabet domain and the
+			// mutation-count axis keep it a distinct column.
 			name: "pl7.app/readCount",
 			valueType: "Long",
 			domain: {
