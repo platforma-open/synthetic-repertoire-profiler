@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { parsePattern } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
+import {
+  DEFAULT_TAG_PATTERN_PAIRED,
+  DEFAULT_TAG_PATTERN_SINGLE,
+  isDefaultTagPattern,
+  parsePattern,
+  plRefKey,
+} from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
 import {
   getRawPlatformaInstance,
   isImportFileHandleUpload,
@@ -15,6 +21,7 @@ import {
   PlDropdownRef,
   PlFileInput,
   PlNumberField,
+  PlRow,
   PlSectionSeparator,
   PlTextArea,
   PlTextField,
@@ -168,9 +175,14 @@ const pairedEndMismatch = computed(() => {
   return app.model.outputs.inputIsPairedEnd === false;
 });
 
-// Snapshot the picked dataset's name into data on selection — the model's
-// args-only `.subtitle` reads it from there (it can't resolve the label live).
-// A user-gesture write, not an output→data watchEffect, so no hairpin.
+// Both writes happen on the user gesture, never in a watcher on the outputs —
+// that loop would be a hairpin. `.subtitle` is args-only, so it needs the dataset
+// label snapshotted here.
+//
+// The pattern is refitted only while it is still a default, so an edited pattern
+// (UMI, anchors, fixed lengths) survives a dataset switch. Paired-endedness comes
+// from the by-ref map because `inputIsPairedEnd` still describes the previous
+// dataset while this handler runs.
 type InputRef = NonNullable<typeof app.model.data.input>;
 function onSelectInput(ref: InputRef | undefined) {
   app.model.data.input = ref;
@@ -178,6 +190,11 @@ function onSelectInput(ref: InputRef | undefined) {
     app.model.outputs.inputOptions?.find(
       (o) => ref && o.ref.blockId === ref.blockId && o.ref.name === ref.name,
     )?.label ?? "";
+
+  const isPaired = ref ? app.model.outputs.inputPairedEndByRef?.[plRefKey(ref)] : undefined;
+  if (isPaired !== undefined && isDefaultTagPattern(app.model.data.tagPattern)) {
+    app.model.data.tagPattern = isPaired ? DEFAULT_TAG_PATTERN_PAIRED : DEFAULT_TAG_PATTERN_SINGLE;
+  }
 }
 </script>
 
@@ -358,66 +375,109 @@ ACGTACGT..."
       </PlTooltip>
     </PlCheckbox>
 
+    <PlSectionSeparator>Quality Filter</PlSectionSeparator>
+    <PlRow>
+      <PlNumberField
+        v-model="app.model.data.minBaseQuality"
+        label="Min base quality"
+        :min-value="0"
+        :max-value="58"
+        :step="1"
+        :clearable="true"
+      >
+        <template #tooltip>
+          Discard a read if any of its bases that overlap the parent sequence falls below this Phred
+          quality. Bases outside the overlap — adapter tails and read overhang — are ignored, since
+          they never reach the reported variant. Set 0 to keep every read regardless of quality.
+          Leave empty for the default of 5.
+        </template>
+      </PlNumberField>
+
+      <PlNumberField
+        v-model="app.model.data.minVariantQuality"
+        label="Min variant quality"
+        :min-value="0"
+        :max-value="58"
+        :step="1"
+        :clearable="true"
+      >
+        <template #tooltip>
+          Discard a variant if its combined quality falls below this Phred at any single position.
+          Quality accumulates across the reads supporting a variant, so a variant seen in only one
+          or two reads is the most likely to be dropped — raise this to keep only well-supported
+          variants, lower it to keep rare ones. Because the check applies to the worst position
+          across the whole parent, it gets stricter as the parent gets longer: on a long parent with
+          noisy reads the default of 20 can remove most variants. Set 0 to keep every variant. Leave
+          empty for the default of 20.
+        </template>
+      </PlNumberField>
+    </PlRow>
+
     <PlSectionSeparator>Mutation Filter</PlSectionSeparator>
-    <PlNumberField
-      v-model="app.model.data.maxMutations"
-      label="Max nucleotide mutations count"
-      :min-value="1"
-      :step="1"
-      :clearable="true"
-    >
-      <template #tooltip>
-        Ignore variants that differ from the parent by more than this many mutations. Helps filter
-        out off-target sequences that are unlikely to be real variants. Leave empty to keep all
-        (default).
-      </template>
-    </PlNumberField>
+    <PlRow>
+      <PlNumberField
+        v-model="app.model.data.maxMutations"
+        label="Max NT mut count"
+        :min-value="1"
+        :step="1"
+        :clearable="true"
+      >
+        <template #tooltip>
+          Ignore variants that differ from the parent by more than this many mutations. Helps filter
+          out off-target sequences that are unlikely to be real variants. Leave empty to keep all
+          (default).
+        </template>
+      </PlNumberField>
 
-    <PlNumberField
-      v-model="app.model.data.maxMutationFraction"
-      label="Max nucleotide mutations fraction"
-      :min-value="0.01"
-      :max-value="1"
-      :step="0.01"
-      :clearable="true"
-    >
-      <template #tooltip>
-        Ignore variants where too large a share of the sequence differs from the parent — the limit
-        scales with each parent's length instead of being a fixed count. Enter a value above 0 and
-        up to 1: for example, 0.1 allows up to 10% of positions to differ from the parent. Leave
-        empty to keep all (default).
-      </template>
-    </PlNumberField>
+      <PlNumberField
+        v-model="app.model.data.maxMutationFraction"
+        label="Max NT mut fraction"
+        :min-value="0.01"
+        :max-value="1"
+        :step="0.01"
+        :clearable="true"
+      >
+        <template #tooltip>
+          Ignore variants where too large a share of the sequence differs from the parent — the
+          limit scales with each parent's length instead of being a fixed count. Enter a value above
+          0 and up to 1: for example, 0.1 allows up to 10% of positions to differ from the parent.
+          Leave empty to keep all (default).
+        </template>
+      </PlNumberField>
+    </PlRow>
 
-    <PlNumberField
-      v-model="app.model.data.maxAaMutations"
-      label="Max amino-acid mutations count"
-      :min-value="1"
-      :step="1"
-      :clearable="true"
-    >
-      <template #tooltip>
-        Ignore in-frame variants whose translated sequence differs from the parent by more than this
-        many amino-acid mutations. Applied after translation, so it targets variants with too many
-        coding changes regardless of the nucleotide edit count. Leave empty to keep all (default).
-      </template>
-    </PlNumberField>
+    <PlRow>
+      <PlNumberField
+        v-model="app.model.data.maxAaMutations"
+        label="Max AA mut count"
+        :min-value="1"
+        :step="1"
+        :clearable="true"
+      >
+        <template #tooltip>
+          Ignore in-frame variants whose translated sequence differs from the parent by more than
+          this many amino-acid mutations. Applied after translation, so it targets variants with too
+          many coding changes regardless of the nucleotide edit count. Leave empty to keep all
+          (default).
+        </template>
+      </PlNumberField>
 
-    <PlNumberField
-      v-model="app.model.data.maxAaMutationFraction"
-      label="Max amino-acid mutations fraction"
-      :min-value="0.01"
-      :max-value="1"
-      :step="0.01"
-      :clearable="true"
-    >
-      <template #tooltip>
-        Ignore in-frame variants where too large a share of the translated sequence differs from the
-        parent — the limit scales with each parent's amino-acid length instead of being a fixed
-        count. Enter a value above 0 and up to 1: for example, 0.1 allows up to 10% of residues to
-        differ. Leave empty to keep all (default).
-      </template>
-    </PlNumberField>
+      <PlNumberField
+        v-model="app.model.data.maxAaMutationFraction"
+        label="Max AA mut fraction"
+        :min-value="0.01"
+        :max-value="1"
+        :step="0.01"
+        :clearable="true"
+      >
+        <template #tooltip>
+          Ignore in-frame variants where too large a share of the translated sequence differs from
+          the parent — the limit scales with each parent's amino-acid length instead of being a
+          fixed count. Enter a value above 0 and up to 1: for example, 0.1 allows up to 10% of
+          residues to differ. Leave empty to keep all (default).
+        </template>
+      </PlNumberField>
+    </PlRow>
 
     <PlSectionSeparator>Resource Allocation</PlSectionSeparator>
     <PlNumberField
