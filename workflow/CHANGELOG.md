@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.workflow
 
+## 1.2.2
+
+### Patch Changes
+
+- 5a3763d: Add a Mutation Count Histogram page — a bar chart (GraphMaker) of how many distinct variants carry each number of mutations
+  Add quality filters parameters
+  Infer tag pattern for single/two read datasets
+
 ## 1.2.1
 
 ### Patch Changes
