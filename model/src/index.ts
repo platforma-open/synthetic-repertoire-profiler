@@ -286,9 +286,22 @@ type BlockDataV2 = Omit<BlockData, "graphStateMutationHistogram">;
  *  `defaultOptions`; the bar layer's `height: "max"` is exact because, once
  *  faceted by sample, each panel holds exactly one row per mutation count. */
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
-  title: "Mutation Count Histogram",
+  title: "Mutation Distribution",
   template: "bar",
   currentTab: null,
+  layersSettings: {
+    // A FIXED fill, which is what switches the per-bar colouring off. Left unset
+    // (`null`, the layer default), graph-maker maps fill to the primary grouping
+    // — here the mutation count — so every bar gets its own colour plus a colour
+    // legend that only repeats what the X axis already says. #99e099 is the fill
+    // the other histogram pages use (sequence-properties, tcr-clustering,
+    // titeseq-analysis).
+    //
+    // Consequence: the fill stays fixed even if the user adds a secondary
+    // grouping — the automatic colour-by applies only while fill is unset. A
+    // mapping can be picked back up in the layer settings.
+    bar: { fillColor: "#99e099" },
+  },
 };
 
 const dataModel = new DataModelBuilder()
@@ -309,8 +322,9 @@ const dataModel = new DataModelBuilder()
     defaultBlockLabel: "",
     knownNtMetadataColumns: [],
     knownAaMetadataColumns: [],
-    // Default pattern: insert capture on each mate, no UMI/anchors (paired-end).
-    tagPattern: "^(R1:*)\\^(R2:*)",
+    // Paired-end default; the UI refits it to the dataset's read structure when a
+    // dataset is picked (see onSelectInput in SettingsPanel).
+    tagPattern: DEFAULT_TAG_PATTERN_PAIRED,
     exportNt: false,
     vdjAutoDetect: false,
     qcTableState: createPlDataTableStateV2(),
@@ -330,6 +344,47 @@ export const MAX_PHRED_QUALITY = 58;
 
 /** Shown as the block subtitle before a dataset is picked. */
 const NO_DATASET_LABEL = "Select dataset";
+
+/** Default tag patterns — the insert is the whole read on every available mate.
+ *  `\` separates the two read halves (see `parsePattern`). The UI fits one of
+ *  these to the picked dataset's read structure on selection. */
+export const DEFAULT_TAG_PATTERN_PAIRED = "^(R1:*)\\^(R2:*)";
+export const DEFAULT_TAG_PATTERN_SINGLE = "^(R1:*)";
+
+/** True while the pattern is still untouched — either empty or exactly one of the
+ *  two defaults. Guards the auto-fit on dataset selection so a pattern the user
+ *  actually edited (UMI, anchors, fixed lengths) is never overwritten. */
+export function isDefaultTagPattern(pattern: string | undefined): boolean {
+  const p = (pattern ?? "").replace(/\s+/g, "");
+  return p === "" || p === DEFAULT_TAG_PATTERN_PAIRED || p === DEFAULT_TAG_PATTERN_SINGLE;
+}
+
+/** Stable key for a `PlRef` — matches how the UI already compares refs. Used to
+ *  key the per-option read-structure map the UI snapshots from. */
+export function plRefKey(ref: PlRef): string {
+  return `${ref.blockId}/${ref.name}`;
+}
+
+/** Read structure of a FASTQ dataset spec:
+ *    true      — the readIndex axis lists R2, so the dataset is paired-end
+ *    false     — no readIndex axis at all: one file per sample, single-end
+ *                (the shape the workflow handles as keyLength 0)
+ *    undefined — the axis is present but its readIndices domain is missing or
+ *                unparseable, so the structure is unknown; callers must not guess.
+ */
+function specIsPairedEnd(spec: PObjectSpec): boolean | undefined {
+  if (!isPColumnSpec(spec)) return undefined;
+  const axis = spec.axesSpec.find((a) => a.name === "pl7.app/sequencing/readIndex");
+  if (axis === undefined) return false;
+  const raw = axis.domain?.["pl7.app/readIndices"];
+  if (typeof raw !== "string") return undefined;
+  try {
+    const indices = JSON.parse(raw);
+    return Array.isArray(indices) && indices.includes("R2");
+  } catch {
+    return undefined;
+  }
+}
 
 /** Selects the FASTQ datasets (keyed by sampleId) offered in the dataset
  *  picker. The UI reuses this to resolve the selected dataset's label. */
@@ -362,23 +417,33 @@ export const platforma = BlockModelV3.create(dataModel)
     return ctx.resultPool.findLabelsForColumnAxis(spec, 0);
   })
 
-  // Whether the selected input carries an R2 read (paired-end), read from the
-  // readIndex axis domain. Consumed by the UI (SettingsPanel) to validate the
-  // pattern shape live; never written back into data (that was a hairpin).
+  // Whether the selected input carries an R2 read (paired-end). Consumed by the
+  // UI (SettingsPanel) to validate the pattern shape live; never written back
+  // into data (that was a hairpin).
   .output("inputIsPairedEnd", (ctx): boolean | undefined => {
     const inputRef = ctx.data.input;
     if (inputRef === undefined) return undefined;
     const inputSpec = ctx.resultPool.getPColumnSpecByRef(inputRef);
-    if (inputSpec === undefined || !isPColumnSpec(inputSpec)) return undefined;
-    const axis = inputSpec.axesSpec.find((a) => a.name === "pl7.app/sequencing/readIndex");
-    const raw = axis?.domain?.["pl7.app/readIndices"];
-    if (typeof raw !== "string") return undefined;
-    try {
-      const indices = JSON.parse(raw);
-      return Array.isArray(indices) && indices.includes("R2");
-    } catch {
-      return undefined;
+    if (inputSpec === undefined) return undefined;
+    return specIsPairedEnd(inputSpec);
+  })
+
+  // Read structure of EVERY offered dataset, keyed by ref — not just the selected
+  // one. This is what lets the UI fit the tag pattern to a dataset at the moment
+  // it is picked: `inputIsPairedEnd` above is derived from `data.input`, so during
+  // the selection handler it still describes the PREVIOUS dataset. Datasets whose
+  // structure cannot be determined are omitted, so the UI can tell "single-end"
+  // from "unknown" and leave the pattern alone in the latter case.
+  .output("inputPairedEndByRef", (ctx): Record<string, boolean> | undefined => {
+    const options = ctx.resultPool.getOptions(isFastqInput);
+    if (options === undefined) return undefined;
+    const byRef: Record<string, boolean> = {};
+    for (const o of options) {
+      const spec = ctx.resultPool.getPColumnSpecByRef(o.ref);
+      const paired = spec === undefined ? undefined : specIsPairedEnd(spec);
+      if (paired !== undefined) byRef[plRefKey(o.ref)] = paired;
     }
+    return byRef;
   })
 
   // Run status — true once the main workflow has produced outputs.
@@ -753,7 +818,7 @@ export const platforma = BlockModelV3.create(dataModel)
       { type: "link", href: "/", label: "Main" },
       { type: "link", href: "/qc", label: "QC Report" },
       // Always listed: the plot's empty state carries its own call to action.
-      { type: "link", href: "/mutation-histogram", label: "Mutation Count Histogram" },
+      { type: "link", href: "/mutation-histogram", label: "Mutation Distribution" },
     ];
     // NT known analysis runs only with an nt known set (--known); aa known
     // analysis runs with an aa set (--known-aa) or is derived from the nt set.
