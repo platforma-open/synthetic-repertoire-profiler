@@ -1,6 +1,9 @@
+import type { GraphMakerState } from "@milaboratories/graph-maker";
 import type {
   ImportFileHandle,
   InferOutputsType,
+  PColumnIdAndSpec,
+  PFrameHandle,
   PlDataTableStateV2,
   PObjectSpec,
   PlRef,
@@ -202,6 +205,14 @@ export type BlockData = {
   maxAaMutations?: number; // reject if the aa alignment has more than this many mutations (edit ops)
   maxAaMutationFraction?: number; // reject if aaMutations / aaParentLength exceeds this (0 < f ≤ 1)
 
+  // minBaseQuality → align step (AlignParams.filter): reject a fragment if ANY
+  // read base inside the parent-covered span is below this Phred. Bases outside
+  // the span (overhang, adapter tails) are ignored.
+  minBaseQuality?: number;
+  // minVariantQuality → assemble step (AssembleParams): drop a variant whose
+  // aggregated per-position quality dips below this Phred at ANY position.
+  minVariantQuality?: number;
+
   // Optional per-sample mitool resource overrides (Advanced). Empty = workflow
   // defaults. Passed to the parse + analyze exec steps.
   perProcessMemGB?: number;
@@ -211,6 +222,7 @@ export type BlockData = {
   qcTableState: PlDataTableStateV2;
   knownVariantsNtTableState: PlDataTableStateV2;
   knownVariantsAaTableState: PlDataTableStateV2;
+  graphStateMutationHistogram: GraphMakerState;
 };
 
 /** Workflow-facing args projected from `BlockData` by `.args(...)`. */
@@ -252,6 +264,10 @@ export type BlockArgs = {
   // AA mutation-load filter → mitool -Mcall-mutations.maxAaMutations / maxAaMutationFraction.
   maxAaMutations?: number;
   maxAaMutationFraction?: number;
+  // Quality gates → mitool -Malign.filter.minBaseQuality / -Massemble.minVariantQuality.
+  // Absent = mitool defaults (5 / 20), which are ON — not off.
+  minBaseQuality?: number;
+  minVariantQuality?: number;
   perProcessMemGB?: number;
   perProcessCPUs?: number;
   defaultBlockLabel: string;
@@ -260,26 +276,47 @@ export type BlockArgs = {
 
 /** v1 data shape: the toggle was `ntStateMatrix` (nt state matrix only). v2
  *  renames it to `exportNt` (governs all nt export). */
-type BlockDataV1 = Omit<BlockData, "exportNt"> & { ntStateMatrix: boolean };
+type BlockDataV1 = Omit<BlockDataV2, "exportNt"> & { ntStateMatrix: boolean };
+
+type BlockDataV2 = Omit<BlockData, "graphStateMutationHistogram">;
+
+const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
+  title: "Mutation Distribution",
+  template: "bar",
+  currentTab: null,
+  layersSettings: {
+    // A fixed fill is what disables the colouring: left unset, graph-maker maps
+    // fill to the primary grouping (here the mutation count) and colours every bar.
+    bar: { fillColor: "#99e099" },
+  },
+};
 
 const dataModel = new DataModelBuilder()
   .from<BlockDataV1>("v1")
-  .migrate<BlockData>("v2", ({ ntStateMatrix, ...rest }) => ({
+  .migrate<BlockDataV2>("v2", ({ ntStateMatrix, ...rest }) => ({
     ...rest,
     exportNt: ntStateMatrix ?? false,
+  }))
+  // New fields must come as a NEW step: editing a deployed migration body has no
+  // effect on projects already tagged with that version.
+  .migrate<BlockData>("v3", (v2) => ({
+    ...v2,
+    graphStateMutationHistogram: { ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE },
   }))
   .init(() => ({
     parentInputMode: "fastaSequence" as ParentInputMode,
     defaultBlockLabel: "",
     knownNtMetadataColumns: [],
     knownAaMetadataColumns: [],
-    // Default pattern: insert capture on each mate, no UMI/anchors (paired-end).
-    tagPattern: "^(R1:*)\\^(R2:*)",
+    // Paired-end default; the UI refits it to the dataset's read structure when a
+    // dataset is picked (see onSelectInput in SettingsPanel).
+    tagPattern: DEFAULT_TAG_PATTERN_PAIRED,
     exportNt: false,
     vdjAutoDetect: false,
     qcTableState: createPlDataTableStateV2(),
     knownVariantsNtTableState: createPlDataTableStateV2(),
     knownVariantsAaTableState: createPlDataTableStateV2(),
+    graphStateMutationHistogram: { ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE },
   }));
 
 const DNA_IUPAC_RE = /^[ACGTacgtMKRYWSBDHVNmkrywsbdhvn]*$/;
@@ -287,8 +324,44 @@ const DNA_IUPAC_RE = /^[ACGTacgtMKRYWSBDHVNmkrywsbdhvn]*$/;
 /** Trace-label fallback when neither a custom label nor a dataset name is set. */
 const DEFAULT_BLOCK_LABEL = "Amplicon Profiling";
 
+/** milib's `SequenceQuality.MAX_QUALITY_VALUE` — the ceiling for both quality
+ *  gates. A threshold above it can never be met, so nothing would pass. */
+export const MAX_PHRED_QUALITY = 58;
+
 /** Shown as the block subtitle before a dataset is picked. */
 const NO_DATASET_LABEL = "Select dataset";
+
+/** Default tag patterns; `\` separates the two read halves. */
+export const DEFAULT_TAG_PATTERN_PAIRED = "^(R1:*)\\^(R2:*)";
+export const DEFAULT_TAG_PATTERN_SINGLE = "^(R1:*)";
+
+/** True while the pattern is untouched (empty or one of the defaults) — the guard
+ *  that keeps the auto-fit from overwriting a pattern the user edited. */
+export function isDefaultTagPattern(pattern: string | undefined): boolean {
+  const p = (pattern ?? "").replace(/\s+/g, "");
+  return p === "" || p === DEFAULT_TAG_PATTERN_PAIRED || p === DEFAULT_TAG_PATTERN_SINGLE;
+}
+
+export function plRefKey(ref: PlRef): string {
+  return `${ref.blockId}/${ref.name}`;
+}
+
+/** Paired-end? true = the readIndex axis lists R2; false = no readIndex axis at
+ *  all, i.e. one file per sample; undefined = axis present but readIndices
+ *  unreadable, so the structure is unknown and callers must not guess. */
+function specIsPairedEnd(spec: PObjectSpec): boolean | undefined {
+  if (!isPColumnSpec(spec)) return undefined;
+  const axis = spec.axesSpec.find((a) => a.name === "pl7.app/sequencing/readIndex");
+  if (axis === undefined) return false;
+  const raw = axis.domain?.["pl7.app/readIndices"];
+  if (typeof raw !== "string") return undefined;
+  try {
+    const indices = JSON.parse(raw);
+    return Array.isArray(indices) && indices.includes("R2");
+  } catch {
+    return undefined;
+  }
+}
 
 /** Selects the FASTQ datasets (keyed by sampleId) offered in the dataset
  *  picker. The UI reuses this to resolve the selected dataset's label. */
@@ -321,23 +394,27 @@ export const platforma = BlockModelV3.create(dataModel)
     return ctx.resultPool.findLabelsForColumnAxis(spec, 0);
   })
 
-  // Whether the selected input carries an R2 read (paired-end), read from the
-  // readIndex axis domain. Consumed by the UI (SettingsPanel) to validate the
-  // pattern shape live; never written back into data (that was a hairpin).
+  // Must not be written back into data — that loop would be a hairpin.
   .output("inputIsPairedEnd", (ctx): boolean | undefined => {
     const inputRef = ctx.data.input;
     if (inputRef === undefined) return undefined;
     const inputSpec = ctx.resultPool.getPColumnSpecByRef(inputRef);
-    if (inputSpec === undefined || !isPColumnSpec(inputSpec)) return undefined;
-    const axis = inputSpec.axesSpec.find((a) => a.name === "pl7.app/sequencing/readIndex");
-    const raw = axis?.domain?.["pl7.app/readIndices"];
-    if (typeof raw !== "string") return undefined;
-    try {
-      const indices = JSON.parse(raw);
-      return Array.isArray(indices) && indices.includes("R2");
-    } catch {
-      return undefined;
+    if (inputSpec === undefined) return undefined;
+    return specIsPairedEnd(inputSpec);
+  })
+
+  // Keyed by ref because `inputIsPairedEnd` derives from `data.input`, and so still
+  // describes the previous dataset while a selection handler runs.
+  .output("inputPairedEndByRef", (ctx): Record<string, boolean> | undefined => {
+    const options = ctx.resultPool.getOptions(isFastqInput);
+    if (options === undefined) return undefined;
+    const byRef: Record<string, boolean> = {};
+    for (const o of options) {
+      const spec = ctx.resultPool.getPColumnSpecByRef(o.ref);
+      const paired = spec === undefined ? undefined : specIsPairedEnd(spec);
+      if (paired !== undefined) byRef[plRefKey(o.ref)] = paired;
     }
+    return byRef;
   })
 
   // Run status — true once the main workflow has produced outputs.
@@ -454,6 +531,42 @@ export const platforma = BlockModelV3.create(dataModel)
     return createPlDataTableV2(ctx, pCols, ctx.data.knownVariantsNtTableState);
   })
 
+  // Upstream single-axis sample metadata is added so the plot can facet by sample
+  // group, not just by sample.
+  .outputWithStatus("mutationHistogramPf", (ctx): PFrameHandle | undefined => {
+    const pCols = ctx.outputs
+      ?.resolve({
+        field: "mutationHistogram",
+        assertFieldType: "Input",
+        allowPermanentAbsence: true,
+      })
+      ?.getPColumns();
+    if (pCols === undefined) return undefined;
+    const inputRef = ctx.data.input;
+    // `createPFrameForGraphs` would walk the result pool and pull in this block's
+    // own `variants` export, state matrix included, filling the picker with junk.
+    const sampleMeta =
+      inputRef !== undefined
+        ? (ctx.resultPool.getAnchoredPColumns({ main: inputRef }, [
+            { axes: [{ anchor: "main", idx: 0 }] },
+          ]) ?? [])
+        : [];
+    return ctx.createPFrame([...pCols, ...sampleMeta]);
+  })
+
+  // The page's default axis mapping picks from these — own columns only, no
+  // upstream metadata.
+  .output("mutationHistogramPCols", (ctx): PColumnIdAndSpec[] | undefined =>
+    ctx.outputs
+      ?.resolve({
+        field: "mutationHistogram",
+        assertFieldType: "Input",
+        allowPermanentAbsence: true,
+      })
+      ?.getPColumns()
+      ?.map((c) => ({ columnId: c.id, spec: c.spec }) satisfies PColumnIdAndSpec),
+  )
+
   .outputWithStatus("knownVariantsAaTable", (ctx) => {
     const pCols = ctx.outputs
       ?.resolve({ field: "knownVariantsAa", assertFieldType: "Input", allowPermanentAbsence: true })
@@ -557,6 +670,22 @@ export const platforma = BlockModelV3.create(dataModel)
     )
       throw new Error("Max amino-acid mutation fraction must be between 0 and 1.");
 
+    // Quality gates (Advanced): same null → undefined normalization as above, but
+    // note the different "empty" semantics — these are ON at mitool's defaults
+    // (5 / 20) when absent, so empty is not "no filtering". 0 is the way to
+    // disable (a 0 threshold accepts everything, Phred being non-negative), which
+    // is why the floor here is 0 and not 1. The ceiling is milib's
+    // MAX_QUALITY_VALUE (58): above it, nothing can ever pass.
+    const minBaseQuality = data.minBaseQuality ?? undefined;
+    const minVariantQuality = data.minVariantQuality ?? undefined;
+    const checkQuality = (v: number | undefined, label: string) => {
+      if (v === undefined) return;
+      if (!Number.isInteger(v) || v < 0 || v > MAX_PHRED_QUALITY)
+        throw new Error(`${label} must be an integer between 0 and ${MAX_PHRED_QUALITY}.`);
+    };
+    checkQuality(minBaseQuality, "Min base quality");
+    checkQuality(minVariantQuality, "Min variant quality");
+
     // Resource overrides: positive when set (empty = workflow defaults).
     if (data.perProcessMemGB !== undefined && data.perProcessMemGB < 1)
       throw new Error("Memory per process must be at least 1 GB.");
@@ -624,6 +753,8 @@ export const platforma = BlockModelV3.create(dataModel)
       maxMutationFraction,
       maxAaMutations,
       maxAaMutationFraction,
+      minBaseQuality,
+      minVariantQuality,
       perProcessMemGB: data.perProcessMemGB,
       perProcessCPUs: data.perProcessCPUs,
       // Workflow trace label: the selected dataset's name (snapshotted by the
@@ -644,11 +775,13 @@ export const platforma = BlockModelV3.create(dataModel)
   .sections((ctx) => {
     const items: {
       type: "link";
-      href: "/" | "/qc" | "/known-variants-nt" | "/known-variants-aa";
+      href: "/" | "/qc" | "/mutation-histogram" | "/known-variants-nt" | "/known-variants-aa";
       label: string;
     }[] = [
       { type: "link", href: "/", label: "Main" },
       { type: "link", href: "/qc", label: "QC Report" },
+      // Always listed: the plot's empty state carries its own call to action.
+      { type: "link", href: "/mutation-histogram", label: "Mutation Distribution" },
     ];
     // NT known analysis runs only with an nt known set (--known); aa known
     // analysis runs with an aa set (--known-aa) or is derived from the nt set.

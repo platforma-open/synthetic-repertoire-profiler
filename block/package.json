@@ -44,7 +44,10 @@
       "title": "Amplicon Profiling",
       "description": "Profiles synthetic antibody/TCR amplicon libraries by aligning reads against user-provided parent sequences and calling mutations to build a variant repertoire.",
       "longDescription": "file:docs/description.md",
+      "changelog": "file:CHANGELOG.md",
       "logo": "file:logos/block-logo.png",
+      "url": "https://github.com/platforma-open/synthetic-repertoire-profiler",
+      "support": "mailto:support@milaboratories.com",
       "tags": [
         "upstream",
         "amplicon",
