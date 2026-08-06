@@ -13,9 +13,6 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
-units := import("@platforma-sdk/workflow-tengo:units")
-
-aggResources := import(":aggregate-resources")
 
 self.defineOutputs("ntToAa", "parentNt", "parentAa")
 
@@ -24,11 +21,10 @@ self.awaitState("variantsTsvData", "ResourceReady")
 self.awaitState("aaVariantsTsvData", "ResourceReady")
 
 self.body(func(inputs) {
-	res := aggResources.forSamples(len(inputs.variantsTsvData.inputs()))
+	// Left unsized on purpose — pt sizes CPU/RAM from input volume when neither is
+	// set. See aggregate-state-matrix for the full rationale.
 	wf := pt.workflow().
-		inMediumQueue().
-		mem(res.memGB * units.GiB).
-		cpu(res.cpu)
+		inMediumQueue()
 
 	loadConcat := func(rmData, idPrefix) {
 		frames := []

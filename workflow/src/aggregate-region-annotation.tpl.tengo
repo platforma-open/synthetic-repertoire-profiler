@@ -9,9 +9,6 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
-units := import("@platforma-sdk/workflow-tengo:units")
-
-aggResources := import(":aggregate-resources")
 
 self.defineOutputs("regionAnnotation")
 
@@ -20,11 +17,10 @@ self.awaitState("regionAnnotationData", "ResourceReady")
 
 self.body(func(inputs) {
 	rmMap := inputs.regionAnnotationData.inputs()
-	res := aggResources.forSamples(len(rmMap), { floorMemGB: 4, perSampleMemGB: 1, maxMemGB: 64, maxCpu: 8 })
+	// Left unsized on purpose — pt sizes CPU/RAM from input volume when neither is
+	// set. See aggregate-state-matrix for the full rationale.
 	wf := pt.workflow().
-		inMediumQueue().
-		mem(res.memGB * units.GiB).
-		cpu(res.cpu)
+		inMediumQueue()
 
 	frames := []
 	for sKey in maps.getKeys(rmMap) {
