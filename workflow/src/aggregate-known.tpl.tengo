@@ -18,10 +18,7 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
-units := import("@platforma-sdk/workflow-tengo:units")
 json := import("json")
-
-aggResources := import(":aggregate-resources")
 
 self.defineOutputs("knownLinkerNt", "knownLinkerAa", "ntDistance", "aaDistance", "knownNt", "knownAa", "knownAaToNt", "knownSynCount", "knownConvergence", "knownNtAll")
 
@@ -33,11 +30,10 @@ self.awaitState("knownDesignedAaData", "ResourceReady")
 self.awaitState("aaConvergenceData", "ResourceReady")
 
 self.body(func(inputs) {
-	res := aggResources.forSamples(len(inputs.variantsTsvData.inputs()))
+	// Left unsized on purpose — pt sizes CPU/RAM from input volume when neither is
+	// set. See aggregate-state-matrix for the full rationale.
 	wf := pt.workflow().
-		inMediumQueue().
-		mem(res.memGB * units.GiB).
-		cpu(res.cpu)
+		inMediumQueue()
 
 	// Export-only-matched: the distance-to-known columns are variant-axis keyed and
 	// part of the exported `variants` frame, so under the filter they are restricted

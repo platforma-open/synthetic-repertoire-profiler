@@ -16,7 +16,6 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
-units := import("@platforma-sdk/workflow-tengo:units")
 
 json := import("json")
 
@@ -312,7 +311,11 @@ self.body(func(inputs) {
 	// --- Per-sample tables (ptabler) --------------------------------------
 	// One pt workflow produces the nt/aa per-sample abundance (keyed by mitool's
 	// content-hash variantKey / aaVariantKey) and the per-sample QC row.
-	ptWf := pt.workflow().mem(2 * units.GiB).cpu(1)
+	// Left unsized on purpose: pt sizes CPU/RAM from input volume when neither is
+	// set. Under exportOnlyKnown this workflow also joins the per-sample state
+	// matrices (one row per variant per position), so a fixed budget under-sizes it
+	// on large repertoires. See aggregate-state-matrix for the full rationale.
+	ptWf := pt.workflow()
 
 	// Abundance. variants.tsv is already ~one row per variantKey; group
 	// defensively to fold the rare same-sequence/two-parent duplicate, and sum nt
