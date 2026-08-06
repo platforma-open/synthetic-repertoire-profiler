@@ -8,6 +8,8 @@ json := import("json")
 // analyze(parentRegionsJson) ->
 //   enabled         : a scheme is configured for at least one parent
 //   hasRegions      : at least one parent has a non-empty region partition
+//   isVdj           : at least one parent uses the canonical `vdj` region scheme —
+//                     the run's modality declaration is derived from this
 //   ntRegionNames   : union of named-region names (first-seen order)
 //   aaRegionNames   : those codon-aligned at frame 0 (begin%3==0 && end%3==0)
 //   completeFeatureName : the complete-feature name if a single one is used, else undefined
@@ -15,6 +17,7 @@ analyze := func(parentRegionsJson) {
 	res := {
 		enabled: false,
 		hasRegions: false,
+		isVdj: false,
 		ntRegionNames: [],
 		aaRegionNames: [],
 		completeFeatureName: undefined
@@ -34,6 +37,11 @@ analyze := func(parentRegionsJson) {
 	afSet := {}
 	for pid in maps.getKeys(parents) {
 		ps := parents[pid]
+		// One parent on the vdj scheme makes the whole run vdj: a run has exactly
+		// one modality, and choosing that scheme is the user stating V-domain work.
+		if ps.scheme == "vdj" {
+			res.isVdj = true
+		}
 		if !is_undefined(ps.completeFeatureName) && ps.completeFeatureName != "" {
 			afSet[ps.completeFeatureName] = true
 		}
@@ -75,6 +83,7 @@ vdjAuto := func() {
 	return {
 		enabled: true,
 		hasRegions: true,
+		isVdj: true,
 		ntRegionNames: names,
 		aaRegionNames: names,
 		completeFeatureName: "VDJRegion"
