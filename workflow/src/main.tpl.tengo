@@ -28,8 +28,8 @@ processKnownSetTpl := assets.importTemplate(":process-known-set")
 computeQcTpl := assets.importTemplate(":compute-qc")
 
 // Resource allocation defaults. User overrides via perProcessMemGB/perProcessCPUs.
-defaultXsvMemGB := 8
-defaultXsvCPUs := 2
+// Xsv imports carry no defaults: they run an unsized pt.workflow() and are sized
+// from input volume by the SDK (see aggregate-state-matrix).
 defaultMitoolMemGB := 16 // per-sample mitool parse + analyze
 defaultMitoolCPUs := 4
 
@@ -179,7 +179,9 @@ wf.body(func(args) {
 
 	// Per-sample Xsv target: axes are the data axes; processColumn prepends the
 	// sampleId partition, yielding [sampleId, …] PARTITIONED by sampleId — the
-	// shape downstream blocks (clonotype-browser) split on.
+	// shape downstream blocks (clonotype-browser) split on. No mem/cpu override —
+	// the import runs an unsized pt.workflow() and is sized from input volume
+	// (see aggregate-state-matrix).
 	xsvTarget := func(name, path, axes, columns) {
 		return {
 			type: "Xsv",
@@ -190,8 +192,6 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			mem: string(defaultXsvMemGB) + "GiB",
-			cpu: defaultXsvCPUs,
 			name: name,
 			path: [path]
 		}
@@ -325,11 +325,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			{
-				splitDataAndSpec: true,
-				cpu: 1,
-				mem: string(defaultXsvMemGB) + "GiB"
-			}
+			{ splitDataAndSpec: true }
 		)
 	}
 	// aa properties always; nt properties only when exported (skip the import
@@ -361,11 +357,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			{
-				splitDataAndSpec: true,
-				cpu: 1,
-				mem: string(defaultXsvMemGB) + "GiB"
-			}
+			{ splitDataAndSpec: true }
 		)
 	}
 	aaStateMatrixCols := importStateMatrix("aaStateMatrixTsv", aaVariantAxis, "aminoacid", "Position aa")
@@ -393,11 +385,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			{
-				splitDataAndSpec: true,
-				cpu: 1,
-				mem: string(defaultXsvMemGB) + "GiB"
-			}
+			{ splitDataAndSpec: true }
 		)
 	}
 
@@ -420,11 +408,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			{
-				splitDataAndSpec: true,
-				cpu: 1,
-				mem: string(defaultXsvMemGB) + "GiB"
-			}
+			{ splitDataAndSpec: true }
 		)
 	}
 	// nt→aa and parent→nt linkers reference the nt variant axis, so they are
@@ -586,11 +570,7 @@ wf.body(func(args) {
 				columns: columns,
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
-			}, {
-				splitDataAndSpec: true,
-				cpu: 1,
-				mem: string(defaultXsvMemGB) + "GiB"
-			})
+			}, { splitDataAndSpec: true })
 		}
 
 		// Dynamic import-column specs for the mapped metadata fields. The column
@@ -803,11 +783,7 @@ wf.body(func(args) {
 		qcRun.output("qcTable"),
 		"tsv",
 		columnSpecs.qcColumns(inputSpec.axesSpec[0]),
-		{
-			splitDataAndSpec: true,
-			cpu: 1,
-			mem: string(defaultXsvMemGB) + "GiB"
-		}
+		{ splitDataAndSpec: true }
 	)
 	qcPfBuilder := pframes.pFrameBuilder()
 	for k, v in qcColumns {
