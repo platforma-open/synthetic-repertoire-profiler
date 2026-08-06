@@ -12,11 +12,34 @@ tableAnno := func(order, visibility, anno) {
 	})
 }
 
+// The run-scoping + modality domain carried by every run-scoped spec this block
+// emits — both entity axes (at both alphabets) and the File/Log-valued outputs.
+//
+//   extractionRunId — keeps the axis from colliding with another extraction's
+//                     variants. Its key is FIXED; modality never changes it.
+//   modality        — "vdj" | "amplicon": which kind of repertoire this run
+//                     produced. Declared by the producer rather than left for
+//                     consumers to infer from axis names, because everything
+//                     here sits on the modality-neutral pl7.app/variantKey axis
+//                     and so carries no evidence of what was made.
+//
+// One helper, one call per spec, so the declaration can never be present on one
+// spec and absent from a sibling — a consumer that found it on the variant axis
+// but not the known-variant axis could not tell "different modality" from
+// "unlabelled".
+runScopeDomain := func(blockId, modality) {
+	return {
+		"pl7.app/repertoire/extractionRunId": blockId,
+		"pl7.app/modality": modality
+	}
+}
+
 // Variant axis: one distinct variant sequence. `alphabet` is "nucleotide" or
-// "aminoacid"; `extractionRunId` (blockId) scopes the axis to this run. Optional
-// trailing arg overrides the source column name (default "variantKey") — needed
-// for linker tables that carry two variant-key columns.
-variantKeyAxisSpec := func(blockId, alphabet, label, ...rest) {
+// "aminoacid"; `runScope` is runScopeDomain(blockId, modality) — it scopes the
+// axis to this run and declares the run's modality. Optional trailing arg
+// overrides the source column name (default "variantKey") — needed for linker
+// tables that carry two variant-key columns.
+variantKeyAxisSpec := func(runScope, alphabet, label, ...rest) {
 	col := "variantKey"
 	if len(rest) > 0 {
 		col = rest[0]
@@ -27,10 +50,7 @@ variantKeyAxisSpec := func(blockId, alphabet, label, ...rest) {
 		spec: {
 			name: "pl7.app/variantKey",
 			type: "String",
-			domain: {
-				"pl7.app/alphabet": alphabet,
-				"pl7.app/repertoire/extractionRunId": blockId
-			},
+			domain: maps.merge({ "pl7.app/alphabet": alphabet }, runScope),
 			annotations: {
 				"pl7.app/label": label,
 				"pl7.app/table/fontFamily": "monospace",
@@ -161,8 +181,9 @@ mutationHistogramColumns := func(alphabet) {
 
 // Known-variant axis: one distinct known (designed) sequence. Hash of the known
 // sequence (nt or aa), scoped to the run. Distinct axis from `variantKey` — the
-// known linker bridges the two.
-knownVariantKeyAxisSpec := func(blockId, alphabet, label, ...rest) {
+// known linker bridges the two. Carries the same `runScope` as the variant axis:
+// a run has exactly one modality, so both axes always declare the same value.
+knownVariantKeyAxisSpec := func(runScope, alphabet, label, ...rest) {
 	col := "knownKey"
 	if len(rest) > 0 {
 		col = rest[0]
@@ -173,10 +194,7 @@ knownVariantKeyAxisSpec := func(blockId, alphabet, label, ...rest) {
 		spec: {
 			name: "pl7.app/knownVariantKey",
 			type: "String",
-			domain: {
-				"pl7.app/alphabet": alphabet,
-				"pl7.app/repertoire/extractionRunId": blockId
-			},
+			domain: maps.merge({ "pl7.app/alphabet": alphabet }, runScope),
 			annotations: {
 				"pl7.app/label": label,
 				"pl7.app/table/fontFamily": "monospace",
@@ -739,6 +757,7 @@ qcColumns := func(sampleIdAxisSpec) {
 }
 
 export {
+	runScopeDomain: runScopeDomain,
 	variantKeyAxisSpec: variantKeyAxisSpec,
 	parentIdAxisSpec: parentIdAxisSpec,
 	positionAxisSpec: positionAxisSpec,
