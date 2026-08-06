@@ -1,6 +1,6 @@
 {
   "name": "@platforma-open/milaboratories.synthetic-repertoire-profiler.block",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "files": [
     "dist",
     "block-pack"
