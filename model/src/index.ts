@@ -295,7 +295,10 @@ const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
 };
 
 const DEFAULT_STATE_HEATMAP_GRAPH_STATE: GraphMakerState = {
-  title: "Residue Composition",
+  // Fuller than the sidebar label ("Residue Composition"): this one shows on the
+  // chart itself and in exports, where "per-position" is what stops a pooled
+  // marginal being read as a per-mutation effect map.
+  title: "Per-position residue composition",
   template: "heatmap",
   currentTab: null,
   // GraphMaker defaults heatmaps to row z-score (standardScaling), turning cells

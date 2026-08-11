@@ -1,8 +1,8 @@
 ---
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.model': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.ui': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler': minor
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.model': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.ui': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.block': patch
 ---
 
 Add the "Residue Composition" page — a per-position residue heat map (position × residue) built in-block from the state matrix and the cross-sample per-variant read totals. Two value columns from one aggregation: pooled read count, and per-position residue frequency (the default view). One plot per parent, chosen with a Parent selector in the chart settings, with the parent-residue and region tracks riding under the position axis. Amino-acid level always, nucleotide level when nucleotide export is on.
