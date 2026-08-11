@@ -21,6 +21,7 @@ repertoirePipelineTpl := assets.importTemplate(":repertoire-pipeline")
 vdjAutoRegionsTpl := assets.importTemplate(":vdj-auto-regions")
 aggregateVariantsTpl := assets.importTemplate(":aggregate-variants")
 aggregateStateMatrixTpl := assets.importTemplate(":aggregate-state-matrix")
+computeStateHeatmapTpl := assets.importTemplate(":compute-state-heatmap")
 aggregateRegionAnnotationTpl := assets.importTemplate(":aggregate-region-annotation")
 aggregateLinkersTpl := assets.importTemplate(":aggregate-linkers")
 aggregateKnownTpl := assets.importTemplate(":aggregate-known")
@@ -328,53 +329,71 @@ wf.body(func(args) {
 			{ splitDataAndSpec: true }
 		)
 	}
+	// The properties TSVs are also read by the composition heat map below (for the
+	// cross-sample per-variant read total), so hold the file handles.
+	ntPropsTsv := aggVarsRun.output("ntProperties")
+	aaPropsTsv := aggVarsRun.output("aaProperties")
 	// aa properties always; nt properties only when exported (skip the import
 	// entirely otherwise — nothing downstream consumes them).
 	ntPropsCols := undefined
 	if exportNt {
-		ntPropsCols = importProps(aggVarsRun.output("ntProperties"), ntVariantAxis, false, rc.ntRegionNames)
+		ntPropsCols = importProps(ntPropsTsv, ntVariantAxis, false, rc.ntRegionNames)
 	}
-	aaPropsCols := importProps(aggVarsRun.output("aaProperties"), aaVariantAxis, true, rc.aaRegionNames)
+	aaPropsCols := importProps(aaPropsTsv, aaVariantAxis, true, rc.aaRegionNames)
 
 	// State matrix [variantKey, parentId, position] -> state, deduped cross-sample.
 	// aa always; nt only when nt export is enabled (its per-sample TSV is an empty
 	// placeholder otherwise — see repertoire-pipeline). Same ephemeral aggregate
 	// serves both levels.
+	// Returns the imported PColumns AND the aggregated TSV: the same table feeds the
+	// in-block composition heat map (compute-state-heatmap), which reads it as a
+	// frame rather than round-tripping the imported column back out.
 	importStateMatrix := func(perSampleOutput, variantAxis, alphabet, posLabel) {
 		smRun := render.createEphemeral(aggregateStateMatrixTpl, {
 			stateMatrixData: perSampleResults.outputData(perSampleOutput)
 		})
-		return xsv.importFile(
-			smRun.output("stateMatrix"),
-			"tsv",
-			{
-				axes: [
-					variantAxis,
-					columnSpecs.parentIdAxisSpec("Parent"),
-					columnSpecs.positionAxisSpec(alphabet, posLabel)
-				],
-				columns: columnSpecs.stateMatrixColumns(alphabet),
-				storageFormat: "Parquet",
-				partitionKeyLength: 0
-			},
-			{ splitDataAndSpec: true }
-		)
+		stateMatrixTsv := smRun.output("stateMatrix")
+		return {
+			tsv: stateMatrixTsv,
+			cols: xsv.importFile(
+				stateMatrixTsv,
+				"tsv",
+				{
+					axes: [
+						variantAxis,
+						columnSpecs.parentIdAxisSpec("Parent"),
+						columnSpecs.positionAxisSpec(alphabet, posLabel)
+					],
+					columns: columnSpecs.stateMatrixColumns(alphabet),
+					storageFormat: "Parquet",
+					partitionKeyLength: 0
+				},
+				{ splitDataAndSpec: true }
+			)
+		}
 	}
-	aaStateMatrixCols := importStateMatrix("aaStateMatrixTsv", aaVariantAxis, "aminoacid", "Position aa")
+	aaStateMatrix := importStateMatrix("aaStateMatrixTsv", aaVariantAxis, "aminoacid", "Position aa")
+	aaStateMatrixCols := aaStateMatrix.cols
+	ntStateMatrix := undefined
 	ntStateMatrixCols := undefined
 	if exportNt {
-		ntStateMatrixCols = importStateMatrix("ntStateMatrixTsv", ntVariantAxis, "nucleotide", "Position nt")
+		ntStateMatrix = importStateMatrix("ntStateMatrixTsv", ntVariantAxis, "nucleotide", "Position nt")
+		ntStateMatrixCols = ntStateMatrix.cols
 	}
 
 	// Region membership [parentId, position(aa)] -> region, deduped cross-sample.
 	// Only when the run defines regions (else there is no annotation to import).
 	regionAnnotationCols := undefined
+	// Held so the composition heat map can import the same table under its own
+	// column identity (see heatmapRegionColumns) instead of borrowing this one.
+	regionAnnotationTsv := undefined
 	if rc.hasRegions {
 		regionAnnRun := render.createEphemeral(aggregateRegionAnnotationTpl, {
 			regionAnnotationData: perSampleResults.outputData("regionAnnotationTsv")
 		})
+		regionAnnotationTsv = regionAnnRun.output("regionAnnotation")
 		regionAnnotationCols = xsv.importFile(
-			regionAnnRun.output("regionAnnotation"),
+			regionAnnotationTsv,
 			"tsv",
 			{
 				axes: [
@@ -542,6 +561,89 @@ wf.body(func(args) {
 	}
 	addMutationHistogram("aa/", "aaMutationHistogramXsv", aaTrace)
 	mutationHistogramPf := mutationHistogramPfBuilder.build()
+
+	// --- Per-position residue composition heat-map frame ----------------------
+	// In-block view (an output, not an export): position × residue, coloured by
+	// pooled read count or per-position residue frequency, keyed by parent. The
+	// per-variant state matrix and abundance stay the exported contract; this is
+	// the plot built from them.
+	//
+	// parentId stays an AXIS of every column here rather than being filtered to one
+	// parent: positions from different parents are different coordinate systems, so
+	// the page maps parentId to a grouping (single parent) or to tabs (several).
+	stateHeatmapPfBuilder := pframes.pFrameBuilder()
+	addStateHeatmap := func(prefix, stateMatrixTsv, propertiesTsv, alphabet, posLabel, trace) {
+		hmRun := render.createEphemeral(computeStateHeatmapTpl, {
+			stateMatrixTsv: stateMatrixTsv,
+			propertiesTsv: propertiesTsv
+		})
+		hmCols := xsv.importFile(
+			hmRun.output("stateHeatmap"),
+			"tsv",
+			{
+				axes: [
+					columnSpecs.parentIdAxisSpec("Parent"),
+					columnSpecs.positionAxisSpec(alphabet, posLabel),
+					columnSpecs.stateAxisSpec(alphabet)
+				],
+				columns: columnSpecs.stateHeatmapColumns(alphabet),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{ splitDataAndSpec: true }
+		)
+		for k, v in hmCols {
+			stateHeatmapPfBuilder.add(prefix + k, trace.inject(v.spec), v.data)
+		}
+		// Parent-sequence track, on the same [parentId, position] key as the cells.
+		prCols := xsv.importFile(
+			hmRun.output("parentResidue"),
+			"tsv",
+			{
+				axes: [
+					columnSpecs.parentIdAxisSpec("Parent"),
+					columnSpecs.positionAxisSpec(alphabet, posLabel)
+				],
+				columns: columnSpecs.parentResidueColumns(alphabet),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{ splitDataAndSpec: true }
+		)
+		for k, v in prCols {
+			stateHeatmapPfBuilder.add(prefix + "parent/" + k, trace.inject(v.spec), v.data)
+		}
+	}
+	// aa always; nt only when nt export is on (same gating as the rest of the block).
+	addStateHeatmap("aa/", aaStateMatrix.tsv, aaPropsTsv, "aminoacid", "Position aa", aaTrace)
+	if exportNt {
+		addStateHeatmap("nt/", ntStateMatrix.tsv, ntPropsTsv, "nucleotide", "Position nt", ntTrace)
+	}
+	// Region membership as a second [parentId, position] track. The cross-sample
+	// region table is aa-positioned, so it rides the aa map only. Imported here a
+	// second time under the plot's own column identity (alphabet domain, so it is
+	// pinned to the aa level inside a frame that may also hold nt positions) rather
+	// than borrowing the column built for the downstream export.
+	if !is_undefined(regionAnnotationTsv) {
+		hmRegionCols := xsv.importFile(
+			regionAnnotationTsv,
+			"tsv",
+			{
+				axes: [
+					columnSpecs.parentIdAxisSpec("Parent"),
+					columnSpecs.positionAxisSpec("aminoacid", "Position aa")
+				],
+				columns: columnSpecs.heatmapRegionColumns("aminoacid"),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{ splitDataAndSpec: true }
+		)
+		for k, v in hmRegionCols {
+			stateHeatmapPfBuilder.add("aa/region/" + k, aaTrace.inject(v.spec), v.data)
+		}
+	}
+	stateHeatmapPf := stateHeatmapPfBuilder.build()
 
 	// --- known-set overlay (when an nt and/or aa known set was supplied) -------
 	// Exact-match (budget 0) overlay derived from the assigned variants: known
@@ -806,6 +908,8 @@ wf.body(func(args) {
 		// Per-sample QC metrics PFrame (sampleId axis) for the QC Report table.
 		qc: pframes.exportFrame(qcPf),
 		mutationHistogram: pframes.exportFrame(mutationHistogramPf),
+		// Per-position residue composition heat map (position × residue, per parent).
+		stateHeatmap: pframes.exportFrame(stateHeatmapPf),
 		// Per-sample step reports ([sampleId, step, format] -> file) for the
 		// sample report panel + Main-page Alignments cell. exportColumnData makes
 		// each file a downloadable Blob (getFileHandle/getContentJson need an

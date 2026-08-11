@@ -1,0 +1,89 @@
+// Per-position residue composition precalc (ephemeral). Level-neutral: used for
+// both the aa and the nt state matrix (identical TSV schema, one invocation each).
+//
+// The state matrix is per-variant ([variantKey, parentId, position] -> state).
+// This collapses the variant axis: for each (parentId, position, state) cell it
+// sums the read counts of every variant carrying state `s` at position `p`, using
+// the cross-sample per-variant total (readCountTotal) — so the map pools every
+// sample in the run.
+//
+//   stateHeatmap.tsv   [parentId, position, state] -> readCount, frequency
+//   parentResidue.tsv  [parentId, position]        -> parentResidue
+//
+// `frequency` is the same sum divided by its (parentId, position) column total, so
+// each position column adds up to 1 — the per-position residue composition. Both
+// value columns ride in one frame; the plot page defaults to frequency.
+//
+// The state matrix's default cell is the PARENT residue (substitutions and
+// deletions overwrite it), so per position the parent residue is the state carried
+// by the most variants. Emitted as a [parentId, position] track that rides under
+// the heat map's position axis. Ties break alphabetically so the result is
+// deterministic. Reliable for typical DMS input, where any single position is
+// unmutated in the large majority of variants.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+
+self.defineOutputs("stateHeatmap", "parentResidue")
+
+self.awaitState("InputsLocked")
+self.awaitState("stateMatrixTsv", "ResourceReady")
+self.awaitState("propertiesTsv", "ResourceReady")
+
+self.body(func(inputs) {
+	// Left unsized on purpose — pt sizes CPU/RAM from input volume when neither is
+	// set. See aggregate-state-matrix for the full rationale.
+	wf := pt.workflow().
+		inMediumQueue()
+
+	// inferSchema:false → every column read as String, matching the sibling
+	// aggregates (the position axis is String, see column-specs positionAxisSpec).
+	// The numeric column consumed below is cast explicitly.
+	smDf := wf.frame({
+		file: inputs.stateMatrixTsv,
+		xsvType: "tsv"
+	}, { id: "sm", inferSchema: false })
+
+	// Cross-sample per-variant read total from the aggregated properties table —
+	// already pooled over every sample, which is what this map plots.
+	variantReadsDf := wf.frame({
+		file: inputs.propertiesTsv,
+		xsvType: "tsv"
+	}, { id: "props", inferSchema: false }).
+		select(
+			pt.col("variantKey"),
+			pt.col("readCountTotal").cast("Long").alias("variantReads")
+		)
+
+	// Collapse to [parentId, position, state]. Inner join drops variants with no
+	// abundance row.
+	cells := smDf.
+		join(variantReadsDf, { on: "variantKey", how: "inner" }).
+		groupBy("parentId", "position", "state").
+		agg(pt.col("variantReads").sum().alias("readCount"))
+
+	// Both sides cast to Double: readCount is a Long sum, and an integer division
+	// here would floor every frequency to 0.
+	cells.withColumns(
+		pt.col("readCount").cast("Double").
+			truediv(pt.col("readCount").cast("Double").sum().over(["parentId", "position"])).
+			alias("frequency")
+	).save("stateHeatmap.tsv", { xsvType: "tsv" })
+
+	smDf.
+		groupBy("parentId", "position", "state").
+		agg(pt.col("variantKey").count().alias("n")).
+		withColumns(pt.col("n").max().over(["parentId", "position"]).alias("maxN")).
+		filter(pt.col("n").eq(pt.col("maxN"))).
+		sort(["parentId", "position", "state"]).
+		groupBy("parentId", "position").
+		agg(pt.col("state").cast("String").first().alias("parentResidue")).
+		save("parentResidue.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return {
+		stateHeatmap: result.getFile("stateHeatmap.tsv"),
+		parentResidue: result.getFile("parentResidue.tsv")
+	}
+})
