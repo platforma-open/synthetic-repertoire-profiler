@@ -5,12 +5,14 @@ import KnownVariantsNtPage from "./KnownVariantsNtPage.vue";
 import MainPage from "./MainPage.vue";
 import MutationHistogramPage from "./MutationHistogramPage.vue";
 import QcReportPage from "./QcReportPage.vue";
+import StateHeatmapPage from "./StateHeatmapPage.vue";
 
 export const sdkPlugin = defineAppV3(platforma, () => ({
   routes: {
     "/": () => MainPage,
     "/qc": () => QcReportPage,
     "/mutation-histogram": () => MutationHistogramPage,
+    "/state-heatmap": () => StateHeatmapPage,
     "/known-variants-nt": () => KnownVariantsNtPage,
     "/known-variants-aa": () => KnownVariantsAaPage,
   },
