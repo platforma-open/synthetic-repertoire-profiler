@@ -223,6 +223,7 @@ export type BlockData = {
   knownVariantsNtTableState: PlDataTableStateV2;
   knownVariantsAaTableState: PlDataTableStateV2;
   graphStateMutationHistogram: GraphMakerState;
+  graphStateStateHeatmap: GraphMakerState;
 };
 
 /** Workflow-facing args projected from `BlockData` by `.args(...)`. */
@@ -278,7 +279,9 @@ export type BlockArgs = {
  *  renames it to `exportNt` (governs all nt export). */
 type BlockDataV1 = Omit<BlockDataV2, "exportNt"> & { ntStateMatrix: boolean };
 
-type BlockDataV2 = Omit<BlockData, "graphStateMutationHistogram">;
+type BlockDataV2 = Omit<BlockDataV3, "graphStateMutationHistogram">;
+
+type BlockDataV3 = Omit<BlockData, "graphStateStateHeatmap">;
 
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -291,6 +294,39 @@ const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   },
 };
 
+const DEFAULT_STATE_HEATMAP_GRAPH_STATE: GraphMakerState = {
+  // Fuller than the sidebar label ("Residue Composition"): this one shows on the
+  // chart itself and in exports, where "per-position" is what stops a pooled
+  // marginal being read as a per-mutation effect map.
+  title: "Per-position residue composition",
+  template: "heatmap",
+  currentTab: null,
+  // GraphMaker defaults heatmaps to row z-score (standardScaling), turning cells
+  // below their row mean negative. The default view is the per-position residue
+  // frequency computed in the workflow, on a linear 0–1 scale, so disable
+  // GraphMaker's own normalization and transform.
+  layersSettings: {
+    heatmap: {
+      normalizationDirection: null,
+      transform: null,
+    },
+  },
+  // Show the Y (residue) axis labels, and pin both cell dimensions so cells stay
+  // square and labelled: the residue alphabet is large (single residues plus
+  // multi-residue insertions and the gap), and a long parent compresses the
+  // position axis to slivers. The chart grows and scrolls instead. Users can
+  // override live via the chart's Axes settings.
+  axesSettings: {
+    axisX: {
+      cellSize: 20,
+    },
+    axisY: {
+      hideAxisLabels: false,
+      cellSize: 20,
+    },
+  },
+};
+
 const dataModel = new DataModelBuilder()
   .from<BlockDataV1>("v1")
   .migrate<BlockDataV2>("v2", ({ ntStateMatrix, ...rest }) => ({
@@ -299,9 +335,13 @@ const dataModel = new DataModelBuilder()
   }))
   // New fields must come as a NEW step: editing a deployed migration body has no
   // effect on projects already tagged with that version.
-  .migrate<BlockData>("v3", (v2) => ({
+  .migrate<BlockDataV3>("v3", (v2) => ({
     ...v2,
     graphStateMutationHistogram: { ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE },
+  }))
+  .migrate<BlockData>("v4", (v3) => ({
+    ...v3,
+    graphStateStateHeatmap: { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
   }))
   .init(() => ({
     parentInputMode: "fastaSequence" as ParentInputMode,
@@ -317,6 +357,7 @@ const dataModel = new DataModelBuilder()
     knownVariantsNtTableState: createPlDataTableStateV2(),
     knownVariantsAaTableState: createPlDataTableStateV2(),
     graphStateMutationHistogram: { ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE },
+    graphStateStateHeatmap: { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
   }));
 
 const DNA_IUPAC_RE = /^[ACGTacgtMKRYWSBDHVNmkrywsbdhvn]*$/;
@@ -567,6 +608,27 @@ export const platforma = BlockModelV3.create(dataModel)
       ?.map((c) => ({ columnId: c.id, spec: c.spec }) satisfies PColumnIdAndSpec),
   )
 
+  // Per-position residue composition heat map. Own columns only — the frame is
+  // self-contained (cells plus the parent-residue and region tracks, all keyed on
+  // [parentId, position]), and `createPFrameForGraphs` would walk the result pool
+  // and pull this block's own `variants` export in, state matrix included.
+  .outputWithStatus("stateHeatmapPf", (ctx): PFrameHandle | undefined => {
+    const pCols = ctx.outputs
+      ?.resolve({ field: "stateHeatmap", assertFieldType: "Input", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (pCols === undefined) return undefined;
+    return ctx.createPFrame(pCols);
+  })
+
+  // Drives the page's default axis mapping, and the parent enumeration that
+  // decides whether parentId becomes a grouping or a set of tabs.
+  .output("stateHeatmapPCols", (ctx): PColumnIdAndSpec[] | undefined =>
+    ctx.outputs
+      ?.resolve({ field: "stateHeatmap", assertFieldType: "Input", allowPermanentAbsence: true })
+      ?.getPColumns()
+      ?.map((c) => ({ columnId: c.id, spec: c.spec }) satisfies PColumnIdAndSpec),
+  )
+
   .outputWithStatus("knownVariantsAaTable", (ctx) => {
     const pCols = ctx.outputs
       ?.resolve({ field: "knownVariantsAa", assertFieldType: "Input", allowPermanentAbsence: true })
@@ -775,13 +837,20 @@ export const platforma = BlockModelV3.create(dataModel)
   .sections((ctx) => {
     const items: {
       type: "link";
-      href: "/" | "/qc" | "/mutation-histogram" | "/known-variants-nt" | "/known-variants-aa";
+      href:
+        | "/"
+        | "/qc"
+        | "/mutation-histogram"
+        | "/state-heatmap"
+        | "/known-variants-nt"
+        | "/known-variants-aa";
       label: string;
     }[] = [
       { type: "link", href: "/", label: "Main" },
       { type: "link", href: "/qc", label: "QC Report" },
-      // Always listed: the plot's empty state carries its own call to action.
+      // Always listed: each plot's empty state carries its own call to action.
       { type: "link", href: "/mutation-histogram", label: "Mutation Distribution" },
+      { type: "link", href: "/state-heatmap", label: "Residue Composition" },
     ];
     // NT known analysis runs only with an nt known set (--known); aa known
     // analysis runs with an aa set (--known-aa) or is derived from the nt set.

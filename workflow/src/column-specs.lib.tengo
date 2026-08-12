@@ -117,6 +117,124 @@ stateMatrixColumns := func(alphabet) {
 	}]
 }
 
+// State (residue/base) axis of the per-position composition heat map — the Y axis.
+// Same value alphabet as the state matrix (letter = match/substitution,
+// multi-letter = insertion, "-" = deletion), but here it is a KEY rather than a
+// value, because the map is indexed by residue. Block-local: this axis is a
+// terminal plot dimension, not exported for downstream joins.
+stateAxisSpec := func(alphabet) {
+	return {
+		column: "state",
+		naRegex: "",
+		spec: {
+			name: "pl7.app/repertoire/state",
+			type: "String",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: {
+				"pl7.app/label": (alphabet == "aminoacid") ? "Amino Acids" : "Nucleotides",
+				"pl7.app/table/fontFamily": "monospace"
+			}
+		}
+	}
+}
+
+// Per-position composition heat-map cells, keyed [parentId, position, state]. Two
+// value columns from one aggregation, so the user can switch the plotted quantity
+// without a re-run:
+//   readCount — reads pooled over every sample and every variant carrying the residue
+//   frequency — the same sum over its (parentId, position) column total, so each
+//               position column adds up to 1 (the composition readout)
+// Block-local names: these are in-block plot columns, not exported, and a
+// distinct name keeps them from being confused with the per-variant abundance
+// columns of the same quantity.
+stateHeatmapColumns := func(alphabet) {
+	return [{
+		column: "readCount",
+		id: "state-read-count",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/stateReadCount",
+			valueType: "Long",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(90000, "default", {
+				"pl7.app/isAbundance": "true",
+				"pl7.app/abundance/aggregated": "true",
+				"pl7.app/abundance/normalized": "false",
+				"pl7.app/label": "Read count"
+			})
+		}
+	}, {
+		column: "frequency",
+		id: "state-frequency",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/stateFrequency",
+			valueType: "Double",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(100000, "default", {
+				"pl7.app/isAbundance": "true",
+				"pl7.app/abundance/aggregated": "true",
+				"pl7.app/abundance/normalized": "true",
+				"pl7.app/label": "Residue frequency",
+				"pl7.app/format": ".2p"
+			})
+		}
+	}]
+}
+
+// Parent (reference) residue per position, keyed [parentId, position] — the track
+// that shows the parent sequence under the heat map's position axis. String value
+// → discrete annotation coloured by residue, letter shown in the tooltip.
+parentResidueColumns := func(alphabet) {
+	return [{
+		column: "parentResidue",
+		id: "parent-residue",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/parentResidue",
+			valueType: "String",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(70000, "default", {
+				"pl7.app/label": (alphabet == "aminoacid") ? "Parent AA" : "Parent NT",
+				"pl7.app/table/fontFamily": "monospace"
+			})
+		}
+	}]
+}
+
+// Region membership as the composition heat map's OWN track, keyed
+// [parentId, position]. Deliberately not the exported `regionAnnotation` column
+// borrowed into the plot frame: that one carries no alphabet domain, so inside a
+// frame holding both aa and nt positions it is not pinned to either level, and it
+// is a column of the downstream export rather than of this view. Same source TSV,
+// imported a second time with the plot's own identity — symmetric with
+// parentResidueColumns, which is what makes both tracks resolve the same way.
+heatmapRegionColumns := func(alphabet) {
+	return [{
+		column: "region",
+		id: "heatmap-region",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/regionAnnotation",
+			valueType: "String",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(60000, "default", {
+				"pl7.app/label": "Region"
+			})
+		}
+	}]
+}
+
 // Mutation-count axis. No run scoping: the values are plain integers, identical
 // in every run. The alphabet domain keeps nt and aa counts distinct.
 mutationCountAxisSpec := func(alphabet, label) {
@@ -764,6 +882,10 @@ export {
 	mutationCountAxisSpec: mutationCountAxisSpec,
 	mutationHistogramColumns: mutationHistogramColumns,
 	stateMatrixColumns: stateMatrixColumns,
+	stateAxisSpec: stateAxisSpec,
+	stateHeatmapColumns: stateHeatmapColumns,
+	parentResidueColumns: parentResidueColumns,
+	heatmapRegionColumns: heatmapRegionColumns,
 	knownVariantKeyAxisSpec: knownVariantKeyAxisSpec,
 	knownVariantColumns: knownVariantColumns,
 	knownDistanceColumns: knownDistanceColumns,
