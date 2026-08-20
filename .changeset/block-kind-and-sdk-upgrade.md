@@ -1,7 +1,8 @@
 ---
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.kind': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.model': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.block': minor
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.kind': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.model': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.block': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.ui': patch
 ---
 
 Add the mandatory kind component and upgrade the SDK
