@@ -14,6 +14,7 @@ xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
 strings := import("@platforma-sdk/workflow-tengo:strings")
 columnSpecs := import(":column-specs")
 regionConfig := import(":region-config")
+smChunks := import(":state-matrix-chunks")
 json := import("json")
 
 prerunTpl := assets.importTemplate(":prerun")
@@ -21,6 +22,7 @@ repertoirePipelineTpl := assets.importTemplate(":repertoire-pipeline")
 vdjAutoRegionsTpl := assets.importTemplate(":vdj-auto-regions")
 aggregateVariantsTpl := assets.importTemplate(":aggregate-variants")
 aggregateStateMatrixTpl := assets.importTemplate(":aggregate-state-matrix")
+mergeStateMatrixTpl := assets.importTemplate(":merge-state-matrix")
 computeStateHeatmapTpl := assets.importTemplate(":compute-state-heatmap")
 aggregateRegionAnnotationTpl := assets.importTemplate(":aggregate-region-annotation")
 aggregateLinkersTpl := assets.importTemplate(":aggregate-linkers")
@@ -256,8 +258,6 @@ wf.body(func(args) {
 		fileOutput("parsedMic"),
 		fileOutput("variantsTsv"),
 		fileOutput("aaVariantsTsv"),
-		fileOutput("aaStateMatrixTsv"),
-		fileOutput("ntStateMatrixTsv"),
 		fileOutput("regionAnnotationTsv"),
 		fileOutput("qcJson"),
 		fileOutput("paramsJson"),
@@ -277,6 +277,12 @@ wf.body(func(args) {
 		aaConvergenceXsv,
 		logsOutput
 	]
+	// State matrix, split by position chunk inside the per-sample job: one plain File
+	// output per level per chunk key (see state-matrix-chunks outputName).
+	for chunkKey in smChunks.keys() {
+		targetOutputs = append(targetOutputs, fileOutput(smChunks.outputName("aa", chunkKey)))
+		targetOutputs = append(targetOutputs, fileOutput(smChunks.outputName("nt", chunkKey)))
+	}
 
 	perSampleResults := pframes.processColumn(
 		{ spec: inputSpec, data: inputData },
@@ -348,10 +354,16 @@ wf.body(func(args) {
 	// Returns the imported PColumns AND the aggregated TSV: the same table feeds the
 	// in-block composition heat map (compute-state-heatmap), which reads it as a
 	// frame rather than round-tripping the imported column back out.
-	importStateMatrix := func(perSampleOutput, variantAxis, alphabet, posLabel) {
-		smRun := render.createEphemeral(aggregateStateMatrixTpl, {
-			stateMatrixData: perSampleResults.outputData(perSampleOutput)
-		})
+	importStateMatrix := func(levelPrefix, variantAxis, alphabet, posLabel) {
+		// One dedup job per position chunk, then a streaming concat of the results.
+		mergeInputs := {}
+		for idx, key in smChunks.keys() {
+			chunkRun := render.createEphemeral(aggregateStateMatrixTpl, {
+				stateMatrixData: perSampleResults.outputData(smChunks.outputName(levelPrefix, key))
+			})
+			mergeInputs["chunk" + string(idx)] = chunkRun.output("stateMatrix")
+		}
+		smRun := render.createEphemeral(mergeStateMatrixTpl, mergeInputs)
 		stateMatrixTsv := smRun.output("stateMatrix")
 		return {
 			tsv: stateMatrixTsv,
@@ -372,12 +384,12 @@ wf.body(func(args) {
 			)
 		}
 	}
-	aaStateMatrix := importStateMatrix("aaStateMatrixTsv", aaVariantAxis, "aminoacid", "Position aa")
+	aaStateMatrix := importStateMatrix("aa", aaVariantAxis, "aminoacid", "Position aa")
 	aaStateMatrixCols := aaStateMatrix.cols
 	ntStateMatrix := undefined
 	ntStateMatrixCols := undefined
 	if exportNt {
-		ntStateMatrix = importStateMatrix("ntStateMatrixTsv", ntVariantAxis, "nucleotide", "Position nt")
+		ntStateMatrix = importStateMatrix("nt", ntVariantAxis, "nucleotide", "Position nt")
 		ntStateMatrixCols = ntStateMatrix.cols
 	}
 
@@ -899,7 +911,6 @@ wf.body(func(args) {
 		parsedMic: perSampleResults.outputData("parsedMic"),
 		variantsTsv: perSampleResults.output("variantsTsv"),
 		aaVariantsTsv: perSampleResults.output("aaVariantsTsv"),
-		aaStateMatrixTsv: perSampleResults.output("aaStateMatrixTsv"),
 		// outputData so the model can resolve("qcJson") + parseResourceMap it
 		// (the per-sample qc.json is written at the end of analyze → its
 		// presence is the per-sample "done" signal).

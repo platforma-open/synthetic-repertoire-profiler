@@ -1,0 +1,100 @@
+// Cross-sample per-position residue composition (ephemeral). Level-neutral: used
+// for both the aa and the nt heat map (identical TSV schema, one invocation each).
+//
+// Replaces the old path, which built the cross-sample per-variant state matrix and
+// collapsed that. Each sample now arrives already collapsed to
+// [parentId, position, state] -> readCount, variantCount (see repertoire-pipeline
+// stateComposition), so this step only has to add the per-sample tables together:
+// samples x positions x states rows, a few tens of thousands at most, instead of
+// samples x variants x parentLength.
+//
+//   stateHeatmap.tsv   [parentId, position, state] -> readCount, frequency
+//   parentResidue.tsv  [parentId, position]        -> parentResidue
+//
+// Both outputs keep the schema the previous producer emitted, so main's importers
+// are unchanged.
+//
+// `frequency` is the pooled read count divided by its (parentId, position) column
+// total, so each position column sums to 1. Both value columns ride in one frame;
+// the plot page defaults to frequency.
+//
+// `parentResidue` is the state carried by the most variants at a position — the
+// state matrix's default cell is the parent residue, so substitutions and deletions
+// have to outnumber it to win, which does not happen on typical DMS input. Ties
+// break alphabetically so the result is deterministic. See the note in
+// repertoire-pipeline on how the cross-sample variant count differs from the old
+// deduped count.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+
+self.defineOutputs("stateHeatmap", "parentResidue")
+
+self.awaitState("InputsLocked")
+self.awaitState("stateCompositionData", "ResourceReady")
+
+self.body(func(inputs) {
+	rmMap := inputs.stateCompositionData.inputs()
+	// Left unsized on purpose (pt sizes from input volume). Unlike the per-variant
+	// aggregate this input is bounded by positions x states x samples, so the floor
+	// of the formula is already ample.
+	wf := pt.workflow().
+		inMediumQueue()
+
+	frames := []
+	for sKey in maps.getKeys(rmMap) {
+		// inferSchema:false → all columns read as String, so empty and populated
+		// per-sample TSVs share one schema and the concat never hits a numeric-vs-
+		// String mismatch. The numeric columns are cast explicitly below.
+		frames = append(frames, wf.frame({
+			file: rmMap[sKey],
+			xsvType: "tsv"
+		}, { id: "sc_" + string(len(frames)), inferSchema: false }))
+	}
+	ll.assert(len(frames) > 0, "no state-composition frames")
+
+	merged := frames[0]
+	if len(frames) > 1 {
+		merged = pt.concat(frames)
+	}
+
+	// Pool the per-sample collapses. This is the step that used to run over the
+	// cross-sample per-variant matrix.
+	pooled := merged.
+		groupBy("parentId", "position", "state").
+		agg(
+			pt.col("readCount").cast("Long").sum().alias("readCount"),
+			pt.col("variantCount").cast("Long").sum().alias("variantCount")
+		)
+
+	// Both sides cast to Double: readCount is a Long sum, and an integer division
+	// here would floor every frequency to 0.
+	pooled.withColumns(
+		pt.col("readCount").cast("Double").
+			truediv(pt.col("readCount").cast("Double").sum().over(["parentId", "position"])).
+			alias("frequency")
+	).select(
+		pt.col("parentId"),
+		pt.col("position"),
+		pt.col("state"),
+		pt.col("readCount"),
+		pt.col("frequency")
+	).save("stateHeatmap.tsv", { xsvType: "tsv" })
+
+	pooled.
+		withColumns(pt.col("variantCount").max().over(["parentId", "position"]).alias("maxN")).
+		filter(pt.col("variantCount").eq(pt.col("maxN"))).
+		sort(["parentId", "position", "state"]).
+		groupBy("parentId", "position").
+		agg(pt.col("state").cast("String").first().alias("parentResidue")).
+		save("parentResidue.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return {
+		stateHeatmap: result.getFile("stateHeatmap.tsv"),
+		parentResidue: result.getFile("parentResidue.tsv")
+	}
+})
