@@ -24,7 +24,7 @@ jobs:
     with:
       app-name: 'Block: Synthetic Repertoire Profiler'
       app-name-slug: 'block-synthetic-repertoire-profiler'
-      node-version: '20.x'
+      node-version: '22.x'
       gha-runner-label: hz-ubuntu-dind
       build-script-name: 'build:dev-local'
       build-before-publish-script-name: 'build:release'
