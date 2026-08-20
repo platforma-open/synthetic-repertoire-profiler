@@ -1,14 +1,17 @@
-// Cross-sample state-matrix aggregation (ephemeral). Level-neutral: used for both
-// the aa and the nt state matrix (identical TSV schema, one invocation each).
+// Cross-sample state-matrix dedup for ONE position chunk (ephemeral). Level-neutral:
+// used for both the aa and the nt state matrix, rendered once per chunk key per level.
 //
-// The state matrix is a property of the variant (its states relative to a parent),
-// so it is identical in every sample a variant appears in. This concatenates the
-// per-sample state-matrix TSVs and dedups by [variantKey, parentId, position],
-// yielding one cross-variant table:
+// The state matrix is a property of the variant, so it is identical in every sample a
+// variant appears in. Dedups by [variantKey, parentId, position] across samples:
 //   stateMatrix.tsv  [variantKey, parentId, position] -> state
 //
 // (mitool names the first TSV column `variantKey` in both the aa and nt exports;
 // it holds the aa/nt variant key respectively, matching the variant axis column.)
+//
+// `unique({ keep: "any" })` rather than groupBy().agg(first()): ptabler hardcodes
+// maintain_order on groupBy, which cannot stream. `keep: "any"` is exact — the state
+// matrix is a pure function of the variant, so duplicates carry identical states.
+// No trailing sort: xsv.importFile sorts by axes.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
@@ -21,22 +24,21 @@ self.awaitState("InputsLocked")
 self.awaitState("stateMatrixData", "ResourceReady")
 
 self.body(func(inputs) {
+	// [sampleId] -> this chunk's per-sample file.
 	rmMap := inputs.stateMatrixData.inputs()
-	// Left unsized on purpose: pt sizes CPU/RAM from input volume when neither is
-	// set (ram = between(2 GiB + 4 × size, 2 GiB, 64 GiB)). This table has one row
-	// per variant per position, so it scales with the variant count, not the sample
-	// count — any fixed per-sample budget under-sizes it. An explicit .mem()/.cpu()
-	// would suppress the formula (see workflow-tengo pt/workflow-run.tpl.tengo).
+
+	// The dedup holds every distinct key in RAM (~200 B/row) and does not spill.
+	// Raise DIGITS in state-matrix-chunks if a run needs more than this covers.
+	// mem() must be a literal: it reaches pt.workflow-run as JSON, so a formula
+	// cannot survive the crossing.
 	wf := pt.workflow().
-		inMediumQueue()
+		inHeavyQueue().
+		mem("48GiB")
 
 	frames := []
 	for sKey in maps.getKeys(rmMap) {
-		// inferSchema:false → all columns read as String, so empty and populated
-		// per-sample TSVs share one schema and the concat never hits a numeric-vs-
-		// String mismatch (position infers as Int64 when populated). The position
-		// axis is String (see column-specs positionAxisSpec) and state is cast to
-		// String, so no numeric type is lost.
+		// inferSchema:false -> every column String, so empty and populated per-sample
+		// TSVs share one schema and the concat cannot hit a type mismatch.
 		frames = append(frames, wf.frame({
 			file: rmMap[sKey],
 			xsvType: "tsv"
@@ -50,9 +52,7 @@ self.body(func(inputs) {
 	}
 
 	merged.
-		groupBy("variantKey", "parentId", "position").
-		agg(pt.col("state").cast("String").first().alias("state")).
-		sort(["variantKey", "parentId", "position"]).
+		unique({ subset: ["variantKey", "parentId", "position"], keep: "any" }).
 		save("stateMatrix.tsv", { xsvType: "tsv" })
 
 	result := wf.run()
