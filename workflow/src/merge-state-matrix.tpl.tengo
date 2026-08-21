@@ -1,0 +1,46 @@
+// Merges the per-chunk deduped state matrices into one TSV (ephemeral).
+// Level-neutral: one invocation per level (aa, nt).
+//
+// Chunks partition the position axis, so they are disjoint and already deduped — this
+// is a plain concat. Row order does not matter: xsv.importFile sorts by axes.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+smChunks := import(":state-matrix-chunks")
+
+self.defineOutputs("stateMatrix")
+
+self.awaitState("InputsLocked")
+for c := 0; c < len(smChunks.keys()); c++ {
+	self.awaitState("chunk" + string(c), "ResourceReady")
+}
+
+self.body(func(inputs) {
+	// Concat streams, so this is headroom. mem() must be a literal: it reaches
+	// pt.workflow-run as JSON, so a formula cannot survive the crossing.
+	wf := pt.workflow().
+		inHeavyQueue().
+		mem("16GiB")
+
+	frames := []
+	for c := 0; c < len(smChunks.keys()); c++ {
+		frames = append(frames, wf.frame({
+			file: inputs["chunk" + string(c)],
+			xsvType: "tsv"
+		}, { id: "chunk_" + string(c), inferSchema: false }))
+	}
+	ll.assert(len(frames) > 0, "no state-matrix chunks to merge")
+
+	merged := frames[0]
+	if len(frames) > 1 {
+		merged = pt.concat(frames)
+	}
+	merged.save("stateMatrix.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return {
+		stateMatrix: result.getFile("stateMatrix.tsv")
+	}
+})
