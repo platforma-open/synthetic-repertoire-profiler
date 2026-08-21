@@ -16,43 +16,34 @@ import {
   isPColumnSpec,
   parseResourceMap,
 } from "@platforma-sdk/model";
+import type {
+  ParentInputMode,
+  ParentRegionConfig,
+  RegionDef,
+  RegionScheme,
+} from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
+import { kind } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
 import type { PatternParts } from "./pattern";
 import { parsePattern, patternHasUmi } from "./pattern";
 
 export { parsePattern, patternHasUmi } from "./pattern";
 export type { LengthRange, PatternHalf, PatternParts } from "./pattern";
 
+// The parent-input and region shapes are part of the kind's init-params
+// contract, so the kind declares them. Re-exported here because the UI reads
+// them from the model, and only the model is on its import path.
+export type { ParentInputMode, ParentRegionConfig, RegionDef, RegionScheme };
+
 /** mitool emits progress lines `[==PROGRESS==]<stage>: <pct>%  ETA: <eta>`. */
 export const ProgressPrefix = "[==PROGRESS==]";
 export const ProgressPattern =
   /(?<stage>[^:]*):(?: *(?<progress>[0-9.]+)%)?(?: *ETA: *(?<eta>.+))?/;
-
-/** How the user supplies the parent (alignment-reference) sequences. Both modes
- *  carry FASTA — paste a string, or upload a file. */
-export type ParentInputMode = "fastaSequence" | "fastaFile";
 
 /** A column discovered in a known-set TSV: its header and the value type
  *  inferred from a sample of its values. */
 export type KnownColumnInfo = {
   header: string;
   type: "Int" | "Double" | "String";
-};
-
-/** Per-parent region scheme. `none` = no regions (default); `vdj` = the canonical
- *  FR1→FR4 antibody/TCR partition; `custom` = arbitrary named regions. */
-export type RegionScheme = "none" | "vdj" | "custom";
-
-/** A region in a parent's partition: a name + nucleotide length. Boundary
- *  offsets are derived cumulatively from the lengths (region-first entry). */
-export type RegionDef = { name: string; length: number };
-
-/** Per-parent region scheme, keyed by the parent's FASTA id. */
-export type ParentRegionConfig = {
-  parentId: string;
-  scheme: RegionScheme;
-  /** Optional name for the whole-variant feature (e.g. `VDJRegion`). */
-  completeFeatureName?: string;
-  regions: RegionDef[];
 };
 
 /** The canonical VDJ V-domain partition (FR/CDR), in order. */
@@ -327,7 +318,7 @@ const DEFAULT_STATE_HEATMAP_GRAPH_STATE: GraphMakerState = {
   },
 };
 
-const dataModel = new DataModelBuilder()
+const dataModel = new DataModelBuilder({ kind })
   .from<BlockDataV1>("v1")
   .migrate<BlockDataV2>("v2", ({ ntStateMatrix, ...rest }) => ({
     ...rest,
@@ -343,16 +334,35 @@ const dataModel = new DataModelBuilder()
     ...v3,
     graphStateStateHeatmap: { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
   }))
-  .init(() => ({
-    parentInputMode: "fastaSequence" as ParentInputMode,
+  // The first group of fields is the kind's init-params contract, field for
+  // field, and
+  // `.templateParams(...)` below projects those same fields back out. `params` is
+  // optional — a block may be created without a template — so every field keeps
+  // its own default.
+  .init(({ params }) => ({
+    // Paired-end default; the UI refits it to the dataset's read structure when a
+    // dataset is picked (see onSelectInput in SettingsPanel).
+    tagPattern: params?.tagPattern ?? DEFAULT_TAG_PATTERN_PAIRED,
+    parentInputMode: params?.parentInputMode ?? "fastaSequence",
+    parentSequence: params?.parentSequence,
+    parentRegions: params?.parentRegions,
+    vdjAutoDetect: params?.vdjAutoDetect ?? false,
+    exportNt: params?.exportNt ?? false,
+    exportOnlyKnown: params?.exportOnlyKnown,
+    maxMutations: params?.maxMutations,
+    maxMutationFraction: params?.maxMutationFraction,
+    maxAaMutations: params?.maxAaMutations,
+    maxAaMutationFraction: params?.maxAaMutationFraction,
+    minBaseQuality: params?.minBaseQuality,
+    minVariantQuality: params?.minVariantQuality,
+    perProcessMemGB: params?.perProcessMemGB,
+    perProcessCPUs: params?.perProcessCPUs,
+
+    // Not init params: uploaded files, what the UI discovers by reading them, and
+    // view state. See the kind for why each group stays out of the contract.
     defaultBlockLabel: "",
     knownNtMetadataColumns: [],
     knownAaMetadataColumns: [],
-    // Paired-end default; the UI refits it to the dataset's read structure when a
-    // dataset is picked (see onSelectInput in SettingsPanel).
-    tagPattern: DEFAULT_TAG_PATTERN_PAIRED,
-    exportNt: false,
-    vdjAutoDetect: false,
     qcTableState: createPlDataTableStateV2(),
     knownVariantsNtTableState: createPlDataTableStateV2(),
     knownVariantsAaTableState: createPlDataTableStateV2(),
@@ -419,7 +429,7 @@ function isFastqInput(v: PObjectSpec): boolean {
   );
 }
 
-export const platforma = BlockModelV3.create(dataModel)
+export const platforma = BlockModelV3.create({ dataModel, kind })
 
   // FASTQ datasets keyed by sampleId — the dataset picker.
   .retentiveOutput("inputOptions", (ctx) => {
@@ -832,6 +842,26 @@ export const platforma = BlockModelV3.create(dataModel)
     parentFileHandle: data.parentInputMode === "fastaFile" ? data.parentFileHandle : undefined,
     knownNtFileHandle: data.knownNtFileHandle,
     knownAaFileHandle: data.knownAaFileHandle,
+  }))
+
+  // The inverse of `init` above: the same fields, so a project exported as a
+  // template and re-applied comes back with the run recipe it went out with.
+  .templateParams((data) => ({
+    tagPattern: data.tagPattern,
+    parentInputMode: data.parentInputMode,
+    parentSequence: data.parentSequence,
+    parentRegions: data.parentRegions,
+    vdjAutoDetect: data.vdjAutoDetect,
+    exportNt: data.exportNt,
+    exportOnlyKnown: data.exportOnlyKnown,
+    maxMutations: data.maxMutations,
+    maxMutationFraction: data.maxMutationFraction,
+    maxAaMutations: data.maxAaMutations,
+    maxAaMutationFraction: data.maxAaMutationFraction,
+    minBaseQuality: data.minBaseQuality,
+    minVariantQuality: data.minVariantQuality,
+    perProcessMemGB: data.perProcessMemGB,
+    perProcessCPUs: data.perProcessCPUs,
   }))
 
   .sections((ctx) => {

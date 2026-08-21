@@ -31,10 +31,11 @@ self.awaitState("stateMatrixTsv", "ResourceReady")
 self.awaitState("propertiesTsv", "ResourceReady")
 
 self.body(func(inputs) {
-	// Left unsized on purpose — pt sizes CPU/RAM from input volume when neither is
-	// set. See aggregate-state-matrix for the full rationale.
+	// Join build side is Theta(distinct variants). mem() must be a literal: it reaches
+	// pt.workflow-run as JSON, so a formula cannot survive the crossing.
 	wf := pt.workflow().
-		inMediumQueue()
+		inHeavyQueue().
+		mem("32GiB")
 
 	// inferSchema:false → every column read as String, matching the sibling
 	// aggregates (the position axis is String, see column-specs positionAxisSpec).

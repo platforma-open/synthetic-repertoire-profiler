@@ -1,0 +1,74 @@
+// Splits the per-variant state matrix across position chunks, so the cross-sample
+// dedup runs as independent jobs instead of one that holds every distinct key.
+//
+// The matrix is dense — one row per variant per parent position — so a single dedup
+// carries `distinctVariants x parentLength` keys. `position` is part of the dedup key,
+// so partitioning on it is exact: duplicate rows share a position and stay together.
+//
+// The split happens in the per-sample job, not in the aggregate. mitool writes the
+// matrix variant-major, so a per-chunk filter in the aggregate would re-scan every
+// sample's full matrix.
+
+pt := import("@platforma-sdk/workflow-tengo:pt")
+
+HEX := ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
+
+// Chunk count is 16^DIGITS: 1 -> 16 chunks, 2 -> 256.
+DIGITS := 1
+
+keys := func() {
+	acc := [""]
+	for d := 0; d < DIGITS; d++ {
+		next := []
+		for k in acc {
+			for h in HEX {
+				next = append(next, k + h)
+			}
+		}
+		acc = next
+	}
+	return acc
+}
+
+// Hash, not arithmetic: `position` is a String axis (IMGT labels like "111A"), so it
+// must not be parsed as a number. fillNull because an empty field reads as null and
+// `null != x` is null, which would drop the row from every chunk below.
+chunkKeyExpr := func(positionCol) {
+	all := keys()
+	return pt.col(positionCol).
+		hash("sha256", "hex", 4 * DIGITS).
+		fillNull(pt.lit(all[len(all) - 1]))
+}
+
+// Predicates selecting chunk `idx`. The last chunk is the complement of the others,
+// so the partition stays total whatever the hash emits.
+keyPredicates := func(chunkCol, idx) {
+	all := keys()
+	if idx < len(all) - 1 {
+		return [pt.col(chunkCol).eq(pt.lit(all[idx]))]
+	}
+	preds := []
+	for i := 0; i < len(all) - 1; i++ {
+		preds = append(preds, pt.col(chunkCol).neq(pt.lit(all[i])))
+	}
+	return preds
+}
+
+// One output per chunk, not one ResourceMap keyed by chunk: processColumn keys a
+// ResourceMap output by sampleId alone, with the chunk key nested a level down.
+outputName := func(prefix, key) {
+	return prefix + "StateMatrixChunk_" + key
+}
+
+fileName := func(prefix, key) {
+	return outputName(prefix, key) + ".tsv"
+}
+
+export {
+	DIGITS: DIGITS,
+	keys: keys,
+	chunkKeyExpr: chunkKeyExpr,
+	keyPredicates: keyPredicates,
+	outputName: outputName,
+	fileName: fileName
+}

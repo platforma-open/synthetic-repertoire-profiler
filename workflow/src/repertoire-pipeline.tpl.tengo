@@ -16,10 +16,18 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+smChunks := import(":state-matrix-chunks")
 
 json := import("json")
 
-self.defineOutputs("parsedMic", "variantsTsv", "aaVariantsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "logs")
+// The state matrix leaves this template already split by position: one File-valued
+// output per level per chunk key. See state-matrix-chunks.
+outputNames := ["parsedMic", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "logs"]
+for chunkKey in smChunks.keys() {
+	outputNames = append(outputNames, smChunks.outputName("aa", chunkKey))
+	outputNames = append(outputNames, smChunks.outputName("nt", chunkKey))
+}
+self.defineOutputs(outputNames)
 
 // Progress marker prefix — mitool emits `[==PROGRESS==]<stage>: <pct>% ETA: …`
 // on stderr when MI_PROGRESS_PREFIX is set; the block scrapes it for the
@@ -487,18 +495,6 @@ self.body(func(inputs) {
 		).save("emptyRegionAnnotation.tsv", { xsvType: "tsv" })
 	}
 
-	// nt-state-matrix placeholder (right header, 0 rows) when nt export is off, so
-	// the `ntStateMatrixTsv` per-sample output is always present. Same headers mitool
-	// writes (variantKey, parentId, position, state); main imports it only when exportNt.
-	if !exportNt {
-		vAbund.filter(pt.lit(false)).select(
-			pt.col("variantKey").cast("String").alias("variantKey"),
-			pt.col("variantKey").cast("String").alias("parentId"),
-			pt.col("variantKey").cast("String").alias("position"),
-			pt.col("variantKey").cast("String").alias("state")
-		).save("emptyNtStateMatrix.tsv", { xsvType: "tsv" })
-	}
-
 	// --- Per-sample QC row -------------------------------------------------
 	// Recomputes the scalar fields of RepertoireQc.Report from the raw analyze
 	// TSVs (qc.json itself is nested JSON, not directly importable). ptabler
@@ -588,40 +584,70 @@ self.body(func(inputs) {
 		frac("ambiguousReads").alias("ambiguousReadFraction")
 	).save("qcRow.parquet")
 
-	// Export-only-matched state matrices. The exported state matrix is keyed on the
-	// variant axis, so it is restricted to matched variants too (no keys absent from
-	// the filtered repertoire). Columns are [variantKey, parentId, position, state];
-	// variantKey is the aa/nt variant key for the aa/nt matrix respectively.
-	if exportOnlyKnown {
-		smCols := func(f) {
-			return f.select(pt.col("variantKey"), pt.col("parentId"), pt.col("position"), pt.col("state"))
-		}
-		// aa: keep variantKeys (== aaVariantKey) present in matchedAaKeys.
-		aaMatchKeys := matchedAaKeys.select(pt.col("aaVariantKey").alias("variantKey"))
-		smCols(ptWf.frame({
-			file: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
-			xsvType: "tsv"
-		}, { id: "aaSmMatched", inferSchema: false }).
-			join(aaMatchKeys, { how: "inner", on: ["variantKey"] })).
-			save("aaStateMatrixMatched.tsv", { xsvType: "tsv" })
-
-		if exportNt {
-			// nt matched keys: assignStatus == ASSIGNED (empty when no nt known set).
-			ntMatchKeys := hasNtKnown ?
-				vAbund.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).groupBy("variantKey").agg(pt.col("variantKey").count().alias("_n")).select(pt.col("variantKey")) :
-				vAbund.filter(pt.lit(false)).select(pt.col("variantKey"))
-			smCols(ptWf.frame({
-				file: analyzeCmd.getFile("out.nt-state-matrix.tsv"),
-				xsvType: "tsv"
-			}, { id: "ntSmMatched", inferSchema: false }).
-				join(ntMatchKeys, { how: "inner", on: ["variantKey"] })).
-				save("ntStateMatrixMatched.tsv", { xsvType: "tsv" })
+	// --- Per-sample state-matrix chunking ----------------------------------
+	// Splits each level's state matrix into disjoint slices of the position axis, so
+	// the cross-sample dedup runs as that many independent jobs. See
+	// state-matrix-chunks. Polars shares one scan across the sinks.
+	smCols := func(f) {
+		return f.select(pt.col("variantKey"), pt.col("parentId"), pt.col("position"), pt.col("state"))
+	}
+	// The chunk key is materialized once, then each sink selects its own value.
+	// `filter` is non-mutating, so every sink reads the same projected frame.
+	chunkStateMatrix := func(df, prefix) {
+		projected := smCols(df).withColumns(
+			smChunks.chunkKeyExpr("position").alias("__chunk")
+		)
+		chunkKeys := smChunks.keys()
+		for idx, key in chunkKeys {
+			projected.filter(smChunks.keyPredicates("__chunk", idx)...).
+				withoutColumns("__chunk").
+				save(smChunks.fileName(prefix, key), { xsvType: "tsv" })
 		}
 	}
 
+	// Export-only-matched: the state matrix is variant-keyed, so it is restricted to
+	// matched variants too. aa keeps variantKeys (== aaVariantKey) with a knownAaKey.
+	aaSmDf := ptWf.frame({
+		file: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
+		xsvType: "tsv"
+	}, { id: "aaSm", inferSchema: false })
+	if exportOnlyKnown {
+		aaSmDf = aaSmDf.join(
+			matchedAaKeys.select(pt.col("aaVariantKey").alias("variantKey")),
+			{ how: "inner", on: ["variantKey"] })
+	}
+	chunkStateMatrix(aaSmDf, "aa")
+
+	// nt: real matrix when nt export is on, else a 0-row frame with the same headers,
+	// chunked identically so the output shape never varies. Matched keys for nt are
+	// assignStatus == ASSIGNED (empty when no nt known set).
+	ntSmDf := undefined
+	if exportNt {
+		ntSmDf = ptWf.frame({
+			file: analyzeCmd.getFile("out.nt-state-matrix.tsv"),
+			xsvType: "tsv"
+		}, { id: "ntSm", inferSchema: false })
+		if exportOnlyKnown {
+			ntMatchKeys := hasNtKnown ?
+				vAbund.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).groupBy("variantKey").agg(pt.col("variantKey").count().alias("_n")).select(pt.col("variantKey")) :
+				vAbund.filter(pt.lit(false)).select(pt.col("variantKey"))
+			ntSmDf = ntSmDf.join(ntMatchKeys, { how: "inner", on: ["variantKey"] })
+		}
+	} else {
+		ntSmDf = vAbund.filter(pt.lit(false)).select(
+			pt.col("variantKey").cast("String").alias("variantKey"),
+			pt.col("variantKey").cast("String").alias("parentId"),
+			pt.col("variantKey").cast("String").alias("position"),
+			pt.col("variantKey").cast("String").alias("state")
+		)
+	}
+	chunkStateMatrix(ntSmDf, "nt")
+
 	ptResult := ptWf.run()
 
-	return {
+
+
+	result := {
 		// `mitool parse` writes .mic records in thread-completion order (non-
 		// deterministic bytes, see Parse.kt mapChunksInParallel). Surfacing the
 		// parsed .mic as a retained output pins it by content hash so reruns
@@ -631,8 +657,6 @@ self.body(func(inputs) {
 		parsedMic: micFile,
 		variantsTsv: analyzeCmd.getFile("out.variants.tsv"),
 		aaVariantsTsv: analyzeCmd.getFile("out.aa-variants.tsv"),
-		aaStateMatrixTsv: exportOnlyKnown ? ptResult.getFile("aaStateMatrixMatched.tsv") : analyzeCmd.getFile("out.aa-state-matrix.tsv"),
-		ntStateMatrixTsv: exportNt ? (exportOnlyKnown ? ptResult.getFile("ntStateMatrixMatched.tsv") : analyzeCmd.getFile("out.nt-state-matrix.tsv")) : ptResult.getFile("emptyNtStateMatrix.tsv"),
 		regionAnnotationTsv: emitRegionAnnotation ? analyzeCmd.getFile("out.region-annotation.tsv") : ptResult.getFile("emptyRegionAnnotation.tsv"),
 		qcJson: analyzeCmd.getFile("out.qc.json"),
 		reports: reportsMap.build(),
@@ -658,4 +682,12 @@ self.body(func(inputs) {
 		// markers + the run summary — the per-sample Progress + Logs source.
 		logs: analyzeCmd.getStdoutStream()
 	}
+
+	// One File output per level per chunk key, so each dedup job gets its own slice.
+	for chunkKey in smChunks.keys() {
+		result[smChunks.outputName("aa", chunkKey)] = ptResult.getFile(smChunks.fileName("aa", chunkKey))
+		result[smChunks.outputName("nt", chunkKey)] = ptResult.getFile(smChunks.fileName("nt", chunkKey))
+	}
+
+	return result
 })
