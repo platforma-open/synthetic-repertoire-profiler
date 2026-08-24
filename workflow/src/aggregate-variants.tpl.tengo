@@ -9,8 +9,9 @@
 // Keys are mitool's content hashes (variantKey / aaVariantKey); the aa key is
 // aliased to "variantKey" so both levels share the variant-axis column name. The
 // display LABEL is V-XXXXX(-N), derived cross-sample from a hash of the variant's
-// own sequence. mitool's `mutations` (colon-separated milib designator) and
-// `mutationCount` are carried as columns.
+// own sequence. mitool's `mutations` (colon-separated milib designator, on 1-based
+// positions — the same axis as the state matrix) and `mutationCount` are carried as
+// columns.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
