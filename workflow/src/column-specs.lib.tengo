@@ -189,11 +189,13 @@ stateHeatmapColumns := func(alphabet) {
 }
 
 // Parent (reference) residue per position, keyed [parentId, position] — the track
-// that shows the parent sequence under the heat map's position axis. String value
-// → discrete annotation coloured by residue, letter shown in the tooltip.
+// that shows the parent sequence under the heat map's position axis, and what a
+// downstream block differences against to tell a mutated cell from an unmutated
+// one. String value → discrete annotation coloured by residue, letter in the
+// tooltip. Source column is mitool's `residue`.
 parentResidueColumns := func(alphabet) {
 	return [{
-		column: "parentResidue",
+		column: "residue",
 		id: "parent-residue",
 		allowNA: false,
 		spec: {
@@ -205,6 +207,31 @@ parentResidueColumns := func(alphabet) {
 			annotations: tableAnno(70000, "default", {
 				"pl7.app/label": (alphabet == "aminoacid") ? "Parent AA" : "Parent NT",
 				"pl7.app/table/fontFamily": "monospace"
+			})
+		}
+	}]
+}
+
+// The whole parent (alignment reference) sequence, keyed [parentId]. Deliberately
+// NOT `pl7.app/sequence`: the per-variant sequence already holds that name with
+// {feature: amplicon-sequence, alphabet}, so reusing the pair would let a
+// feature-agnostic discovery pick up the reference instead of a variant.
+parentSequenceColumns := func(alphabet, column) {
+	return [{
+		column: column,
+		// Alphabet-scoped so the nt and aa sequence can be imported from the same
+		// parents.tsv without their ids colliding.
+		id: "parent-sequence-" + ((alphabet == "aminoacid") ? "aa" : "nt"),
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/parentSequence",
+			valueType: "String",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(75000, "default", {
+				"pl7.app/table/fontFamily": "monospace",
+				"pl7.app/label": (alphabet == "aminoacid") ? "Parent Sequence aa" : "Parent Sequence nt"
 			})
 		}
 	}]
@@ -856,7 +883,7 @@ qcColumns := func(sampleIdAxisSpec) {
 			longCol("frameShiftVariants", "frame-shift-variants", 90000, "default", "Frame-Shift Variants", "Variants whose mutations shift the reading frame."),
 			longCol("frameShiftReads", "frame-shift-reads", 89000, "optional", "Frame-Shift Reads", "Reads on frame-shift variants."),
 			fracCol("frameShiftReadFraction", "frame-shift-read-fraction", 88000, "default", "Frame-Shift Reads (%)", "Fraction of total reads on frame-shift variants."),
-			longCol("aaMutationsExceededVariants", "aa-mutations-exceeded-variants", 87000, "default", "AA Mutation-Limit Variants", "In-frame variants dropped by the aa mutation-load gate (aaMutationsExceeded)."),
+			longCol("aaMutationsExceededVariants", "aa-mutations-exceeded-variants", 87000, "default", "AA Mutation-Limit Variants", "In-frame variants dropped by mutation filter"),
 			longCol("aaMutationsExceededReads", "aa-mutations-exceeded-reads", 86000, "optional", "AA Mutation-Limit Reads", "Reads on aa mutation-limit variants."),
 			fracCol("aaMutationsExceededReadFraction", "aa-mutations-exceeded-read-fraction", 85000, "default", "AA Mutation-Limit Reads (%)", "Fraction of total reads on aa mutation-limit variants."),
 			longCol("assignedVariants", "assigned-variants", 80000, "optional", "Assigned Variants", "Variants matched to a known-set entry (assignment run only)."),
@@ -885,6 +912,7 @@ export {
 	stateAxisSpec: stateAxisSpec,
 	stateHeatmapColumns: stateHeatmapColumns,
 	parentResidueColumns: parentResidueColumns,
+	parentSequenceColumns: parentSequenceColumns,
 	heatmapRegionColumns: heatmapRegionColumns,
 	knownVariantKeyAxisSpec: knownVariantKeyAxisSpec,
 	knownVariantColumns: knownVariantColumns,

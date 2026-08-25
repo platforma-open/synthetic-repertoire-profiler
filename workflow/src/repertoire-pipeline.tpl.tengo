@@ -22,7 +22,7 @@ json := import("json")
 
 // The state matrix leaves this template already split by position: one File-valued
 // output per level per chunk key. See state-matrix-chunks.
-outputNames := ["parsedMic", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "logs"]
+outputNames := ["parsedMic", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "logs"]
 for chunkKey in smChunks.keys() {
 	outputNames = append(outputNames, smChunks.outputName("aa", chunkKey))
 	outputNames = append(outputNames, smChunks.outputName("nt", chunkKey))
@@ -275,9 +275,15 @@ self.body(func(inputs) {
 		saveFile("out.aa-variants.tsv").
 		saveFile("out.aa-state-matrix.tsv").
 		saveFile("out.qc.json").
-		saveFile("out.params.json")
+		saveFile("out.params.json").
+		// Parent tables. Parent-derived, so identical in every sample — deduped cross-sample in
+		// aggregate-parent-tables.
+		saveFile("out.aa-parent-residues.tsv").
+		saveFile("out.parents.tsv")
 	if exportNt {
-		analyzeBuilder = analyzeBuilder.saveFile("out.nt-state-matrix.tsv")
+		analyzeBuilder = analyzeBuilder.
+			saveFile("out.nt-state-matrix.tsv").
+			saveFile("out.nt-parent-residues.tsv")
 	}
 	if emitRegionAnnotation {
 		analyzeBuilder = analyzeBuilder.saveFile("out.region-annotation.tsv")
@@ -485,6 +491,16 @@ self.body(func(inputs) {
 		pt.col("variantKey").cast("String").alias("aaSequence")
 	).save("emptyKnownDesignedAa.tsv", { xsvType: "tsv" })
 
+	// nt parent-residue placeholder (right header, 0 rows): mitool writes that table only
+	// alongside the nt matrix, but the output must always be present.
+	if !exportNt {
+		vAbund.filter(pt.lit(false)).select(
+			pt.col("variantKey").cast("String").alias("parentId"),
+			pt.col("variantKey").cast("String").alias("position"),
+			pt.col("variantKey").cast("String").alias("residue")
+		).save("emptyNtParentResidues.tsv", { xsvType: "tsv" })
+	}
+
 	// Region-annotation placeholder (right header, 0 rows) for runs without
 	// regions, so the per-sample output is always present.
 	if !emitRegionAnnotation {
@@ -674,6 +690,9 @@ self.body(func(inputs) {
 		// placeholder section above).
 		knownDesignedNt: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-nt.tsv") : ptResult.getFile("emptyKnownDesignedNt.tsv"),
 		knownDesignedAa: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-aa.tsv") : ptResult.getFile("emptyKnownDesignedAa.tsv"),
+		aaParentResiduesTsv: analyzeCmd.getFile("out.aa-parent-residues.tsv"),
+		ntParentResiduesTsv: exportNt ? analyzeCmd.getFile("out.nt-parent-residues.tsv") : ptResult.getFile("emptyNtParentResidues.tsv"),
+		parentsTsv: analyzeCmd.getFile("out.parents.tsv"),
 		qcRow: ptResult.getFile("qcRow.parquet"),
 		// No sampleId column — processColumn supplies the sample key from the partition.
 		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),

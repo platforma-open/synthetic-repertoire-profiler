@@ -8,23 +8,18 @@
 // sample in the run.
 //
 //   stateHeatmap.tsv   [parentId, position, state] -> readCount, frequency
-//   parentResidue.tsv  [parentId, position]        -> parentResidue
 //
 // `frequency` is the same sum divided by its (parentId, position) column total, so
 // each position column adds up to 1 — the per-position residue composition. Both
 // value columns ride in one frame; the plot page defaults to frequency.
 //
-// The state matrix's default cell is the PARENT residue (substitutions and
-// deletions overwrite it), so per position the parent residue is the state carried
-// by the most variants. Emitted as a [parentId, position] track that rides under
-// the heat map's position axis. Ties break alphabetically so the result is
-// deterministic. Reliable for typical DMS input, where any single position is
-// unmutated in the large majority of variants.
+// The parent-residue track is NOT built here — it comes from mitool via
+// aggregate-parent-tables.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 
-self.defineOutputs("stateHeatmap", "parentResidue")
+self.defineOutputs("stateHeatmap")
 
 self.awaitState("InputsLocked")
 self.awaitState("stateMatrixTsv", "ResourceReady")
@@ -71,20 +66,9 @@ self.body(func(inputs) {
 			alias("frequency")
 	).save("stateHeatmap.tsv", { xsvType: "tsv" })
 
-	smDf.
-		groupBy("parentId", "position", "state").
-		agg(pt.col("variantKey").count().alias("n")).
-		withColumns(pt.col("n").max().over(["parentId", "position"]).alias("maxN")).
-		filter(pt.col("n").eq(pt.col("maxN"))).
-		sort(["parentId", "position", "state"]).
-		groupBy("parentId", "position").
-		agg(pt.col("state").cast("String").first().alias("parentResidue")).
-		save("parentResidue.tsv", { xsvType: "tsv" })
-
 	result := wf.run()
 
 	return {
-		stateHeatmap: result.getFile("stateHeatmap.tsv"),
-		parentResidue: result.getFile("parentResidue.tsv")
+		stateHeatmap: result.getFile("stateHeatmap.tsv")
 	}
 })
