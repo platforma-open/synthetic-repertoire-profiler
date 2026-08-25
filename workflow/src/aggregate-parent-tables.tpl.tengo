@@ -1,0 +1,65 @@
+// Cross-sample parent-table aggregation (ephemeral). Generic over the keys + value
+// columns, so one template serves all three parent tables:
+//
+//   aa-parent-residues  [parentId, position] -> residue
+//   nt-parent-residues  [parentId, position] -> residue
+//   parents             [parentId]           -> ntSequence, aaSequence
+//
+// All three come from the --parents FASTA alone, so every sample writes identical
+// rows: concatenate and dedup on the keys. Same shape as
+// aggregate-region-annotation, the other parent-derived table here.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+
+self.defineOutputs("table")
+
+self.awaitState("InputsLocked")
+self.awaitState("tableData", "ResourceReady")
+
+self.body(func(inputs) {
+	keys := inputs.keys
+	valueCols := inputs.valueCols
+	ll.assert(!is_undefined(keys) && len(keys) > 0, "keys are required")
+	ll.assert(!is_undefined(valueCols) && len(valueCols) > 0, "valueCols are required")
+
+	rmMap := inputs.tableData.inputs()
+	// Left unsized on purpose — pt sizes CPU/RAM from input volume. See aggregate-state-matrix.
+	wf := pt.workflow().
+		inMediumQueue()
+
+	frames := []
+	for sKey in maps.getKeys(rmMap) {
+		// inferSchema:false → all String, so an empty placeholder and a populated table share
+		// one schema and the concat never hits a numeric-vs-String mismatch (position infers
+		// as Int64 when populated). The position axis is String anyway.
+		frames = append(frames, wf.frame({
+			file: rmMap[sKey],
+			xsvType: "tsv"
+		}, { id: "pt_" + string(len(frames)), inferSchema: false }))
+	}
+	ll.assert(len(frames) > 0, "no parent-table frames")
+
+	merged := frames[0]
+	if len(frames) > 1 {
+		merged = pt.concat(frames)
+	}
+
+	aggExprs := []
+	for c in valueCols {
+		aggExprs = append(aggExprs, pt.col(c).cast("String").first().alias(c))
+	}
+	merged.
+		groupBy(keys...).
+		agg(aggExprs...).
+		sort(keys).
+		save("table.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return {
+		table: result.getFile("table.tsv")
+	}
+})

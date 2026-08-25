@@ -25,6 +25,7 @@ aggregateStateMatrixTpl := assets.importTemplate(":aggregate-state-matrix")
 mergeStateMatrixTpl := assets.importTemplate(":merge-state-matrix")
 computeStateHeatmapTpl := assets.importTemplate(":compute-state-heatmap")
 aggregateRegionAnnotationTpl := assets.importTemplate(":aggregate-region-annotation")
+aggregateParentTablesTpl := assets.importTemplate(":aggregate-parent-tables")
 aggregateLinkersTpl := assets.importTemplate(":aggregate-linkers")
 aggregateKnownTpl := assets.importTemplate(":aggregate-known")
 processKnownSetTpl := assets.importTemplate(":process-known-set")
@@ -259,6 +260,9 @@ wf.body(func(args) {
 		fileOutput("variantsTsv"),
 		fileOutput("aaVariantsTsv"),
 		fileOutput("regionAnnotationTsv"),
+		fileOutput("aaParentResiduesTsv"),
+		fileOutput("ntParentResiduesTsv"),
+		fileOutput("parentsTsv"),
 		fileOutput("qcJson"),
 		fileOutput("paramsJson"),
 		fileOutput("ntAbundance"),
@@ -420,6 +424,62 @@ wf.body(func(args) {
 		)
 	}
 
+	// Parent tables, deduped cross-sample. Imported ONCE per level and added to both frames —
+	// the exported variants frame and the in-block heat-map frame — so the plot and the export
+	// can never show a different parent.
+	importParentResidues := func(perSampleOutput, alphabet, posLabel) {
+		run := render.createEphemeral(aggregateParentTablesTpl, {
+			tableData: perSampleResults.outputData(perSampleOutput),
+			keys: ["parentId", "position"],
+			valueCols: ["residue"]
+		})
+		return xsv.importFile(
+			run.output("table"),
+			"tsv",
+			{
+				axes: [
+					columnSpecs.parentIdAxisSpec("Parent"),
+					columnSpecs.positionAxisSpec(alphabet, posLabel)
+				],
+				columns: columnSpecs.parentResidueColumns(alphabet),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{ splitDataAndSpec: true }
+		)
+	}
+	aaParentResidueCols := importParentResidues("aaParentResiduesTsv", "aminoacid", "Position aa")
+	ntParentResidueCols := undefined
+	if exportNt {
+		ntParentResidueCols = importParentResidues("ntParentResiduesTsv", "nucleotide", "Position nt")
+	}
+
+	// Whole parent sequence, keyed [parentId]. One aggregate, then one import per level rather
+	// than one import with both column specs, so each level carries its own level trace.
+	parentSeqRun := render.createEphemeral(aggregateParentTablesTpl, {
+		tableData: perSampleResults.outputData("parentsTsv"),
+		keys: ["parentId"],
+		valueCols: ["ntSequence", "aaSequence"]
+	})
+	importParentSequence := func(alphabet, column) {
+		return xsv.importFile(
+			parentSeqRun.output("table"),
+			"tsv",
+			{
+				axes: [columnSpecs.parentIdAxisSpec("Parent")],
+				columns: columnSpecs.parentSequenceColumns(alphabet, column),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{ splitDataAndSpec: true }
+		)
+	}
+	aaParentSeqCols := importParentSequence("aminoacid", "aaSequence")
+	ntParentSeqCols := undefined
+	if exportNt {
+		ntParentSeqCols = importParentSequence("nucleotide", "ntSequence")
+	}
+
 	// Linkers (nt→aa, parent→nt, parent→aa). One-side leads in the axes.
 	linkersRun := render.createEphemeral(aggregateLinkersTpl, {
 		variantsTsvData: perSampleResults.outputData("variantsTsv"),
@@ -535,6 +595,22 @@ wf.body(func(args) {
 			variantsPfBuilder.add("stateMatrixNt/" + k, ntTrace.inject(v.spec), v.data)
 		}
 	}
+	// Parent residue + parent sequence. Exported so a downstream block can locate a mutated
+	// cell in the state matrix instead of guessing the parent from the matrix itself.
+	for k, v in aaParentResidueCols {
+		variantsPfBuilder.add("parentResidueAa/" + k, aaTrace.inject(v.spec), v.data)
+	}
+	for k, v in aaParentSeqCols {
+		variantsPfBuilder.add("parentSequenceAa/" + k, aaTrace.inject(v.spec), v.data)
+	}
+	if exportNt {
+		for k, v in ntParentResidueCols {
+			variantsPfBuilder.add("parentResidueNt/" + k, ntTrace.inject(v.spec), v.data)
+		}
+		for k, v in ntParentSeqCols {
+			variantsPfBuilder.add("parentSequenceNt/" + k, ntTrace.inject(v.spec), v.data)
+		}
+	}
 	// Region membership (parent-derived; colours the aa state-matrix heat map).
 	if !is_undefined(regionAnnotationCols) {
 		for k, v in regionAnnotationCols {
@@ -584,7 +660,7 @@ wf.body(func(args) {
 	// parent: positions from different parents are different coordinate systems, so
 	// the page maps parentId to a grouping (single parent) or to tabs (several).
 	stateHeatmapPfBuilder := pframes.pFrameBuilder()
-	addStateHeatmap := func(prefix, stateMatrixTsv, propertiesTsv, alphabet, posLabel, trace) {
+	addStateHeatmap := func(prefix, stateMatrixTsv, propertiesTsv, alphabet, posLabel, trace, parentResidueCols) {
 		hmRun := render.createEphemeral(computeStateHeatmapTpl, {
 			stateMatrixTsv: stateMatrixTsv,
 			propertiesTsv: propertiesTsv
@@ -608,28 +684,14 @@ wf.body(func(args) {
 			stateHeatmapPfBuilder.add(prefix + k, trace.inject(v.spec), v.data)
 		}
 		// Parent-sequence track, on the same [parentId, position] key as the cells.
-		prCols := xsv.importFile(
-			hmRun.output("parentResidue"),
-			"tsv",
-			{
-				axes: [
-					columnSpecs.parentIdAxisSpec("Parent"),
-					columnSpecs.positionAxisSpec(alphabet, posLabel)
-				],
-				columns: columnSpecs.parentResidueColumns(alphabet),
-				storageFormat: "Parquet",
-				partitionKeyLength: 0
-			},
-			{ splitDataAndSpec: true }
-		)
-		for k, v in prCols {
+		for k, v in parentResidueCols {
 			stateHeatmapPfBuilder.add(prefix + "parent/" + k, trace.inject(v.spec), v.data)
 		}
 	}
 	// aa always; nt only when nt export is on (same gating as the rest of the block).
-	addStateHeatmap("aa/", aaStateMatrix.tsv, aaPropsTsv, "aminoacid", "Position aa", aaTrace)
+	addStateHeatmap("aa/", aaStateMatrix.tsv, aaPropsTsv, "aminoacid", "Position aa", aaTrace, aaParentResidueCols)
 	if exportNt {
-		addStateHeatmap("nt/", ntStateMatrix.tsv, ntPropsTsv, "nucleotide", "Position nt", ntTrace)
+		addStateHeatmap("nt/", ntStateMatrix.tsv, ntPropsTsv, "nucleotide", "Position nt", ntTrace, ntParentResidueCols)
 	}
 	// Region membership as a second [parentId, position] track. The cross-sample
 	// region table is aa-positioned, so it rides the aa map only. Imported here a
