@@ -1,6 +1,7 @@
 ---
 '@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow': patch
 '@platforma-open/milaboratories.synthetic-repertoire-profiler.block': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.ui': patch
 ---
 
 Export the parent's residue per position, and the parent sequence, instead of guessing the residue
