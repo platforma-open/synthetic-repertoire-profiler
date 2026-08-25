@@ -240,6 +240,33 @@ ACGTACGT..."
     </template>
   </PlFileInput>
 
+  <PlCheckbox
+    :model-value="app.model.data.vdjAutoDetect ?? false"
+    @update:model-value="(v) => (app.model.data.vdjAutoDetect = v)"
+  >
+    Auto-detect VDJ regions (germline)
+    <PlTooltip class="info" position="top">
+      <template #tooltip>
+        Finds the FR and CDR regions of each parent for you, by comparing it to germline V genes.
+        Use it when your parents are antibody or TCR V-domains, in frame. If a parent's CDR3 cannot
+        be found, the run stops with a message — turn this off and enter the regions by hand.
+      </template>
+    </PlTooltip>
+  </PlCheckbox>
+
+  <PlNumberField
+    v-model="app.model.data.maxAaMutations"
+    label="Max AA mut count"
+    :min-value="1"
+    :step="1"
+    :clearable="true"
+  >
+    <template #tooltip>
+      Drop in-frame variants with more than this many amino-acid changes from the parent. Silent
+      nucleotide changes do not count. Leave empty to keep every variant (default).
+    </template>
+  </PlNumberField>
+
   <PlAccordionSection label="Barcodes">
     <PlTextField
       v-model="app.model.data.tagPattern"
@@ -259,23 +286,10 @@ ACGTACGT..."
     </PlTextField>
   </PlAccordionSection>
 
-  <PlAccordionSection label="Region annotation">
-    <PlCheckbox
-      :model-value="app.model.data.vdjAutoDetect ?? false"
-      @update:model-value="(v) => (app.model.data.vdjAutoDetect = v)"
-    >
-      Auto-detect VDJ regions (germline)
-      <PlTooltip class="info" position="top">
-        <template #tooltip>
-          Treats every parent as an antibody/TCR V-domain and infers its FR1–FR4 boundaries from
-          germline on Run (via repseqio), instead of you entering region lengths by hand. Parents
-          must be in-frame V-domains; a parent whose CDR3 can't be located fails the run with a
-          message so you can switch it back to manual annotation. When on, the manual per-parent
-          editor below is hidden.
-        </template>
-      </PlTooltip>
-    </PlCheckbox>
-    <RegionSchemeEditor v-if="!app.model.data.vdjAutoDetect" />
+  <!-- Manual per-parent region annotation. The whole section is hidden when the
+       germline auto-detect above is on — there is nothing to enter by hand then. -->
+  <PlAccordionSection v-if="!app.model.data.vdjAutoDetect" label="Region annotation">
+    <RegionSchemeEditor />
   </PlAccordionSection>
 
   <PlAccordionSection label="Known Variants">
@@ -414,70 +428,19 @@ ACGTACGT..."
     </PlRow>
 
     <PlSectionSeparator>Mutation Filter</PlSectionSeparator>
-    <PlRow>
-      <PlNumberField
-        v-model="app.model.data.maxMutations"
-        label="Max NT mut count"
-        :min-value="1"
-        :step="1"
-        :clearable="true"
-      >
-        <template #tooltip>
-          Ignore variants that differ from the parent by more than this many mutations. Helps filter
-          out off-target sequences that are unlikely to be real variants. Leave empty to keep all
-          (default).
-        </template>
-      </PlNumberField>
-
-      <PlNumberField
-        v-model="app.model.data.maxMutationFraction"
-        label="Max NT mut fraction"
-        :min-value="0.01"
-        :max-value="1"
-        :step="0.01"
-        :clearable="true"
-      >
-        <template #tooltip>
-          Ignore variants where too large a share of the sequence differs from the parent — the
-          limit scales with each parent's length instead of being a fixed count. Enter a value above
-          0 and up to 1: for example, 0.1 allows up to 10% of positions to differ from the parent.
-          Leave empty to keep all (default).
-        </template>
-      </PlNumberField>
-    </PlRow>
-
-    <PlRow>
-      <PlNumberField
-        v-model="app.model.data.maxAaMutations"
-        label="Max AA mut count"
-        :min-value="1"
-        :step="1"
-        :clearable="true"
-      >
-        <template #tooltip>
-          Ignore in-frame variants whose translated sequence differs from the parent by more than
-          this many amino-acid mutations. Applied after translation, so it targets variants with too
-          many coding changes regardless of the nucleotide edit count. Leave empty to keep all
-          (default).
-        </template>
-      </PlNumberField>
-
-      <PlNumberField
-        v-model="app.model.data.maxAaMutationFraction"
-        label="Max AA mut fraction"
-        :min-value="0.01"
-        :max-value="1"
-        :step="0.01"
-        :clearable="true"
-      >
-        <template #tooltip>
-          Ignore in-frame variants where too large a share of the translated sequence differs from
-          the parent — the limit scales with each parent's amino-acid length instead of being a
-          fixed count. Enter a value above 0 and up to 1: for example, 0.1 allows up to 10% of
-          residues to differ. Leave empty to keep all (default).
-        </template>
-      </PlNumberField>
-    </PlRow>
+    <PlNumberField
+      v-model="app.model.data.maxMutations"
+      label="Max NT mut count"
+      :min-value="1"
+      :step="1"
+      :clearable="true"
+    >
+      <template #tooltip>
+        Ignore variants that differ from the parent by more than this many mutations. Helps filter
+        out off-target sequences that are unlikely to be real variants. Leave empty to keep all
+        (default).
+      </template>
+    </PlNumberField>
 
     <PlSectionSeparator>Resource Allocation</PlSectionSeparator>
     <PlNumberField
