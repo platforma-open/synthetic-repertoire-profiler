@@ -25,8 +25,8 @@ catalogs:
       specifier: 1.8.2
       version: 1.8.2
     '@platforma-open/milaboratories.software-mitool':
-      specifier: 2.3.1-150-main
-      version: 2.3.1-150-main
+      specifier: 2.3.1-148-main
+      version: 2.3.1-148-main
     '@platforma-open/milaboratories.software-repseqio':
       specifier: ^2.5.0-13-master
       version: 2.5.0-26-master
@@ -255,7 +255,7 @@ importers:
     dependencies:
       '@platforma-open/milaboratories.software-mitool':
         specifier: 'catalog:'
-        version: 2.3.1-150-main
+        version: 2.3.1-148-main
       '@platforma-open/milaboratories.software-repseqio':
         specifier: 'catalog:'
         version: 2.5.0-26-master
@@ -1787,8 +1787,8 @@ packages:
   '@platforma-open/milaboratories.runenv-python-3@1.8.2':
     resolution: {integrity: sha512-gsb33geN7RXIKhcYXPn18aU3sInJNcGVEO5/vlM+JxySBVMr2ICr86ABY90oX0fc60RiuEgVI3ltiOgtCs9Kbg==}
 
-  '@platforma-open/milaboratories.software-mitool@2.3.1-150-main':
-    resolution: {integrity: sha512-FTZNbe3A3t2gSOoIUaMxFda4kCNHF0oh6M8E7SFblICQksNASX6ctYIE1m5VmZSoFEFEklaVQfHp8tWNmBWCJQ==}
+  '@platforma-open/milaboratories.software-mitool@2.3.1-148-main':
+    resolution: {integrity: sha512-rFk4RZR+2JY/xjaqQe/R6+eeXnt9JlqYmbbIx7SIclQ3MinqyodWZkP8TTrziCy6hzH66kFj+MelbmX/52iSmw==}
 
   '@platforma-open/milaboratories.software-ptabler.schema@1.15.22':
     resolution: {integrity: sha512-f9vT+iSfNelgAGjaNzn1GErhmxHbjG6HtskAMoaUEbrciCG8c8i8cSCJPLu0xKNBcjM1UW+T10uD89Ckq2vkxQ==}
@@ -8304,7 +8304,7 @@ snapshots:
       oxlint: 1.63.0
       oxlint-plugin-eslint: 1.63.0
       rolldown: 1.1.2
-      rolldown-plugin-dts: 0.26.0(rolldown@1.1.2)(typescript@5.9.3)(vue-tsc@3.3.5(typescript@5.9.3))
+      rolldown-plugin-dts: 0.26.0(rolldown@1.1.2)(typescript@5.9.3)(vue-tsc@3.3.5(typescript@5.6.3))
       rollup-plugin-copy: 3.5.0
       rollup-plugin-sourcemaps2: 0.5.7(@types/node@26.0.0)(rollup@4.62.0)
       typescript: 5.9.3
@@ -8345,7 +8345,7 @@ snapshots:
       oxlint: 1.63.0
       oxlint-plugin-eslint: 1.63.0
       rolldown: 1.1.2
-      rolldown-plugin-dts: 0.26.0(rolldown@1.1.2)(typescript@5.9.3)(vue-tsc@3.3.5(typescript@5.9.3))
+      rolldown-plugin-dts: 0.26.0(rolldown@1.1.2)(typescript@5.9.3)(vue-tsc@3.3.5(typescript@5.6.3))
       rollup-plugin-copy: 3.5.0
       rollup-plugin-sourcemaps2: 0.5.7(@types/node@26.0.0)(rollup@4.62.0)
       typescript: 5.9.3
@@ -8805,7 +8805,7 @@ snapshots:
       '@platforma-open/milaboratories.runenv-python-3.12.10-sccoda': 1.3.5
       '@platforma-open/milaboratories.runenv-python-3.12.10-scientific-slim': 1.1.0
 
-  '@platforma-open/milaboratories.software-mitool@2.3.1-150-main': {}
+  '@platforma-open/milaboratories.software-mitool@2.3.1-148-main': {}
 
   '@platforma-open/milaboratories.software-ptabler.schema@1.15.22':
     dependencies:
@@ -13857,7 +13857,7 @@ snapshots:
 
   reusify@1.1.0: {}
 
-  rolldown-plugin-dts@0.26.0(rolldown@1.1.2)(typescript@5.9.3)(vue-tsc@3.3.5(typescript@5.9.3)):
+  rolldown-plugin-dts@0.26.0(rolldown@1.1.2)(typescript@5.9.3)(vue-tsc@3.3.5(typescript@5.6.3)):
     dependencies:
       '@babel/generator': 8.0.0
       '@babel/helper-validator-identifier': 8.0.2

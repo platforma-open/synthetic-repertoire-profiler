@@ -1,8 +1,8 @@
 ---
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.kind': patch
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.model': patch
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.ui': patch
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.block': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.kind': minor
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.model': minor
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.ui': minor
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.block': minor
 ---
 
 Let the user edit the region list in the VDJ scheme
