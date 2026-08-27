@@ -46,7 +46,10 @@ export type KnownColumnInfo = {
   type: "Int" | "Double" | "String";
 };
 
-/** The canonical VDJ V-domain partition (FR/CDR), in order. */
+/** The conventional VDJ V-domain partition (FR/CDR), in order. The editor seeds the
+ *  `vdj` scheme from this list; it is not a constraint. An engineered V-domain may
+ *  insert a region between two of these, put one in place of another, or rename one —
+ *  a knottin grafted into an antibody scaffold does all three. */
 export const VDJ_REGION_NAMES = ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"] as const;
 
 const FEATURE_NAME_RE = /^[A-Za-z0-9_]+$/;
@@ -87,18 +90,12 @@ export function buildParentRegionsJson(
       return { name, begin, end: pos };
     });
 
-    if (c.scheme === "vdj") {
-      const names = regions.map((r) => r.name);
-      if (
-        names.length !== VDJ_REGION_NAMES.length ||
-        names.some((n, i) => n !== VDJ_REGION_NAMES[i])
-      )
-        throw new Error(
-          `VDJ scheme (parent ${c.parentId}) needs exactly ${VDJ_REGION_NAMES.join(", ")}.`,
-        );
-    }
-    if (c.scheme === "custom" && regions.length === 0)
-      throw new Error(`Custom scheme (parent ${c.parentId}) needs at least one region.`);
+    // `vdj` and `custom` both carry a free region list, so both need at least one region.
+    // (`none` reaches here only to carry a complete feature name, and has no regions.)
+    // mitool rejects an empty list too; catching it here puts the error in the settings
+    // panel instead of at run time.
+    if (c.scheme !== "none" && regions.length === 0)
+      throw new Error(`Scheme '${c.scheme}' (parent ${c.parentId}) needs at least one region.`);
     if (new Set(regions.map((r) => r.name)).size !== regions.length)
       throw new Error(`Region names must be unique within parent ${c.parentId}.`);
 
