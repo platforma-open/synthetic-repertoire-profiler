@@ -105,32 +105,18 @@ function removeRegion(parentId: string, i: number) {
   setConfig({ ...cfg, regions: cfg.regions.filter((_, j) => j !== i) });
 }
 
-// Reseed the VDJ scheme with the conventional FR1-FR4 partition. Same path as
-// picking the scheme in the dropdown, so a length already typed for a surviving
-// name carries over and a renamed region loses its length.
-function resetToVdjRegions(parentId: string) {
-  onScheme(parentId, "vdj");
-}
-
-// Per-parent region previews (begin/end + sliced nt/aa) and the warnings.
+// Per-parent region previews (begin/end + sliced nt/aa) and a coverage warning.
 function previews(p: ParsedParent) {
   const cfg = configFor(p.id);
   const offs = cumulativeOffsets(cfg.regions.map((r) => r.length));
   const rows = cfg.regions.map((r, i) => {
     const { begin, end } = offs[i];
     const nt = p.sequence.slice(begin, end);
-    // The rule the workflow applies when it decides which aaSeq{region} columns exist
-    // (workflow/src/region-config.lib.tengo). BOTH ends must sit on a codon boundary,
-    // so a region whose length is not a multiple of 3 pushes every later region out
-    // of frame as well — not only itself.
-    const inFrame = r.length > 0 && begin % 3 === 0 && end % 3 === 0;
+    const inFrame = r.length > 0 && r.length % 3 === 0;
     return { ...r, begin, end, nt, aa: inFrame ? translateDNA(nt) : "", inFrame };
   });
   const total = offs.length > 0 ? offs[offs.length - 1].end : 0;
-  const outOfFrame = rows
-    .filter((r) => r.length > 0 && !r.inFrame)
-    .map((r) => r.name || "(unnamed)");
-  return { rows, total, overflow: total > p.sequence.length, outOfFrame };
+  return { rows, total, overflow: total > p.sequence.length };
 }
 </script>
 
@@ -168,11 +154,19 @@ function previews(p: ParsedParent) {
       <div v-for="(row, i) in previews(p).rows" :key="i" class="region-row">
         <div class="region-row__controls">
           <PlTextField
+            v-if="configFor(p.id).scheme === 'custom'"
             class="region-row__grow"
             :model-value="row.name"
             label="Region"
             placeholder="name"
             @update:model-value="(v) => setRegion(p.id, i, { name: v })"
+          />
+          <PlTextField
+            v-else
+            class="region-row__grow"
+            :model-value="row.name"
+            label="Region"
+            disabled
           />
 
           <PlNumberField
@@ -183,7 +177,12 @@ function previews(p: ParsedParent) {
             @update:model-value="(v) => setRegion(p.id, i, { length: v ?? 0 })"
           />
 
-          <PlBtnGhost @click.prevent="removeRegion(p.id, i)"> Remove </PlBtnGhost>
+          <PlBtnGhost
+            v-if="configFor(p.id).scheme === 'custom'"
+            @click.prevent="removeRegion(p.id, i)"
+          >
+            Remove
+          </PlBtnGhost>
         </div>
 
         <div class="region-row__preview">
@@ -192,30 +191,18 @@ function previews(p: ParsedParent) {
             class="region-row__aa"
             :class="{ 'region-row__aa--off': row.length > 0 && !row.inFrame }"
           >
-            {{ row.inFrame ? row.aa : "out of frame" }}
+            {{ row.inFrame ? row.aa : "not ×3" }}
           </span>
         </div>
       </div>
 
-      <div class="region-actions">
-        <PlBtnGhost @click.prevent="addRegion(p.id)"> + Add region </PlBtnGhost>
-        <PlBtnGhost
-          v-if="configFor(p.id).scheme === 'vdj'"
-          @click.prevent="resetToVdjRegions(p.id)"
-        >
-          Reset to FR1–FR4
-        </PlBtnGhost>
-      </div>
+      <PlBtnGhost v-if="configFor(p.id).scheme === 'custom'" @click.prevent="addRegion(p.id)">
+        + Add region
+      </PlBtnGhost>
 
       <PlAlert v-if="previews(p).overflow" type="warn" :icon="true">
         Regions span {{ previews(p).total }} nt — longer than the parent ({{ p.sequence.length }}
         nt).
-      </PlAlert>
-
-      <PlAlert v-if="previews(p).outOfFrame.length > 0" type="warn" :icon="true">
-        No amino-acid columns for {{ previews(p).outOfFrame.join(", ") }}. A region is translated
-        only when it starts and ends on a codon boundary, so a length that is not a multiple of 3
-        also shifts every region after it out of frame.
       </PlAlert>
     </template>
   </div>
@@ -244,10 +231,6 @@ function previews(p: ParsedParent) {
 .region-parent__len {
   color: var(--txt-03);
   font-size: 12px;
-}
-.region-actions {
-  display: flex;
-  gap: 8px;
 }
 .region-row {
   display: flex;
