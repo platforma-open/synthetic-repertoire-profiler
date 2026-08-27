@@ -2,14 +2,12 @@
 import {
   VDJ_REGION_NAMES,
   type ParentRegionConfig,
-  type RegionDef,
   type RegionScheme,
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
 import {
   PlAlert,
   PlBtnGhost,
   PlDropdown,
-  PlElementList,
   PlNumberField,
   PlTextField,
   ReactiveFileContent,
@@ -102,43 +100,10 @@ function addRegion(parentId: string) {
   setConfig({ ...cfg, regions: [...cfg.regions, { name: "", length: 0 }] });
 }
 
-// PlElementList emits the whole new array for both reorder and remove, so one
-// handler covers both. Only name/length are persisted; begin/end and the aa
-// preview are recomputed from the new order on the next render.
-function applyRows(parentId: string, rows: (RegionDef & { id: number })[]) {
-  rowIds.set(
-    parentId,
-    rows.map((r) => r.id),
-  );
+function removeRegion(parentId: string, i: number) {
   const cfg = configFor(parentId);
-  setConfig({ ...cfg, regions: rows.map((r) => ({ name: r.name, length: r.length })) });
+  setConfig({ ...cfg, regions: cfg.regions.filter((_, j) => j !== i) });
 }
-
-// Stable identity for the list rows. A region carries no id — RegionDef is part
-// of the kind's init-params contract — and two structurally equal rows collide
-// under the component's default JSON.stringify key. Positions are worse still:
-// PlElementList compares item keys before and after a drag to decide whether to
-// resync its DOM against the data, and keys that ARE positions can never differ,
-// so a dragged row snaps back or jumps to the end. A key derived from the name is
-// out too — it would change on every keystroke and remount the input mid-edit.
-//
-// The ids stay here and never reach `data`: they are not the user's configuration.
-// A plain Map rather than a ref, so building the previews cannot trigger a render.
-const rowIds = new Map<string, number[]>();
-let nextRowId = 0;
-
-/** One parent's row ids, grown or trimmed to the current region count. */
-function idsFor(parentId: string, count: number): number[] {
-  let ids = rowIds.get(parentId) ?? [];
-  if (ids.length !== count) {
-    ids = ids.slice(0, count);
-    while (ids.length < count) ids.push(nextRowId++);
-    rowIds.set(parentId, ids);
-  }
-  return ids;
-}
-
-const rowKey = (row: { id: number }) => row.id;
 
 // Reseed the VDJ scheme with the conventional FR1-FR4 partition. Same path as
 // picking the scheme in the dropdown, so a length already typed for a surviving
@@ -151,7 +116,6 @@ function resetToVdjRegions(parentId: string) {
 function previews(p: ParsedParent) {
   const cfg = configFor(p.id);
   const offs = cumulativeOffsets(cfg.regions.map((r) => r.length));
-  const ids = idsFor(p.id, cfg.regions.length);
   const rows = cfg.regions.map((r, i) => {
     const { begin, end } = offs[i];
     const nt = p.sequence.slice(begin, end);
@@ -160,7 +124,7 @@ function previews(p: ParsedParent) {
     // so a region whose length is not a multiple of 3 pushes every later region out
     // of frame as well — not only itself.
     const inFrame = r.length > 0 && begin % 3 === 0 && end % 3 === 0;
-    return { ...r, id: ids[i], begin, end, nt, aa: inFrame ? translateDNA(nt) : "", inFrame };
+    return { ...r, begin, end, nt, aa: inFrame ? translateDNA(nt) : "", inFrame };
   });
   const total = offs.length > 0 ? offs[offs.length - 1].end : 0;
   const outOfFrame = rows
@@ -168,14 +132,6 @@ function previews(p: ParsedParent) {
     .map((r) => r.name || "(unnamed)");
   return { rows, total, overflow: total > p.sequence.length, outOfFrame };
 }
-
-// previews() slices and translates sequences, and the template reads it four
-// times per parent — compute it once per render pass instead.
-const previewByParent = computed(() => {
-  const byId: Record<string, ReturnType<typeof previews>> = {};
-  for (const p of parents.value) byId[p.id] = previews(p);
-  return byId;
-});
 </script>
 
 <template>
@@ -209,41 +165,37 @@ const previewByParent = computed(() => {
         </template>
       </PlTextField>
 
-      <PlElementList
-        :items="previewByParent[p.id].rows"
-        :get-item-key="rowKey"
-        @update:items="(rows) => applyRows(p.id, rows)"
-      >
-        <template #item-title="{ item: row, index: i }">
-          <div class="region-row">
-            <div class="region-row__controls">
-              <PlTextField
-                class="region-row__name"
-                :model-value="row.name"
-                placeholder="name"
-                @update:model-value="(v) => setRegion(p.id, i, { name: v })"
-              />
+      <div v-for="(row, i) in previews(p).rows" :key="i" class="region-row">
+        <div class="region-row__controls">
+          <PlTextField
+            class="region-row__grow"
+            :model-value="row.name"
+            label="Region"
+            placeholder="name"
+            @update:model-value="(v) => setRegion(p.id, i, { name: v })"
+          />
 
-              <PlNumberField
-                class="region-row__len"
-                :model-value="row.length"
-                placeholder="length"
-                :min-value="0"
-                @update:model-value="(v) => setRegion(p.id, i, { length: v ?? 0 })"
-              />
+          <PlNumberField
+            class="region-row__grow"
+            :model-value="row.length"
+            label="Length (nt)"
+            :min-value="0"
+            @update:model-value="(v) => setRegion(p.id, i, { length: v ?? 0 })"
+          />
 
-              <span class="region-row__span">{{ row.begin }}–{{ row.end }}</span>
-            </div>
+          <PlBtnGhost @click.prevent="removeRegion(p.id, i)"> Remove </PlBtnGhost>
+        </div>
 
-            <span
-              class="region-row__aa"
-              :class="{ 'region-row__aa--off': row.length > 0 && !row.inFrame }"
-            >
-              {{ row.inFrame ? row.aa : "out of frame" }}
-            </span>
-          </div>
-        </template>
-      </PlElementList>
+        <div class="region-row__preview">
+          <span class="region-row__span">{{ row.begin }}–{{ row.end }}</span>
+          <span
+            class="region-row__aa"
+            :class="{ 'region-row__aa--off': row.length > 0 && !row.inFrame }"
+          >
+            {{ row.inFrame ? row.aa : "out of frame" }}
+          </span>
+        </div>
+      </div>
 
       <div class="region-actions">
         <PlBtnGhost @click.prevent="addRegion(p.id)"> + Add region </PlBtnGhost>
@@ -255,17 +207,15 @@ const previewByParent = computed(() => {
         </PlBtnGhost>
       </div>
 
-      <PlAlert v-if="previewByParent[p.id].overflow" type="warn" :icon="true">
-        Regions span {{ previewByParent[p.id].total }} nt — longer than the parent ({{
-          p.sequence.length
-        }}
+      <PlAlert v-if="previews(p).overflow" type="warn" :icon="true">
+        Regions span {{ previews(p).total }} nt — longer than the parent ({{ p.sequence.length }}
         nt).
       </PlAlert>
 
-      <PlAlert v-if="previewByParent[p.id].outOfFrame.length > 0" type="warn" :icon="true">
-        No amino-acid columns for {{ previewByParent[p.id].outOfFrame.join(", ") }}. A region is
-        translated only when it starts and ends on a codon boundary, so a length that is not a
-        multiple of 3 also shifts every region after it out of frame.
+      <PlAlert v-if="previews(p).outOfFrame.length > 0" type="warn" :icon="true">
+        No amino-acid columns for {{ previews(p).outOfFrame.join(", ") }}. A region is translated
+        only when it starts and ends on a codon boundary, so a length that is not a multiple of 3
+        also shifts every region after it out of frame.
       </PlAlert>
     </template>
   </div>
@@ -303,24 +253,20 @@ const previewByParent = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  width: 100%;
-  /* The item's remove button is absolutely positioned over the right edge of the
-     head, so reserve a gutter for it rather than let it sit on the stepper. */
-  padding-right: 28px;
 }
 .region-row__controls {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
 }
-/* Fields carry no label: the pair reads as name + length, and a floating label on
-   every row is what made the list tall (and got clipped by the item's overflow). */
-.region-row__name {
+.region-row__grow {
   flex: 1 1 0;
   min-width: 0;
 }
-.region-row__len {
-  flex: 0 0 112px;
+.region-row__preview {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
 }
 .region-row__span {
   color: var(--txt-03);
@@ -328,6 +274,8 @@ const previewByParent = computed(() => {
   white-space: nowrap;
 }
 .region-row__aa {
+  flex: 1 1 0;
+  min-width: 0;
   font-family: monospace;
   font-size: 12px;
   overflow-wrap: anywhere;
