@@ -5,10 +5,8 @@ import { name, version } from "../package.json" with { type: "json" };
  *  carry FASTA — paste a string, or upload a file. */
 export type ParentInputMode = "fastaSequence" | "fastaFile";
 
-/** Per-parent region scheme. `none` = no regions (default); `vdj` = a V-domain
- *  (antibody/TCR), seeded from the FR1→FR4 partition but free to insert, replace or
- *  rename a region for an engineered scaffold; `custom` = arbitrary named regions.
- *  Only `vdj` declares the run's modality as VDJ. */
+/** Per-parent region scheme. `none` = no regions (default); `vdj` = the canonical
+ *  FR1→FR4 antibody/TCR partition; `custom` = arbitrary named regions. */
 export type RegionScheme = "none" | "vdj" | "custom";
 
 /** A region in a parent's partition: a name + nucleotide length. Boundary
