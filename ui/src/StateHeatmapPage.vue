@@ -15,6 +15,7 @@ const STATE_AXIS = "pl7.app/repertoire/state";
 const FREQUENCY_COLUMN = "pl7.app/repertoire/stateFrequency";
 const PARENT_RESIDUE_COLUMN = "pl7.app/repertoire/parentResidue";
 const REGION_COLUMN = "pl7.app/repertoire/regionAnnotation";
+const SUB_REGION_COLUMN = "pl7.app/repertoire/subRegionAnnotation";
 const ALPHABET_DOMAIN = "pl7.app/alphabet";
 
 const alphabetOf = (spec: PColumnSpec) => spec.domain?.[ALPHABET_DOMAIN];
@@ -133,8 +134,17 @@ const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | undefin
   const regionCol = pCols.find(
     (c) => c.spec.name === REGION_COLUMN && alphabetOf(c.spec) === level.value,
   );
-  if (regionCol) {
-    options.push({ inputName: "annotationsX", selectedSource: regionCol.spec });
+  // The narrower reading, present only when the run subdivides a region. One band, not
+  // two: where it exists it REPLACES the region band, because it already carries the
+  // framework in its names (CDR2_N, Knot, CDR2_C) and a second band above it would
+  // repeat what the reader can see. Both columns stay exported either way — this is a
+  // display choice, and a table or a downstream block may still want the wide one.
+  const subRegionCol = pCols.find(
+    (c) => c.spec.name === SUB_REGION_COLUMN && alphabetOf(c.spec) === level.value,
+  );
+  const bandCol = subRegionCol ?? regionCol;
+  if (bandCol) {
+    options.push({ inputName: "annotationsX", selectedSource: bandCol.spec });
   }
   // Parent sequence under the position axis — the reference residue per position.
   const parentResidueCol = pCols.find(
