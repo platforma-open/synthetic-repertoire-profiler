@@ -505,15 +505,30 @@ const previewByParent = computed(() => {
   gap: 8px;
 }
 /* Fields carry no label: the pair reads as name + length, and a floating label on
-   every row is what made the list tall (and got clipped by the item's overflow). */
+   every row is what made the list tall (and got clipped by the item's overflow).
+   The length field and the offset label are FIXED and the name takes the rest, so the
+   name fills the panel the way every other field on this page does while both columns
+   still line up down the whole list. Fixing the LABEL is what buys the alignment: it is
+   what varies between rows (`0-30` against `120-210`), and while it was flexible the
+   name absorbed that difference and every row landed at a different x.
+
+   The label shrinks before anything else, because PlTextField hard-codes
+   `min-width: 160px` (pl-text-field.scss:17) that a `min-width: 0` here does not beat —
+   so in a narrow sub-region column the name would otherwise refuse to shrink, overflow
+   its flex box and paint over the number field. Letting the label truncate absorbs the
+   squeeze instead. */
 .region-row__name {
   flex: 1 1 0;
-  min-width: 0;
 }
 .region-row__len {
-  flex: 0 0 112px;
+  flex: 0 0 104px;
+  min-width: 0;
 }
 .region-row__span {
+  flex: 0 1 72px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--txt-03);
   font-size: 12px;
   white-space: nowrap;
