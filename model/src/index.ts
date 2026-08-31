@@ -49,7 +49,7 @@ export type KnownColumnInfo = {
 /** The conventional VDJ V-domain partition (FR/CDR), in order. The editor seeds the
  *  `vdj` scheme from this list; it is not a constraint. An engineered V-domain may
  *  insert a region between two of these, put one in place of another, or rename one —
- *  a knottin grafted into an antibody scaffold does all three. */
+ *  an engineered scaffold carrying a grafted insert does all three. */
 export const VDJ_REGION_NAMES = ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"] as const;
 
 const FEATURE_NAME_RE = /^[A-Za-z0-9_]+$/;

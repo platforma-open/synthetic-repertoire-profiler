@@ -136,7 +136,7 @@ const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | undefin
   );
   // The narrower reading, present only when the run subdivides a region. One band, not
   // two: where it exists it REPLACES the region band, because it already carries the
-  // framework in its names (CDR2_N, Knot, CDR2_C) and a second band above it would
+  // framework in its names (CDR2_N, Graft, CDR2_C) and a second band above it would
   // repeat what the reader can see. Both columns stay exported either way — this is a
   // display choice, and a table or a downstream block may still want the wide one.
   const subRegionCol = pCols.find(

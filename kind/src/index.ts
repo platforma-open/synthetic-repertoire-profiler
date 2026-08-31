@@ -15,7 +15,7 @@ export type RegionScheme = "none" | "vdj" | "custom";
  *  offsets are derived cumulatively from the lengths (region-first entry).
  *
  *  A region may be tiled by `children` — sub-regions that partition it exactly, so a
- *  graft inside a canonical region (a knottin inside CDR2) can be named without
+ *  graft inside a canonical region (an insert sitting inside CDR2) can be named without
  *  splitting that region away. Nesting is two levels: a child carries none of its own.
  *  Absent or empty = an undivided region, which is how every partition written before
  *  this field existed reads. */
