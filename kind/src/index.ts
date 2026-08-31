@@ -5,13 +5,21 @@ import { name, version } from "../package.json" with { type: "json" };
  *  carry FASTA — paste a string, or upload a file. */
 export type ParentInputMode = "fastaSequence" | "fastaFile";
 
-/** Per-parent region scheme. `none` = no regions (default); `vdj` = the canonical
- *  FR1→FR4 antibody/TCR partition; `custom` = arbitrary named regions. */
+/** Per-parent region scheme. `none` = no regions (default); `vdj` = a V-domain
+ *  (antibody/TCR), seeded from the FR1→FR4 partition but free to insert, replace or
+ *  rename a region for an engineered scaffold; `custom` = arbitrary named regions.
+ *  Only `vdj` declares the run's modality as VDJ. */
 export type RegionScheme = "none" | "vdj" | "custom";
 
 /** A region in a parent's partition: a name + nucleotide length. Boundary
- *  offsets are derived cumulatively from the lengths (region-first entry). */
-export type RegionDef = { name: string; length: number };
+ *  offsets are derived cumulatively from the lengths (region-first entry).
+ *
+ *  A region may be tiled by `children` — sub-regions that partition it exactly, so a
+ *  graft inside a canonical region (an insert sitting inside CDR2) can be named without
+ *  splitting that region away. Nesting is two levels: a child carries none of its own.
+ *  Absent or empty = an undivided region, which is how every partition written before
+ *  this field existed reads. */
+export type RegionDef = { name: string; length: number; children?: RegionDef[] };
 
 /** Per-parent region scheme, keyed by the parent's FASTA id. */
 export type ParentRegionConfig = {
@@ -196,20 +204,35 @@ function parseParentRegionConfig(value: unknown, at: string): ParentRegionConfig
     parentId,
     scheme: parsedScheme,
     completeFeatureName: optionalString(completeFeatureName, `${at}.completeFeatureName`),
-    regions: regions.map((region, i) => parseRegionDef(region, `${at}.regions[${i}]`)),
+    regions: regions.map((region, i) => parseRegionDef(region, `${at}.regions[${i}]`, true)),
   };
 }
 
-function parseRegionDef(value: unknown, at: string): RegionDef {
+/** `allowChildren` is false one level down, which is what makes nesting two levels
+ *  deep a contract the parser enforces rather than a convention. Whether the children
+ *  actually tile their region is a question about the values, not the envelope, so it
+ *  is settled where they are used (`buildParentRegionsJson`) — a half-filled editor row
+ *  is ordinary state, and a parser stricter than the states the UI can reach would make
+ *  the block export a file its own kind refuses. */
+function parseRegionDef(value: unknown, at: string, allowChildren: boolean): RegionDef {
   assertObjectAt(value, at);
 
-  const { name: regionName, length } = value;
+  const { name: regionName, length, children } = value;
   if (typeof regionName !== "string")
     throw new Error(`'${at}.name' is required, and must be a string.`);
   if (typeof length !== "number" || !Number.isFinite(length))
     throw new Error(`'${at}.length' is required, and must be a finite number.`);
 
-  return { name: regionName, length };
+  if (children === undefined) return { name: regionName, length };
+  if (!allowChildren)
+    throw new Error(`'${at}.children' is not allowed — region nesting is two levels deep.`);
+  if (!Array.isArray(children)) throw new Error(`'${at}.children' must be a list.`);
+
+  return {
+    name: regionName,
+    length,
+    children: children.map((child, i) => parseRegionDef(child, `${at}.children[${i}]`, false)),
+  };
 }
 
 // Identity (`name`/`version`) comes from this package's own `package.json`, so

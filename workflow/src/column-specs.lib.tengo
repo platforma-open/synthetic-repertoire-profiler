@@ -244,8 +244,8 @@ parentSequenceColumns := func(alphabet, column) {
 // is a column of the downstream export rather than of this view. Same source TSV,
 // imported a second time with the plot's own identity — symmetric with
 // parentResidueColumns, which is what makes both tracks resolve the same way.
-heatmapRegionColumns := func(alphabet) {
-	return [{
+heatmapRegionColumns := func(alphabet, withSubRegions) {
+	cols := [{
 		column: "region",
 		id: "heatmap-region",
 		allowNA: false,
@@ -260,6 +260,28 @@ heatmapRegionColumns := func(alphabet) {
 			})
 		}
 	}]
+	// Second band: the narrowest span containing each position, so a graft reads as
+	// itself while the column above keeps the FR/CDR framework legible. Declared only
+	// when some region is subdivided — otherwise the two carry identical values and the
+	// map would stack a redundant band.
+	if withSubRegions {
+		cols = append(cols, {
+			column: "subRegion",
+			id: "heatmap-sub-region",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/repertoire/subRegionAnnotation",
+				valueType: "String",
+				domain: {
+					"pl7.app/alphabet": alphabet
+				},
+				annotations: tableAnno(59000, "default", {
+					"pl7.app/label": "Sub-region"
+				})
+			}
+		})
+	}
+	return cols
 }
 
 // Mutation-count axis. No run scoping: the values are plain integers, identical
@@ -681,8 +703,8 @@ regionSeqColumns := func(alphabet, regionNames) {
 
 // Per-position region membership ([parentId, position] -> region name). Colours
 // the aa state-matrix heat map; positions are the aa axis (1-based).
-regionAnnotationColumns := func() {
-	return [{
+regionAnnotationColumns := func(withSubRegions) {
+	cols := [{
 		column: "region",
 		id: "region",
 		allowNA: false,
@@ -694,6 +716,23 @@ regionAnnotationColumns := func() {
 			})
 		}
 	}]
+	// See heatmapRegionColumns: the narrow reading, exported for downstream heat maps,
+	// and only when some region is subdivided.
+	if withSubRegions {
+		cols = append(cols, {
+			column: "subRegion",
+			id: "sub-region",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/repertoire/subRegionAnnotation",
+				valueType: "String",
+				annotations: tableAnno(69000, "default", {
+					"pl7.app/label": "Sub-region"
+				})
+			}
+		})
+	}
+	return cols
 }
 
 // Per-variant columns aggregated cross-sample (1 axis: variantKey). `isAa` adds

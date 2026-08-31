@@ -3,7 +3,7 @@
 // Region membership ([parentId, position] -> region) is parent-derived, so it is
 // identical in every sample. Concatenate the per-sample region-annotation TSVs
 // and dedup by [parentId, position]:
-//   regionAnnotation.tsv  [parentId, position] -> region
+//   regionAnnotation.tsv  [parentId, position] -> region, subRegion
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
@@ -41,9 +41,17 @@ self.body(func(inputs) {
 		merged = pt.concat(frames)
 	}
 
+	// Both readings ride through. mitool writes one row per position carrying the widest
+	// containing span in `region` and the narrowest in `subRegion`; the two are equal
+	// wherever nothing is subdivided. Carrying both here is unconditional — the import in
+	// main.tpl.tengo is what decides whether the narrow one becomes a p-column, and
+	// xsv.importFile builds columns only for the ones its spec names.
 	merged.
 		groupBy("parentId", "position").
-		agg(pt.col("region").cast("String").first().alias("region")).
+		agg(
+			pt.col("region").cast("String").first().alias("region"),
+			pt.col("subRegion").cast("String").first().alias("subRegion")
+		).
 		sort(["parentId", "position"]).
 		save("regionAnnotation.tsv", { xsvType: "tsv" })
 
