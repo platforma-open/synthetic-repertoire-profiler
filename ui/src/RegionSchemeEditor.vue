@@ -124,6 +124,10 @@ function setChild(
 // fall back to one nt and the graft takes the rest — valid, but the out-of-frame warning
 // will say the parts carry no amino-acid columns until the lengths are adjusted.
 function splitThree(len: number): [number, number, number] {
+  // Lengths are not typed yet on a freshly picked scheme — every region starts at 0.
+  // Give the graft the whole (empty) span rather than refuse: the row is created, tiling
+  // holds at 0 = 0, and the user fills the numbers in the same pass as everything else.
+  if (len < 3) return [0, len, 0];
   const flank = Math.max(1, Math.floor(Math.floor(len / 3) / 3) * 3);
   if (2 * flank + 1 > len) return [1, len - 2, 1];
   return [flank, len - 2 * flank, flank];
@@ -145,6 +149,19 @@ function subdivide(parentId: string, i: number, rowId: number) {
   ];
   setConfig({ ...cfg, regions: cfg.regions.map((x, k) => (k === i ? { ...x, children } : x)) });
   expanded.value = new Set([...expanded.value, rowId]); // show what was just created
+}
+
+// A region can hold more parts than the three a single graft needs — two grafts inside one
+// region make five. The new row is seeded at length 0, which leaves the children's total
+// unchanged and so keeps the region tiled; the user redistributes the lengths from there.
+// It is left unnamed because only the first graft's flanks have names the editor can guess:
+// _N and _C describe two ends, and a third part sits at neither.
+function addChild(parentId: string, i: number) {
+  const cfg = configFor(parentId);
+  const regions = cfg.regions.map((r, k) =>
+    k === i ? { ...r, children: [...(r.children ?? []), { name: "", length: 0 }] } : r,
+  );
+  setConfig({ ...cfg, regions });
 }
 
 // PlElementList emits the whole new array for reorder and remove alike, at either level.
@@ -325,6 +342,7 @@ const previewByParent = computed(() => {
         :get-item-key="rowKey"
         :is-expanded="(row) => expanded.has(row.id)"
         :on-expand="(row) => toggleExpanded(row.id)"
+        item-class-content="region-subs"
         @update:items="(rows) => applyRows(p.id, rows)"
       >
         <template #item-title="{ item: row, index: i }">
@@ -403,16 +421,13 @@ const previewByParent = computed(() => {
             {{ row.childGap > 0 ? "over" : "under" }} by {{ Math.abs(row.childGap) }} nt.
           </div>
 
-          <PlBtnGhost
-            v-if="row.childRows.length === 0"
-            :disabled="row.length < 3"
-            @click.prevent="subdivide(p.id, i, row.id)"
-          >
-            + Subdivide into sub-regions
+          <PlBtnGhost v-if="row.childRows.length > 0" @click.prevent="addChild(p.id, i)">
+            + Add sub-region
           </PlBtnGhost>
-          <span v-if="row.childRows.length === 0 && row.length < 3" class="region-row__hint">
-            Needs a length of at least 3 nt to hold a graft and a flank either side.
-          </span>
+
+          <PlBtnGhost v-if="row.childRows.length === 0" @click.prevent="subdivide(p.id, i, row.id)">
+            Divide Into Sub-regions
+          </PlBtnGhost>
         </template>
       </PlElementList>
 
@@ -516,8 +531,12 @@ const previewByParent = computed(() => {
   color: var(--txt-warning, #b26a00);
   font-size: 12px;
 }
-.region-row__hint {
-  color: var(--txt-03);
-  font-size: 12px;
+/* The list item's own body is padded for arbitrary content (24px all round, 12px gap).
+   Here it holds one button, or a compact sub-region list that already sits under a
+   region row — so it is tightened via the component's own `itemClassContent` hook
+   rather than by overriding its styles. */
+:deep(.region-subs) {
+  padding: 4px 12px 12px;
+  gap: 8px;
 }
 </style>
