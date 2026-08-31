@@ -416,7 +416,7 @@ wf.body(func(args) {
 					columnSpecs.parentIdAxisSpec("Parent"),
 					columnSpecs.positionAxisSpec("aminoacid", "Position aa")
 				],
-				columns: columnSpecs.regionAnnotationColumns(),
+				columns: columnSpecs.regionAnnotationColumns(rc.hasSubRegions),
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
@@ -707,7 +707,7 @@ wf.body(func(args) {
 					columnSpecs.parentIdAxisSpec("Parent"),
 					columnSpecs.positionAxisSpec("aminoacid", "Position aa")
 				],
-				columns: columnSpecs.heatmapRegionColumns("aminoacid"),
+				columns: columnSpecs.heatmapRegionColumns("aminoacid", rc.hasSubRegions),
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},

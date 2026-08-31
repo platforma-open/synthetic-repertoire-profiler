@@ -8,6 +8,8 @@ json := import("json")
 // analyze(parentRegionsJson) ->
 //   enabled         : a scheme is configured for at least one parent
 //   hasRegions      : at least one parent has a non-empty region partition
+//   hasSubRegions   : at least one region is subdivided — gates the second membership
+//                     column, so a run without grafts is byte-identical to before
 //   isVdj           : at least one parent uses the canonical `vdj` region scheme —
 //                     the run's modality declaration is derived from this
 //   ntRegionNames   : union of named-region names (first-seen order)
@@ -17,6 +19,7 @@ analyze := func(parentRegionsJson) {
 	res := {
 		enabled: false,
 		hasRegions: false,
+		hasSubRegions: false,
 		isVdj: false,
 		ntRegionNames: [],
 		aaRegionNames: [],
@@ -53,14 +56,29 @@ analyze := func(parentRegionsJson) {
 			res.hasRegions = true
 		}
 		for r in regions {
-			name := r.name
-			if is_undefined(ntSeen[name]) {
-				ntSeen[name] = true
-				res.ntRegionNames = append(res.ntRegionNames, name)
+			// A subdivided region contributes its own span AND each sub-region's: every one
+			// is an ordinary span downstream, with its own sequence column. Container first,
+			// then its children, which is the order mitool flattens them into.
+			spans := [r]
+			kids := r.children
+			if !is_undefined(kids) && len(kids) > 0 {
+				res.hasSubRegions = true
+				for c in kids {
+					spans = append(spans, c)
+				}
 			}
-			if int(r.begin) % 3 == 0 && int(r.end) % 3 == 0 && is_undefined(aaSeen[name]) {
-				aaSeen[name] = true
-				res.aaRegionNames = append(res.aaRegionNames, name)
+			for sp in spans {
+				name := sp.name
+				if is_undefined(ntSeen[name]) {
+					ntSeen[name] = true
+					res.ntRegionNames = append(res.ntRegionNames, name)
+				}
+				// Codon alignment is a property of each span on its own: a container may be
+				// aa-eligible while one of its sub-regions is not, or the other way round.
+				if int(sp.begin) % 3 == 0 && int(sp.end) % 3 == 0 && is_undefined(aaSeen[name]) {
+					aaSeen[name] = true
+					res.aaRegionNames = append(res.aaRegionNames, name)
+				}
 			}
 		}
 	}
@@ -83,6 +101,8 @@ vdjAuto := func() {
 	return {
 		enabled: true,
 		hasRegions: true,
+		// Germline-inferred boundaries are the seven canonical regions and nothing below.
+		hasSubRegions: false,
 		isVdj: true,
 		ntRegionNames: names,
 		aaRegionNames: names,
