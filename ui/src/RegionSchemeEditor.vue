@@ -14,7 +14,7 @@ import {
   PlTextField,
   ReactiveFileContent,
 } from "@platforma-sdk/ui-vue";
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useApp } from "./app";
 import {
   cumulativeOffsets,
@@ -102,6 +102,82 @@ function addRegion(parentId: string) {
   setConfig({ ...cfg, regions: [...cfg.regions, { name: "", length: 0 }] });
 }
 
+function setChild(
+  parentId: string,
+  i: number,
+  j: number,
+  patch: Partial<{ name: string; length: number }>,
+) {
+  const cfg = configFor(parentId);
+  const regions = cfg.regions.map((r, k) =>
+    k === i
+      ? { ...r, children: (r.children ?? []).map((c, m) => (m === j ? { ...c, ...patch } : c)) }
+      : r,
+  );
+  setConfig({ ...cfg, regions });
+}
+
+// Splits a region's length into flank / graft / flank. The flanks are kept on codon
+// boundaries and the graft absorbs the remainder, so a region of nine nt or more that is
+// codon-aligned stays fully codon-aligned after subdividing and all three parts keep their
+// amino-acid columns. Below nine there is no room for a codon in each flank, so the flanks
+// fall back to one nt and the graft takes the rest — valid, but the out-of-frame warning
+// will say the parts carry no amino-acid columns until the lengths are adjusted.
+function splitThree(len: number): [number, number, number] {
+  const flank = Math.max(1, Math.floor(Math.floor(len / 3) / 3) * 3);
+  if (2 * flank + 1 > len) return [1, len - 2, 1];
+  return [flank, len - 2 * flank, flank];
+}
+
+// Seeds the three rows a graft needs, so the tiling invariant holds the moment the region
+// is subdivided rather than after the user gets the arithmetic right. The flanks are named
+// by protein directionality — the sequence runs N-terminus to C-terminus — and the graft
+// row is left blank because only the user knows what it is. All three stay editable.
+function subdivide(parentId: string, i: number, rowId: number) {
+  const cfg = configFor(parentId);
+  const r = cfg.regions[i];
+  const base = r.name.trim();
+  const [n, graft, c] = splitThree(r.length);
+  const children: RegionDef[] = [
+    { name: `${base}_N`, length: n },
+    { name: "", length: graft },
+    { name: `${base}_C`, length: c },
+  ];
+  setConfig({ ...cfg, regions: cfg.regions.map((x, k) => (k === i ? { ...x, children } : x)) });
+  expanded.value = new Set([...expanded.value, rowId]); // show what was just created
+}
+
+// PlElementList emits the whole new array for reorder and remove alike, at either level.
+// Dropping to an empty child list returns the region to undivided rather than leaving an
+// empty `children`, which the overlay would carry as a subdivided region with nothing in it.
+function applyChildRows(
+  parentId: string,
+  i: number,
+  regionRowId: number,
+  rows: (RegionDef & { id: number })[],
+) {
+  rowIds.set(
+    `${parentId}#${regionRowId}`,
+    rows.map((r) => r.id),
+  );
+  const cfg = configFor(parentId);
+  const children = rows.map((r) => ({ name: r.name, length: r.length }));
+  const regions = cfg.regions.map((r, k) =>
+    k === i ? { ...r, children: children.length > 0 ? children : undefined } : r,
+  );
+  setConfig({ ...cfg, regions });
+}
+
+// Which region rows are open, by stable row id. View-local: it is not the user's
+// configuration, so it stays out of `data`. Rows start closed so a seven-region VDJ list
+// reads at a glance; opening one shows its sub-regions, or the way to create them.
+const expanded = ref(new Set<number>());
+function toggleExpanded(rowId: number) {
+  const next = new Set(expanded.value);
+  if (!next.delete(rowId)) next.add(rowId);
+  expanded.value = next;
+}
+
 // PlElementList emits the whole new array for both reorder and remove, so one
 // handler covers both. Only name/length are persisted; begin/end and the aa
 // preview are recomputed from the new order on the next render.
@@ -111,7 +187,17 @@ function applyRows(parentId: string, rows: (RegionDef & { id: number })[]) {
     rows.map((r) => r.id),
   );
   const cfg = configFor(parentId);
-  setConfig({ ...cfg, regions: rows.map((r) => ({ name: r.name, length: r.length })) });
+  // Carry `children` through: the rows here are previews built by spreading the region,
+  // so a reorder or a remove must not quietly flatten the sub-regions of the rows that
+  // survive it.
+  setConfig({
+    ...cfg,
+    regions: rows.map((r) => ({
+      name: r.name,
+      length: r.length,
+      ...(r.children && r.children.length > 0 ? { children: r.children } : {}),
+    })),
+  });
 }
 
 // Stable identity for the list rows. A region carries no id — RegionDef is part
@@ -147,26 +233,51 @@ function resetToVdjRegions(parentId: string) {
   onScheme(parentId, "vdj");
 }
 
-// Per-parent region previews (begin/end + sliced nt/aa) and the warnings.
+// Slices a span out of the parent and works out whether it can carry an amino-acid
+// column. The rule is the workflow's (workflow/src/region-config.lib.tengo): BOTH ends
+// must sit on a codon boundary, so a length that is not a multiple of three pushes every
+// later span out of frame too, not only its own.
+function spanPreview(p: ParsedParent, r: RegionDef, begin: number, end: number, id: number) {
+  const nt = p.sequence.slice(begin, end);
+  const inFrame = r.length > 0 && begin % 3 === 0 && end % 3 === 0;
+  return { ...r, id, begin, end, nt, aa: inFrame ? translateDNA(nt) : "", inFrame };
+}
+
+// Per-parent region previews (begin/end + sliced nt/aa) and the warnings. Recurses one
+// level: a region's sub-regions are laid out by the same cumulative rule, seeded at the
+// region's own begin, which is exactly what buildParentRegionsJson does on the model side.
 function previews(p: ParsedParent) {
   const cfg = configFor(p.id);
   const offs = cumulativeOffsets(cfg.regions.map((r) => r.length));
   const ids = idsFor(p.id, cfg.regions.length);
   const rows = cfg.regions.map((r, i) => {
     const { begin, end } = offs[i];
-    const nt = p.sequence.slice(begin, end);
-    // The rule the workflow applies when it decides which aaSeq{region} columns exist
-    // (workflow/src/region-config.lib.tengo). BOTH ends must sit on a codon boundary,
-    // so a region whose length is not a multiple of 3 pushes every later region out
-    // of frame as well — not only itself.
-    const inFrame = r.length > 0 && begin % 3 === 0 && end % 3 === 0;
-    return { ...r, id: ids[i], begin, end, nt, aa: inFrame ? translateDNA(nt) : "", inFrame };
+    const row = spanPreview(p, r, begin, end, ids[i]);
+    const kids = r.children ?? [];
+    const childOffs = cumulativeOffsets(
+      kids.map((c) => c.length),
+      begin,
+    );
+    const childIds = idsFor(`${p.id}#${ids[i]}`, kids.length);
+    const childRows = kids.map((c, j) =>
+      spanPreview(p, c, childOffs[j].begin, childOffs[j].end, childIds[j]),
+    );
+    // Tiling is exactly what the model checks: the children's lengths must add up to
+    // their region's own. Surfacing the shortfall here means the number is visible while
+    // it is being typed, not only when the run is assembled.
+    const childEnd = childOffs.length > 0 ? childOffs[childOffs.length - 1].end : begin;
+    const childGap = childRows.length > 0 ? childEnd - end : 0;
+    return { ...row, childRows, childGap };
   });
+  const allRows = rows.flatMap((r) => [r, ...r.childRows]);
   const total = offs.length > 0 ? offs[offs.length - 1].end : 0;
-  const outOfFrame = rows
+  const outOfFrame = allRows
     .filter((r) => r.length > 0 && !r.inFrame)
     .map((r) => r.name || "(unnamed)");
-  return { rows, total, overflow: total > p.sequence.length, outOfFrame };
+  const untiled = rows
+    .filter((r) => r.childGap !== 0)
+    .map((r) => `${r.name || "(unnamed)"} (${r.childGap > 0 ? "+" : ""}${r.childGap} nt)`);
+  return { rows, total, overflow: total > p.sequence.length, outOfFrame, untiled };
 }
 
 // previews() slices and translates sequences, and the template reads it four
@@ -212,6 +323,8 @@ const previewByParent = computed(() => {
       <PlElementList
         :items="previewByParent[p.id].rows"
         :get-item-key="rowKey"
+        :is-expanded="(row) => expanded.has(row.id)"
+        :on-expand="(row) => toggleExpanded(row.id)"
         @update:items="(rows) => applyRows(p.id, rows)"
       >
         <template #item-title="{ item: row, index: i }">
@@ -243,6 +356,64 @@ const previewByParent = computed(() => {
             </span>
           </div>
         </template>
+
+        <template #item-content="{ item: row, index: i }">
+          <!-- Sub-regions. Dragging is confined to this list, and to the parent list
+               above: a row never moves between levels, because a graft belongs to the
+               region it was cut out of. -->
+          <PlElementList
+            v-if="row.childRows.length > 0"
+            :items="row.childRows"
+            :get-item-key="rowKey"
+            @update:items="(rows) => applyChildRows(p.id, i, row.id, rows)"
+          >
+            <template #item-title="{ item: child, index: j }">
+              <div class="region-row">
+                <div class="region-row__controls">
+                  <PlTextField
+                    class="region-row__name"
+                    :model-value="child.name"
+                    placeholder="sub-region name"
+                    @update:model-value="(v) => setChild(p.id, i, j, { name: v })"
+                  />
+
+                  <PlNumberField
+                    class="region-row__len"
+                    :model-value="child.length"
+                    placeholder="length"
+                    :min-value="0"
+                    @update:model-value="(v) => setChild(p.id, i, j, { length: v ?? 0 })"
+                  />
+
+                  <span class="region-row__span">{{ child.begin }}–{{ child.end }}</span>
+                </div>
+
+                <span
+                  class="region-row__aa"
+                  :class="{ 'region-row__aa--off': child.length > 0 && !child.inFrame }"
+                >
+                  {{ child.inFrame ? child.aa : "out of frame" }}
+                </span>
+              </div>
+            </template>
+          </PlElementList>
+
+          <div v-if="row.childGap !== 0" class="region-row__gap">
+            Sub-regions must add up to {{ row.length }} nt — they are
+            {{ row.childGap > 0 ? "over" : "under" }} by {{ Math.abs(row.childGap) }} nt.
+          </div>
+
+          <PlBtnGhost
+            v-if="row.childRows.length === 0"
+            :disabled="row.length < 3"
+            @click.prevent="subdivide(p.id, i, row.id)"
+          >
+            + Subdivide into sub-regions
+          </PlBtnGhost>
+          <span v-if="row.childRows.length === 0 && row.length < 3" class="region-row__hint">
+            Needs a length of at least 3 nt to hold a graft and a flank either side.
+          </span>
+        </template>
       </PlElementList>
 
       <div class="region-actions">
@@ -260,6 +431,11 @@ const previewByParent = computed(() => {
           p.sequence.length
         }}
         nt).
+      </PlAlert>
+
+      <PlAlert v-if="previewByParent[p.id].untiled.length > 0" type="warn" :icon="true">
+        Sub-regions do not tile their region: {{ previewByParent[p.id].untiled.join(", ") }}. They
+        must add up to exactly the region's own length.
       </PlAlert>
 
       <PlAlert v-if="previewByParent[p.id].outOfFrame.length > 0" type="warn" :icon="true">
@@ -335,5 +511,13 @@ const previewByParent = computed(() => {
 }
 .region-row__aa--off {
   color: var(--txt-warning, #b26a00);
+}
+.region-row__gap {
+  color: var(--txt-warning, #b26a00);
+  font-size: 12px;
+}
+.region-row__hint {
+  color: var(--txt-03);
+  font-size: 12px;
 }
 </style>
