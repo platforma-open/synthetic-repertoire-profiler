@@ -103,9 +103,12 @@ export function translateDNA(nt: string): string {
   return out;
 }
 
-/** Cumulative 0-based [begin, end) offsets for a list of region lengths. */
-export function cumulativeOffsets(lengths: number[]): { begin: number; end: number }[] {
-  let pos = 0;
+/** Cumulative 0-based [begin, end) offsets for a list of region lengths. `start` seeds
+ *  the running position — 0 for a parent's top-level regions, and the containing
+ *  region's `begin` for the sub-regions tiling it, so a child's offsets come out
+ *  absolute in the parent's frame like every other span. */
+export function cumulativeOffsets(lengths: number[], start = 0): { begin: number; end: number }[] {
+  let pos = start;
   return lengths.map((len) => {
     const begin = pos;
     pos += Math.max(0, len);

@@ -54,6 +54,11 @@ export const VDJ_REGION_NAMES = ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "F
 
 const FEATURE_NAME_RE = /^[A-Za-z0-9_]+$/;
 
+/** A resolved span in the parent's own nucleotide frame. `children`, when present,
+ *  tile the span exactly; their offsets are absolute in the same frame, so every span
+ *  in the overlay is read the same way. */
+type Span = { name: string; begin: number; end: number; children?: Span[] };
+
 /** Builds the `--parent-regions` overlay JSON (offsets cumulative from region
  *  lengths) consumed by mitool and re-parsed by the workflow. Returns undefined
  *  when nothing is configured. Throws on an invalid partition. */
@@ -65,7 +70,7 @@ export function buildParentRegionsJson(
     {
       scheme: RegionScheme;
       completeFeatureName?: string;
-      regions: { name: string; begin: number; end: number }[];
+      regions: Span[];
     }
   > = {};
   for (const c of configs ?? []) {
@@ -74,8 +79,9 @@ export function buildParentRegionsJson(
     if (af && !FEATURE_NAME_RE.test(af))
       throw new Error(`Complete feature name '${af}' must be alphanumeric/underscore.`);
 
-    let pos = 0;
-    const regions = c.regions.map((r) => {
+    // Name and length are checked identically at either level — a sub-region is an
+    // ordinary span that happens to sit inside another.
+    const checked = (r: RegionDef): string => {
       const name = r.name.trim();
       if (c.scheme !== "none") {
         if (!FEATURE_NAME_RE.test(name))
@@ -85,9 +91,32 @@ export function buildParentRegionsJson(
         if (!Number.isInteger(r.length) || r.length <= 0)
           throw new Error(`Region '${name}' (parent ${c.parentId}) needs a positive length.`);
       }
+      return name;
+    };
+
+    let pos = 0;
+    const regions: Span[] = c.regions.map((r) => {
+      const name = checked(r);
       const begin = pos;
       pos += r.length;
-      return { name, begin, end: pos };
+      const end = pos;
+      if (!r.children?.length) return { name, begin, end };
+
+      // Sub-regions run on the same cumulative rule, seeded at their region's begin.
+      // Tiling then reduces to one check: the lengths must add up to the region's own.
+      let childPos = begin;
+      const children: Span[] = r.children.map((child) => {
+        const childName = checked(child);
+        const childBegin = childPos;
+        childPos += child.length;
+        return { name: childName, begin: childBegin, end: childPos };
+      });
+      if (childPos !== end)
+        throw new Error(
+          `Sub-regions of '${name}' (parent ${c.parentId}) must tile it exactly: they total ` +
+            `${childPos - begin} nt, but '${name}' is ${end - begin} nt.`,
+        );
+      return { name, begin, end, children };
     });
 
     // `vdj` and `custom` both carry a free region list, so both need at least one region.
@@ -96,7 +125,9 @@ export function buildParentRegionsJson(
     // panel instead of at run time.
     if (c.scheme !== "none" && regions.length === 0)
       throw new Error(`Scheme '${c.scheme}' (parent ${c.parentId}) needs at least one region.`);
-    if (new Set(regions.map((r) => r.name)).size !== regions.length)
+    // One namespace across the whole parent: every name becomes an output column id.
+    const names = regions.flatMap((r) => [r.name, ...(r.children?.map((ch) => ch.name) ?? [])]);
+    if (new Set(names).size !== names.length)
       throw new Error(`Region names must be unique within parent ${c.parentId}.`);
 
     parents[c.parentId] = {
