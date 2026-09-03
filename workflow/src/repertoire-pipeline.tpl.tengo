@@ -195,6 +195,18 @@ self.body(func(inputs) {
 		arg("--parents").arg("parents.fa").
 		arg("--preset").arg("default").
 		arg("--budget").arg("0")
+	// Frame-shift detection for the call-mutations step, pinned to TRIPLET.
+	// mitool's default AA_MISMATCH is a proxy: it aa-aligns the variant against the
+	// parent and calls a frame shift when the aa edit-op count exceeds
+	// frameShiftAaThreshold (default 10). That cannot tell designed diversity apart
+	// from a real indel — a combinatorial library randomizing 13 positions diverges
+	// by 13 aa by construction, so every member is discarded as frame-shifted.
+	// TRIPLET tests the nt mutations directly (lengthDelta % 3 != 0), which is what
+	// a frame shift actually is, and is independent of how far the library roams.
+	// Not exposed as a parameter: this block only ever sees designed libraries.
+	// Compensating +1/-1 indels with a net length delta divisible by 3 slip past
+	// TRIPLET; the maxAaMutations gate below is what catches those.
+	analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.frameShiftMode=TRIPLET")
 	// Mutation-load filter: set the align step's AlignFilterParams via -M mixins.
 	// mitool has no dedicated flags for these — they live in AlignParams.filter.
 	// Attached single-token form (-M<key>=<value>), matching mixcr-amplicon-alignment.
