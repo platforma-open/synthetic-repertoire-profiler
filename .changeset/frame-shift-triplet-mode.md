@@ -19,8 +19,14 @@ is what a frame shift is, and is independent of how far the library was designed
 to roam. The mode is pinned rather than exposed: this block only ever analyses
 designed synthetic libraries, where `AA_MISMATCH` is never the right test.
 
-The one case `TRIPLET` does not cover — compensating +1/-1 indels whose net length
-delta is a multiple of 3, leaving a scrambled stretch between them — is caught by
-the existing **Max AA mut count** gate (`maxAaMutations`), which is unchanged.
+One case `TRIPLET` does not cover: compensating +1/-1 indels whose net length delta
+is a multiple of 3. The frame is restored by the end of the sequence, so this is
+correctly not a frame shift, but the stretch between the two indels was read out of
+frame and is scrambled. `AA_MISMATCH` would have flagged such a variant on its
+mismatch count. Nothing flags it now unless **Max AA mut count** (`maxAaMutations`)
+is set — that gate is off by default (mitool defaults it to `-1`) and rejects only
+what exceeds the threshold the user configures. A default run therefore keeps these
+variants. They were never distinguishable from heavily diversified library members
+under the old check either, which is why the block does not try to guess a value.
 
 Existing runs must be re-run to pick this up; frame-shift QC counts will drop.

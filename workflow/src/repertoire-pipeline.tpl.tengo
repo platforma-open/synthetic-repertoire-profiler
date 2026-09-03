@@ -205,7 +205,11 @@ self.body(func(inputs) {
 	// a frame shift actually is, and is independent of how far the library roams.
 	// Not exposed as a parameter: this block only ever sees designed libraries.
 	// Compensating +1/-1 indels with a net length delta divisible by 3 slip past
-	// TRIPLET; the maxAaMutations gate below is what catches those.
+	// TRIPLET. The frame is genuinely restored, so that verdict is right, but the
+	// stretch between the two indels is scrambled. Nothing catches those on a default
+	// run: the maxAaMutations gate below is off unless the user sets it (mitool
+	// defaults it to -1). AA_MISMATCH would have flagged them, which is the one thing
+	// it did better; it is not worth keeping a check that discards whole libraries.
 	analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.frameShiftMode=TRIPLET")
 	// Mutation-load filter: set the align step's AlignFilterParams via -M mixins.
 	// mitool has no dedicated flags for these — they live in AlignParams.filter.
