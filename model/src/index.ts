@@ -224,6 +224,14 @@ export type BlockData = {
   maxAaMutations?: number; // reject if the aa alignment has more than this many mutations (edit ops)
   maxAaMutationFraction?: number; // reject if aaMutations / aaParentLength exceeds this (0 < f ≤ 1)
 
+  // Indel admission (Advanced). Designed libraries introduce diversity by
+  // substitution at defined positions, so a variant carrying an insertion or
+  // deletion is an artefact of synthesis, PCR slippage or sequencing. Absent/false
+  // drops those variants from the exported repertoire; true keeps them, for
+  // libraries that encode indels on purpose (deletion scans and the like). Applied
+  // block-side on mitool's mutation designator — mitool has no indel-aware filter.
+  allowIndels?: boolean;
+
   // minBaseQuality → align step (AlignParams.filter): reject a fragment if ANY
   // read base inside the parent-covered span is below this Phred. Bases outside
   // the span (overhang, adapter tails) are ignored.
@@ -284,6 +292,8 @@ export type BlockArgs = {
   // AA mutation-load filter → mitool -Mcall-mutations.maxAaMutations / maxAaMutationFraction.
   maxAaMutations?: number;
   maxAaMutationFraction?: number;
+  // Indel admission → block-side variant filter. Absent/false drops indel variants.
+  allowIndels?: boolean;
   // Quality gates → mitool -Malign.filter.minBaseQuality / -Massemble.minVariantQuality.
   // Absent = mitool defaults (5 / 20), which are ON — not off.
   minBaseQuality?: number;
@@ -381,6 +391,7 @@ const dataModel = new DataModelBuilder({ kind })
     maxMutationFraction: params?.maxMutationFraction,
     maxAaMutations: params?.maxAaMutations,
     maxAaMutationFraction: params?.maxAaMutationFraction,
+    allowIndels: params?.allowIndels ?? false,
     minBaseQuality: params?.minBaseQuality,
     minVariantQuality: params?.minVariantQuality,
     perProcessMemGB: params?.perProcessMemGB,
@@ -853,6 +864,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       maxMutationFraction,
       maxAaMutations,
       maxAaMutationFraction,
+      allowIndels: data.allowIndels ?? false,
       minBaseQuality,
       minVariantQuality,
       perProcessMemGB: data.perProcessMemGB,
@@ -886,6 +898,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     maxMutationFraction: data.maxMutationFraction,
     maxAaMutations: data.maxAaMutations,
     maxAaMutationFraction: data.maxAaMutationFraction,
+    allowIndels: data.allowIndels,
     minBaseQuality: data.minBaseQuality,
     minVariantQuality: data.minVariantQuality,
     perProcessMemGB: data.perProcessMemGB,

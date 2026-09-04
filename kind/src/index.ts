@@ -72,6 +72,7 @@ export type BlockParams = {
   maxMutationFraction?: number;
   maxAaMutations?: number;
   maxAaMutationFraction?: number;
+  allowIndels?: boolean;
   minBaseQuality?: number;
   minVariantQuality?: number;
 
@@ -114,6 +115,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     maxMutationFraction,
     maxAaMutations,
     maxAaMutationFraction,
+    allowIndels,
     minBaseQuality,
     minVariantQuality,
     perProcessMemGB,
@@ -135,6 +137,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     maxMutationFraction: optionalNumber(maxMutationFraction, "maxMutationFraction"),
     maxAaMutations: optionalNumber(maxAaMutations, "maxAaMutations"),
     maxAaMutationFraction: optionalNumber(maxAaMutationFraction, "maxAaMutationFraction"),
+    allowIndels: optionalBoolean(allowIndels, "allowIndels"),
     minBaseQuality: optionalNumber(minBaseQuality, "minBaseQuality"),
     minVariantQuality: optionalNumber(minVariantQuality, "minVariantQuality"),
 
