@@ -254,6 +254,22 @@ ACGTACGT..."
     </PlTooltip>
   </PlCheckbox>
 
+  <PlCheckbox
+    :model-value="app.model.data.allowIndels ?? false"
+    @update:model-value="(v) => (app.model.data.allowIndels = v)"
+  >
+    Allow indels
+    <PlTooltip class="info" position="top">
+      <template #tooltip>
+        Keep variants that carry an insertion or deletion. Designed libraries vary their parent by
+        substitution at defined positions, so an indel is normally an artefact of synthesis, PCR
+        slippage or sequencing, and such variants are dropped by default. Turn this on for libraries
+        that encode indels on purpose, such as deletion scans. The QC report counts indel variants
+        either way.
+      </template>
+    </PlTooltip>
+  </PlCheckbox>
+
   <PlNumberField
     v-model="app.model.data.maxAaMutations"
     label="Max AA mut count"

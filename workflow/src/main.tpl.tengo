@@ -149,6 +149,10 @@ wf.body(func(args) {
 		// Per-variant aa mutation-load filter → mitool call-mutations step (-Mcall-mutations.*).
 		maxAaMutations: args.maxAaMutations,
 		maxAaMutationFraction: args.maxAaMutationFraction,
+		// Indel admission. Applied block-side on mitool's `mutations` designator, not
+		// by mitool — its filter params count edit operations without telling an indel
+		// apart from a substitution. Absent/false = indel-carrying variants are dropped.
+		allowIndels: args.allowIndels,
 		// Quality gates → mitool align step (-Malign.filter.minBaseQuality) and
 		// assemble step (-Massemble.minVariantQuality). Unlike the filters above these
 		// are ON by mitool default, so "absent" means 5 / 20, not off.

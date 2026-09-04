@@ -60,6 +60,13 @@ self.body(func(inputs) {
 	// matched a known entry (nt: assignStatus == ASSIGNED; aa: has knownAaKey). The
 	// known-overlay / QC computations below read the FULL variant set regardless.
 	exportOnlyKnown := !is_undefined(params.exportOnlyKnown) && params.exportOnlyKnown
+	// Indel admission. Diversity in a designed library is introduced by substitution
+	// at defined positions, so a variant carrying an insertion or deletion is an
+	// artefact of synthesis, PCR slippage or sequencing rather than a library member.
+	// Default is to drop those variants from the exported repertoire. Turn it on for
+	// libraries that deliberately encode indels (deletion scans and the like). The QC
+	// counts below always report the indel load, filtered or not.
+	allowIndels := !is_undefined(params.allowIndels) && params.allowIndels
 	parentFastaStr := params.parentFastaStr
 	parentFile := params.parentFile
 	// Regions overlay for mitool: either a JSON string (manual schemes, written to
@@ -365,6 +372,28 @@ self.body(func(inputs) {
 		return pt.col(col).cast("String").fillNull("").strLenChars().gt(pt.lit(0))
 	}
 
+	// Indel detection. mitool writes `mutations` as the milib designator joined with
+	// ":", one token per mutation, each opening with its operation letter: S for a
+	// substitution, D for a deletion, I for an insertion. Anchoring the class to the
+	// start of a token is what makes this safe — the letters inside a token are
+	// alphabet symbols, and the nucleotide alphabet carries IUPAC wildcards that
+	// include D, so an unanchored search would report a wildcard base as a deletion.
+	hasIndel := pt.col("mutations").cast("String").fillNull("").strContains("(^|:)[ID]")
+
+	// Drop indel-carrying variants from everything that feeds the exported
+	// repertoire, so abundances, state matrices and mutation histograms all describe
+	// the same variant set. QC below reads the raw frame and is unaffected.
+	if !allowIndels {
+		vAbund = vAbund.filter(hasIndel.not())
+	}
+	keptNtKeys := vAbund.
+		groupBy("variantKey").agg(pt.col("variantKey").count().alias("_n")).
+		select(pt.col("variantKey"))
+	keptAaKeys := vAbund.
+		filter(b6NonEmpty("aaVariantKey")).
+		groupBy("aaVariantKey").agg(pt.col("aaVariantKey").count().alias("_n")).
+		select(pt.col("aaVariantKey"))
+
 	// Export-only-matched: the abundance parquets feed the exported variant
 	// repertoire (per-sample abundance columns + the cross-sample properties
 	// totals). When the filter is on, restrict them per level — nt keeps
@@ -562,6 +591,8 @@ self.body(func(inputs) {
 		readsWhen(fs).alias("frameShiftReads"),
 		countWhen(aae).alias("aaMutationsExceededVariants"),
 		readsWhen(aae).alias("aaMutationsExceededReads"),
+		countWhen(hasIndel).alias("indelVariants"),
+		readsWhen(hasIndel).alias("indelReads"),
 		countWhen(isAssigned).alias("assignedVariants"),
 		readsWhen(isAssigned).alias("assignedReads"),
 		countWhen(isUnassigned).alias("unassignedVariants"),
@@ -588,7 +619,12 @@ self.body(func(inputs) {
 			select(pt.col("mutationCount"), pt.col("variantCount"), pt.col("readCount")).
 			sort(["mutationCount"])
 	}
-	histogram(vdf, "variantKey").save("ntMutationHistogram.parquet")
+	// Histograms describe the exported repertoire, so they see the same variant set
+	// the abundances do. vStats above deliberately does not — the indel counts it
+	// reports are the load in the raw data, which is the number worth looking at.
+	vdfKept := allowIndels ? vdf : vdf.filter(hasIndel.not())
+
+	histogram(vdfKept, "variantKey").save("ntMutationHistogram.parquet")
 
 	// The aa mutation count lives in aa-variants.tsv; the reads come from its nt
 	// members in variants.tsv.
@@ -596,7 +632,7 @@ self.body(func(inputs) {
 		groupBy("aaVariantKey").
 		agg(pt.col("mutationCount").cast("Int").first().alias("mutationCount"))
 	histogram(
-		vdf.
+		vdfKept.
 			filter(b6NonEmpty("aaVariantKey")).
 			groupBy("aaVariantKey").agg(pt.col("readCount").cast("Long").sum().alias("readCount")).
 			join(aaMutations, { how: "inner", on: ["aaVariantKey"] }),
@@ -611,6 +647,7 @@ self.body(func(inputs) {
 	vStats.join(aaStats, { how: "left", on: ["sampleId"] }).withColumns(
 		frac("frameShiftReads").alias("frameShiftReadFraction"),
 		frac("aaMutationsExceededReads").alias("aaMutationsExceededReadFraction"),
+		frac("indelReads").alias("indelReadFraction"),
 		frac("assignedReads").alias("assignedReadFraction"),
 		frac("unassignedReads").alias("unassignedReadFraction"),
 		frac("ambiguousReads").alias("ambiguousReadFraction")
@@ -648,6 +685,11 @@ self.body(func(inputs) {
 			matchedAaKeys.select(pt.col("aaVariantKey").alias("variantKey")),
 			{ how: "inner", on: ["variantKey"] })
 	}
+	if !allowIndels {
+		aaSmDf = aaSmDf.join(
+			keptAaKeys.select(pt.col("aaVariantKey").alias("variantKey")),
+			{ how: "inner", on: ["variantKey"] })
+	}
 	chunkStateMatrix(aaSmDf, "aa")
 
 	// nt: real matrix when nt export is on, else a 0-row frame with the same headers,
@@ -664,6 +706,9 @@ self.body(func(inputs) {
 				vAbund.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).groupBy("variantKey").agg(pt.col("variantKey").count().alias("_n")).select(pt.col("variantKey")) :
 				vAbund.filter(pt.lit(false)).select(pt.col("variantKey"))
 			ntSmDf = ntSmDf.join(ntMatchKeys, { how: "inner", on: ["variantKey"] })
+		}
+		if !allowIndels {
+			ntSmDf = ntSmDf.join(keptNtKeys, { how: "inner", on: ["variantKey"] })
 		}
 	} else {
 		ntSmDf = vAbund.filter(pt.lit(false)).select(
