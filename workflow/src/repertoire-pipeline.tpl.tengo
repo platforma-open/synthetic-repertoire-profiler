@@ -23,7 +23,7 @@ json := import("json")
 
 // The state matrix leaves this template already split by position: one File-valued
 // output per level per chunk key. See state-matrix-chunks.
-outputNames := ["parsedMic", "stepLogs", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "logs"]
+outputNames := ["parsedMic", "stepLogs", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv"]
 for chunkKey in smChunks.keys() {
 	outputNames = append(outputNames, smChunks.outputName("aa", chunkKey))
 	outputNames = append(outputNames, smChunks.outputName("nt", chunkKey))
@@ -820,9 +820,6 @@ self.body(func(inputs) {
 		// No sampleId column — processColumn supplies the sample key from the partition.
 		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),
 		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet"),
-		// analyze stdout (stderr merged in) carries the align/assemble progress
-		// markers + the run summary — the per-sample Logs source.
-		logs: analyzeCmd.getStdoutStream(),
 		// One log per mitool command, keyed by an ORDERED step name. The numeric
 		// prefix is what lets the UI pick "the furthest step reached" by plain string
 		// comparison; without the per-step map the Progress column has nothing to show

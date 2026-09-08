@@ -247,20 +247,6 @@ wf.body(func(args) {
 		}
 	}
 
-	// Per-sample analyze log (Log-valued PColumn keyed by sampleId) — carries
-	// progress markers + the run summary for the Progress column and Logs view.
-	logsOutput := {
-		type: "Resource",
-		spec: {
-			kind: "PColumn",
-			name: "pl7.app/log",
-			domain: runScope,
-			valueType: "Log"
-		},
-		name: "logs",
-		path: ["logs"]
-	}
-
 	// Per-step logs, keyed [sampleId, step] — the Progress column's source. Separate
 	// from `logs` (analyze only), which is what the Logs view shows.
 	stepLogsOutput := {
@@ -307,7 +293,6 @@ wf.body(func(args) {
 		knownNtAbundanceXsv,
 		knownAaAbundanceXsv,
 		aaConvergenceXsv,
-		logsOutput,
 		stepLogsOutput
 	]
 	// State matrix, split by position chunk inside the per-sample job: one plain File
@@ -1018,10 +1003,8 @@ wf.body(func(args) {
 		// each file a downloadable Blob (getFileHandle/getContentJson need an
 		// exported file, not a raw Blob resource).
 		reports: pframes.exportColumnData(perSampleResults.outputData("reports")),
-		// Return the resource-map DATA under the "logs" key so the model can
-		// resolve("logs") + parseResourceMap it (a plain output() reads back as
-		// an opaque std/map).
-		logs: perSampleResults.outputData("logs"),
+		// The resource-map DATA, so the model can resolve() + parseResourceMap it
+		// (a plain output() reads back as an opaque std/map).
 		stepLogs: perSampleResults.outputData("stepLogs")
 	}
 	// Known Variants tables — present only when the matching known set ran.
