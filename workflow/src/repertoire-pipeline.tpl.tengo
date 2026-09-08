@@ -604,14 +604,18 @@ self.body(func(inputs) {
 	isUnassigned := pt.col("assignStatus").cast("String").eq("UNASSIGNED")
 	isAmbiguous := pt.col("assignStatus").cast("String").eq("AMBIGUOUS")
 	reads := pt.col("readCount").cast("Long")
+	mols := pt.col("moleculeCount").cast("Long")
 	countWhen := func(cond) {
 		return pt.when(cond).then(pt.lit(1)).otherwise(pt.lit(0)).sum()
 	}
 	readsWhen := func(cond) {
 		return pt.when(cond).then(reads).otherwise(pt.lit(0)).sum()
 	}
+	molsWhen := func(cond) {
+		return pt.when(cond).then(mols).otherwise(pt.lit(0)).sum()
+	}
 
-	vStats := vdf.select(
+	vSelect := [
 		pt.lit(sampleId).alias("sampleId"),
 		pt.col("variantKey").count().alias("ntVariants"),
 		reads.sum().alias("totalReads"),
@@ -625,7 +629,20 @@ self.body(func(inputs) {
 		readsWhen(isUnassigned).alias("unassignedReads"),
 		countWhen(isAmbiguous).alias("ambiguousVariants"),
 		readsWhen(isAmbiguous).alias("ambiguousReads")
-	)
+	]
+	// Molecule-weighted twins. Gated like the abundance columns (stage 5): the spec and
+	// the parquet must agree, and a non-UMI run should not carry a NaN column per metric.
+	if hasUmi {
+		vSelect = append(vSelect,
+			mols.sum().alias("totalMolecules"),
+			molsWhen(fs).alias("frameShiftMolecules"),
+			molsWhen(aae).alias("aaMutationsExceededMolecules"),
+			molsWhen(isAssigned).alias("assignedMolecules"),
+			molsWhen(isUnassigned).alias("unassignedMolecules"),
+			molsWhen(isAmbiguous).alias("ambiguousMolecules")
+		)
+	}
+	vStats := vdf.select(vSelect...)
 	aaStats := adf.select(
 		pt.lit(sampleId).alias("sampleId"),
 		pt.col("aaVariantKey").count().alias("aaVariants")
@@ -660,18 +677,38 @@ self.body(func(inputs) {
 		"aaVariantKey"
 	).save("aaMutationHistogram.parquet")
 
-	frac := func(numCol) {
-		return pt.when(pt.col("totalReads").gt(pt.lit(0))).then(
-			pt.col(numCol).cast("Double").truediv(pt.col("totalReads").cast("Double"))
-		).otherwise(pt.lit(0.0))
+	fracOf := func(denomCol) {
+		return func(numCol) {
+			return pt.when(pt.col(denomCol).gt(pt.lit(0))).then(
+				pt.col(numCol).cast("Double").truediv(pt.col(denomCol).cast("Double"))
+			).otherwise(pt.lit(0.0))
+		}
 	}
-	vStats.join(aaStats, { how: "left", on: ["sampleId"] }).withColumns(
+	frac := fracOf("totalReads")
+	molFrac := fracOf("totalMolecules")
+
+	qcCols := [
 		frac("frameShiftReads").alias("frameShiftReadFraction"),
 		frac("aaMutationsExceededReads").alias("aaMutationsExceededReadFraction"),
 		frac("assignedReads").alias("assignedReadFraction"),
 		frac("unassignedReads").alias("unassignedReadFraction"),
 		frac("ambiguousReads").alias("ambiguousReadFraction")
-	).save("qcRow.parquet")
+	]
+	if hasUmi {
+		qcCols = append(qcCols,
+			molFrac("frameShiftMolecules").alias("frameShiftMoleculeFraction"),
+			molFrac("aaMutationsExceededMolecules").alias("aaMutationsExceededMoleculeFraction"),
+			molFrac("assignedMolecules").alias("assignedMoleculeFraction"),
+			molFrac("unassignedMolecules").alias("unassignedMoleculeFraction"),
+			molFrac("ambiguousMolecules").alias("ambiguousMoleculeFraction"),
+			// Sequencing depth per molecule — the headline number for a UMI run, and the
+			// one that says whether the consensus had anything to work with.
+			molFrac("totalReads").alias("readsPerMolecule")
+		)
+	}
+	vStats.join(aaStats, { how: "left", on: ["sampleId"] }).
+		withColumns(qcCols...).
+		save("qcRow.parquet")
 
 	// --- Per-sample state-matrix chunking ----------------------------------
 	// Splits each level's state matrix into disjoint slices of the position axis, so

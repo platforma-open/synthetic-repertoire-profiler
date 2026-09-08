@@ -968,7 +968,7 @@ wf.body(func(args) {
 	qcColumns := xsv.importFile(
 		qcRun.output("qcTable"),
 		"tsv",
-		columnSpecs.qcColumns(inputSpec.axesSpec[0]),
+		columnSpecs.qcColumns(inputSpec.axesSpec[0], hasUmi),
 		{ splitDataAndSpec: true }
 	)
 	qcPfBuilder := pframes.pFrameBuilder()
