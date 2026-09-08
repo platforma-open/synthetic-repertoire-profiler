@@ -35,8 +35,8 @@ export type ParentRegionConfig = {
  * supplies to seed a new instance. A subset of the model's `BlockData`.
  *
  * The subset is the run recipe: the tag pattern, the parent (reference) setup,
- * the export toggles, the mutation and quality gates, and the per-process
- * resource overrides. A lab that re-profiles the same designed library run after
+ * the export toggles, the mutation and quality gates, the UMI consensus settings,
+ * and the per-process resource overrides. A lab that re-profiles the same designed library run after
  * run can pin all of that in a template and only pick the dataset afterwards.
  *
  * Three groups of `BlockData` fields are deliberately left out.
@@ -74,6 +74,9 @@ export type BlockParams = {
   maxAaMutationFraction?: number;
   minBaseQuality?: number;
   minVariantQuality?: number;
+
+  minReadsPerConsensus?: number;
+  minUmiQuality?: number;
 
   perProcessMemGB?: number;
   perProcessCPUs?: number;
@@ -116,6 +119,8 @@ function parseInitializationParams(value: unknown): BlockParams {
     maxAaMutationFraction,
     minBaseQuality,
     minVariantQuality,
+    minReadsPerConsensus,
+    minUmiQuality,
     perProcessMemGB,
     perProcessCPUs,
   } = value;
@@ -137,6 +142,9 @@ function parseInitializationParams(value: unknown): BlockParams {
     maxAaMutationFraction: optionalNumber(maxAaMutationFraction, "maxAaMutationFraction"),
     minBaseQuality: optionalNumber(minBaseQuality, "minBaseQuality"),
     minVariantQuality: optionalNumber(minVariantQuality, "minVariantQuality"),
+
+    minReadsPerConsensus: optionalNumber(minReadsPerConsensus, "minReadsPerConsensus"),
+    minUmiQuality: optionalNumber(minUmiQuality, "minUmiQuality"),
 
     perProcessMemGB: optionalNumber(perProcessMemGB, "perProcessMemGB"),
     perProcessCPUs: optionalNumber(perProcessCPUs, "perProcessCPUs"),

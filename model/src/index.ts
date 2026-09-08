@@ -23,11 +23,11 @@ import type {
   RegionScheme,
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
 import { kind } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
-import type { PatternParts } from "./pattern";
-import { parsePattern, patternHasUmi } from "./pattern";
+import type { PatternParts, UmiSpec } from "./pattern";
+import { parsePattern, patternHasUmi, patternUmiSpec } from "./pattern";
 
-export { parsePattern, patternHasUmi } from "./pattern";
-export type { LengthRange, PatternHalf, PatternParts } from "./pattern";
+export { parsePattern, patternHasUmi, patternUmiSpec } from "./pattern";
+export type { LengthRange, PatternHalf, PatternParts, UmiSpec } from "./pattern";
 
 // The parent-input and region shapes are part of the kind's init-params
 // contract, so the kind declares them. Re-exported here because the UI reads
@@ -232,6 +232,17 @@ export type BlockData = {
   // aggregated per-position quality dips below this Phred at ANY position.
   minVariantQuality?: number;
 
+  // UMI consensus knobs, used only when the tag pattern carries a UMI, and required
+  // once one is (see the args gate) — neither has a safe implicit default, both trade
+  // molecules kept against confidence in each.
+  //
+  // `maxIndels` is deliberately NOT here. mitool already clamps the indel budget per
+  // barcode from its read count: at minUmiQuality 20 a second indel is only searched
+  // above ~450 reads, so the setting is a no-op across this block's depth regime. Its
+  // default stays mitool's (2), which is also the right direction for ONT (A-0011).
+  minReadsPerConsensus?: number; // consensus -O minRecordsPerConsensus
+  minUmiQuality?: number; // refine-tags -q
+
   // Optional per-sample mitool resource overrides (Advanced). Empty = workflow
   // defaults. Passed to the parse + analyze exec steps.
   perProcessMemGB?: number;
@@ -251,6 +262,11 @@ export type BlockArgs = {
   tagPattern: string;
   patternParts: PatternParts;
   hasUmi: boolean;
+  // Absent when the pattern has no UMI. Carries the per-half tag names the workflow
+  // passes to refine-tags/sort/consensus, so the workflow never re-parses the pattern.
+  umi?: UmiSpec;
+  minReadsPerConsensus?: number;
+  minUmiQuality?: number;
   parentInputMode: ParentInputMode;
   parentSequence?: string;
   parentFileHandle?: ImportFileHandle;
@@ -300,7 +316,8 @@ type BlockDataV1 = Omit<BlockDataV2, "exportNt"> & { ntStateMatrix: boolean };
 
 type BlockDataV2 = Omit<BlockDataV3, "graphStateMutationHistogram">;
 
-type BlockDataV3 = Omit<BlockData, "graphStateStateHeatmap">;
+type BlockDataV3 = Omit<BlockDataV4, "graphStateStateHeatmap">;
+type BlockDataV4 = Omit<BlockData, "minReadsPerConsensus" | "minUmiQuality">;
 
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -358,9 +375,13 @@ const dataModel = new DataModelBuilder({ kind })
     ...v2,
     graphStateMutationHistogram: { ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE },
   }))
-  .migrate<BlockData>("v4", (v3) => ({
+  .migrate<BlockDataV4>("v4", (v3) => ({
     ...v3,
     graphStateStateHeatmap: { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
+  }))
+  .migrate<BlockData>("v5", (v4) => ({
+    ...v4,
+    ...UMI_DEFAULTS,
   }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
@@ -383,6 +404,8 @@ const dataModel = new DataModelBuilder({ kind })
     maxAaMutationFraction: params?.maxAaMutationFraction,
     minBaseQuality: params?.minBaseQuality,
     minVariantQuality: params?.minVariantQuality,
+    minReadsPerConsensus: params?.minReadsPerConsensus ?? UMI_DEFAULTS.minReadsPerConsensus,
+    minUmiQuality: params?.minUmiQuality ?? UMI_DEFAULTS.minUmiQuality,
     perProcessMemGB: params?.perProcessMemGB,
     perProcessCPUs: params?.perProcessCPUs,
 
@@ -406,6 +429,54 @@ const DEFAULT_BLOCK_LABEL = "Amplicon Profiling";
 /** milib's `SequenceQuality.MAX_QUALITY_VALUE` — the ceiling for both quality
  *  gates. A threshold above it can never be met, so nothing would pass. */
 export const MAX_PHRED_QUALITY = 58;
+
+/** Inherited from peptide-extraction, the reference implementation of this chain. */
+const UMI_DEFAULTS = { minReadsPerConsensus: 2, minUmiQuality: 20 } as const;
+
+/** Below this, barcode correction cannot work: 4^8 = 65k values means most 1-error
+ *  neighbours of an abundant barcode are real molecules, not errors. */
+const MIN_UMI_LENGTH = 8;
+
+/** The `BlockData` fields [validateUmiSettings] reads. */
+export type UmiSettings = Pick<BlockData, "minReadsPerConsensus" | "minUmiQuality">;
+
+/**
+ * Throws when a UMI declaration or its consensus settings cannot produce a molecule
+ * count. Extracted from the `.args(...)` lambda so it is directly testable — the lambda
+ * body is compiled into `model.json` and cannot be called.
+ *
+ * The settings are required once a UMI is present: there is no safe implicit default for
+ * a threshold that drops molecules. Messages name the Advanced control to fill in.
+ */
+export function validateUmiSettings(umi: UmiSpec, s: UmiSettings): void {
+  // A ranged half (`N{4:8}`) makes the molecule key ambiguous — two halves of different
+  // lengths can carry the same combined barcode.
+  if (umi.ranged)
+    throw new Error(
+      "UMI captures must have a fixed length (N{n}), not a range (N{min:max}) — " +
+        "a variable-length barcode cannot identify a molecule.",
+    );
+  if (umi.totalLength < MIN_UMI_LENGTH)
+    throw new Error(
+      `A UMI of ${umi.totalLength} nt is too short to identify molecules; ` +
+        `use at least ${MIN_UMI_LENGTH} nt in total across both reads.`,
+    );
+
+  const missing: string[] = [];
+  if (s.minReadsPerConsensus === undefined) missing.push("Min reads per UMI");
+  if (s.minUmiQuality === undefined) missing.push("Min UMI quality");
+  if (missing.length > 0)
+    throw new Error(`Set the UMI consensus settings in Advanced: ${missing.join(", ")}.`);
+
+  if (!Number.isInteger(s.minReadsPerConsensus) || s.minReadsPerConsensus! < 1)
+    throw new Error("Min reads per UMI must be a positive integer.");
+  if (
+    !Number.isInteger(s.minUmiQuality) ||
+    s.minUmiQuality! < 0 ||
+    s.minUmiQuality! > MAX_PHRED_QUALITY
+  )
+    throw new Error(`Min UMI quality must be an integer between 0 and ${MAX_PHRED_QUALITY}.`);
+}
 
 /** Shown as the block subtitle before a dataset is picked. */
 const NO_DATASET_LABEL = "Select dataset";
@@ -708,6 +779,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
               "(A, C, G, T, M, K, R, Y, W, S, B, D, H, V, N — upper or lower case).",
           );
 
+    const umi = patternUmiSpec(patternParts);
     // Pattern-vs-input read-structure mismatch (paired pattern, single-end input)
     // is checked live in the UI (SettingsPanel, via the `inputIsPairedEnd` output)
     // and asserted in the workflow as defence-in-depth. It is NOT gated here: args
@@ -786,6 +858,8 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     checkQuality(minBaseQuality, "Min base quality");
     checkQuality(minVariantQuality, "Min variant quality");
 
+    if (umi) validateUmiSettings(umi, data);
+
     // Resource overrides: positive when set (empty = workflow defaults).
     if (data.perProcessMemGB !== undefined && data.perProcessMemGB < 1)
       throw new Error("Memory per process must be at least 1 GB.");
@@ -812,6 +886,10 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       tagPattern,
       patternParts,
       hasUmi: patternHasUmi(patternParts),
+      umi,
+      // Suppressed without a UMI so the staleness gate ignores them on a non-UMI run.
+      minReadsPerConsensus: umi ? data.minReadsPerConsensus : undefined,
+      minUmiQuality: umi ? data.minUmiQuality : undefined,
       parentInputMode: data.parentInputMode,
       // Suppress the inactive mode's field so the staleness gate ignores it.
       parentSequence: data.parentInputMode === "fastaSequence" ? data.parentSequence : undefined,
@@ -888,6 +966,8 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     maxAaMutationFraction: data.maxAaMutationFraction,
     minBaseQuality: data.minBaseQuality,
     minVariantQuality: data.minVariantQuality,
+    minReadsPerConsensus: data.minReadsPerConsensus,
+    minUmiQuality: data.minUmiQuality,
     perProcessMemGB: data.perProcessMemGB,
     perProcessCPUs: data.perProcessCPUs,
   }))
