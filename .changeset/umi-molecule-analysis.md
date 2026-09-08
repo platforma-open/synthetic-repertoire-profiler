@@ -3,6 +3,7 @@
 '@platforma-open/milaboratories.synthetic-repertoire-profiler.model': patch
 '@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow': patch
 '@platforma-open/milaboratories.synthetic-repertoire-profiler.ui': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.block': patch
 ---
 
 Support UMI (molecular barcode) libraries
@@ -26,7 +27,9 @@ pattern shows up before a run rather than during one. Two UMI halves stay two gr
 keys — the pair identifies the molecule, without being concatenated.
 
 The Progress column now names the pre-processing step a sample is in rather than sitting at
-"Queued" until the last command, and the sample Logs view gains a step picker, so a failure
-in barcode correction or consensus has something to read.
+"Queued" until the last command. The sample panel's Logs view carries one log per command,
+picked by step, so a failure in barcode correction or consensus has something to read. It
+replaces the separate Reports tab: a step's report text was already printed into its log,
+so the two tabs showed the same numbers under overlapping step lists.
 
 Requires mitool 2.3.1-155-main, which fills the per-variant molecule count.
