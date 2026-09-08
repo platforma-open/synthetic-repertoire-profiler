@@ -327,9 +327,7 @@ self.body(func(inputs) {
 		reportSteps = append(reportSteps, "assign")
 	}
 	for step in reportSteps {
-		analyzeBuilder = analyzeBuilder.
-			saveFile("out." + step + ".report.json").
-			saveFile("out." + step + ".report.txt")
+		analyzeBuilder = analyzeBuilder.saveFile("out." + step + ".report.json")
 	}
 
 	// Designed known-set export (full designed set + nt→aa grouping). Written by
@@ -350,13 +348,10 @@ self.body(func(inputs) {
 	reportsMap := pcolumn.resourceMapBuilder(2)
 	for step in reportSteps {
 		reportsMap.add([step, "json"], analyzeCmd.getFile("out." + step + ".report.json"))
-		reportsMap.add([step, "txt"], analyzeCmd.getFile("out." + step + ".report.txt"))
 	}
 	if hasUmi {
 		reportsMap.add(["refine-tags", "json"], umiRun.output("refineReportJson"))
-		reportsMap.add(["refine-tags", "txt"], umiRun.output("refineReportTxt"))
 		reportsMap.add(["consensus", "json"], umiRun.output("consensusReportJson"))
-		reportsMap.add(["consensus", "txt"], umiRun.output("consensusReportTxt"))
 	}
 
 	// --- Per-sample tables (ptabler) --------------------------------------

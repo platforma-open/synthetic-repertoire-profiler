@@ -2,7 +2,7 @@
 import type { SimpleOption } from "@platforma-sdk/ui-vue";
 import { PlBtnGroup } from "@platforma-sdk/ui-vue";
 import { ref } from "vue";
-import SampleReportPanelSteps from "./SampleReportPanelSteps.vue";
+import SampleReportPanelLogs from "./SampleReportPanelLogs.vue";
 import SampleReportPanelVisualReport from "./SampleReportPanelVisualReport.vue";
 
 const props = defineProps<{ sampleId: string | undefined }>();
@@ -22,7 +22,7 @@ const tabOptions: SimpleOption<TabId>[] = [
       v-if="currentTab === 'visualReport'"
       :sample-id="props.sampleId"
     />
-    <SampleReportPanelSteps v-else-if="currentTab === 'logs'" :sample-id="props.sampleId" />
+    <SampleReportPanelLogs v-else-if="currentTab === 'logs'" :sample-id="props.sampleId" />
   </div>
   <div v-else>No sample selected</div>
 </template>

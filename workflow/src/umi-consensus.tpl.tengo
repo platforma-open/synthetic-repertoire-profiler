@@ -8,8 +8,7 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 
 self.defineOutputs(
 	"consensusMic",
-	"refineReportTxt", "refineReportJson",
-	"consensusReportTxt", "consensusReportJson",
+	"refineReportJson", "consensusReportJson",
 	"refineLog", "sortLog", "consensusLog"
 )
 
@@ -45,13 +44,11 @@ self.body(func(inputs) {
 	}
 	refineCmd := refineBuilder.
 		arg("-q").arg(string(minUmiQuality)).
-		arg("--report").arg("refine.report.txt").
 		arg("--json-report").arg("refine.report.json").
 		addFile("parsed.mic", parsedMic).
 		arg("parsed.mic").
 		arg("refined.mic").
 		saveFile("refined.mic").
-		saveFile("refine.report.txt").
 		saveFile("refine.report.json").
 		run()
 
@@ -81,21 +78,17 @@ self.body(func(inputs) {
 	consensusCmd := consensusBuilder.
 		arg("-O").arg("minRecordsPerConsensus=" + string(minReadsPerConsensus)).
 		arg("--threads").argWithVar("{system.cpu}").
-		arg("--report").arg("consensus.report.txt").
 		arg("--json-report").arg("consensus.report.json").
 		addFile("sorted.mic", sortCmd.getFile("sorted.mic")).
 		arg("sorted.mic").
 		arg("consensus.mic").
 		saveFile("consensus.mic").
-		saveFile("consensus.report.txt").
 		saveFile("consensus.report.json").
 		run()
 
 	return {
 		consensusMic: consensusCmd.getFile("consensus.mic"),
-		refineReportTxt: refineCmd.getFile("refine.report.txt"),
 		refineReportJson: refineCmd.getFile("refine.report.json"),
-		consensusReportTxt: consensusCmd.getFile("consensus.report.txt"),
 		consensusReportJson: consensusCmd.getFile("consensus.report.json"),
 		refineLog: refineCmd.getStdoutStream(),
 		sortLog: sortCmd.getStdoutStream(),
