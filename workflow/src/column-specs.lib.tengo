@@ -149,8 +149,43 @@ stateAxisSpec := func(alphabet) {
 // Block-local names: these are in-block plot columns, not exported, and a
 // distinct name keeps them from being confused with the per-variant abundance
 // columns of the same quantity.
-stateHeatmapColumns := func(alphabet) {
-	return [{
+stateHeatmapColumns := func(alphabet, hasUmi) {
+	cols := []
+	if hasUmi {
+		cols = append(cols, {
+			column: "moleculeFrequency",
+			id: "state-umi-frequency",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/repertoire/stateMoleculeFrequency",
+				valueType: "Double",
+				domain: { "pl7.app/alphabet": alphabet },
+				annotations: tableAnno(100500, "default", {
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/aggregated": "true",
+					"pl7.app/abundance/normalized": "true",
+					"pl7.app/label": "Residue frequency (UMIs)",
+					"pl7.app/format": ".2p"
+				})
+			}
+		}, {
+			column: "moleculeCount",
+			id: "state-umi-count",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/repertoire/stateMoleculeCount",
+				valueType: "Long",
+				domain: { "pl7.app/alphabet": alphabet },
+				annotations: tableAnno(90500, "default", {
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/aggregated": "true",
+					"pl7.app/abundance/normalized": "false",
+					"pl7.app/label": "UMI count"
+				})
+			}
+		})
+	}
+	return append(cols, {
 		column: "readCount",
 		id: "state-read-count",
 		allowNA: false,
@@ -185,7 +220,7 @@ stateHeatmapColumns := func(alphabet) {
 				"pl7.app/format": ".2p"
 			})
 		}
-	}]
+	})
 }
 
 // Parent (reference) residue per position, keyed [parentId, position] — the track
@@ -306,8 +341,29 @@ mutationCountAxisSpec := func(alphabet, label) {
 
 // Per-sample mutation-load counts. Summing variantCount across samples does NOT
 // give unique variants — a variant seen in three samples counts three times.
-mutationHistogramColumns := func(alphabet) {
-	return [{
+mutationHistogramColumns := func(alphabet, hasUmi) {
+	cols := []
+	if hasUmi {
+		cols = append(cols, {
+			column: "moleculeCount",
+			id: "bin-umi-count",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/uniqueMoleculeCount",
+				valueType: "Long",
+				domain: { "pl7.app/alphabet": alphabet },
+				annotations: tableAnno(90500, "default", {
+					"pl7.app/min": "1",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "false",
+					"pl7.app/abundance/aggregated": "true",
+					"pl7.app/label": "UMIs"
+				})
+			}
+		})
+	}
+	return append(cols, {
 		column: "variantCount",
 		id: "variant-count",
 		allowNA: false,
@@ -343,7 +399,7 @@ mutationHistogramColumns := func(alphabet) {
 				"pl7.app/label": "Reads"
 			})
 		}
-	}]
+	})
 }
 
 // Known-variant axis: one distinct known (designed) sequence. Hash of the known

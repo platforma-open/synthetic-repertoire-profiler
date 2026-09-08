@@ -668,16 +668,26 @@ self.body(func(inputs) {
 
 	// Per-sample mutation-load histogram
 	histogram := func(df, keyCol) {
+		perVariant := [
+			pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
+			pt.col("readCount").cast("Long").sum().alias("readCount")
+		]
+		perBin := [
+			pt.col(keyCol).count().alias("variantCount"),
+			pt.col("readCount").cast("Long").sum().alias("readCount")
+		]
+		outCols := [pt.col("mutationCount"), pt.col("variantCount"), pt.col("readCount")]
+		if hasUmi {
+			perVariant = append(perVariant,
+				pt.col("moleculeCount").cast("Long").sum().alias("moleculeCount"))
+			perBin = append(perBin,
+				pt.col("moleculeCount").cast("Long").sum().alias("moleculeCount"))
+			outCols = append(outCols, pt.col("moleculeCount"))
+		}
 		return df.
-			groupBy(keyCol).agg(
-				pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
-				pt.col("readCount").cast("Long").sum().alias("readCount")
-			).
-			groupBy("mutationCount").agg(
-				pt.col(keyCol).count().alias("variantCount"),
-				pt.col("readCount").cast("Long").sum().alias("readCount")
-			).
-			select(pt.col("mutationCount"), pt.col("variantCount"), pt.col("readCount")).
+			groupBy(keyCol).agg(perVariant...).
+			groupBy("mutationCount").agg(perBin...).
+			select(outCols...).
 			sort(["mutationCount"])
 	}
 	histogram(vdf, "variantKey").save("ntMutationHistogram.parquet")
