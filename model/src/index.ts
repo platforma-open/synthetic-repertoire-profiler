@@ -632,7 +632,9 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       ? parseResourceMap(
           ctx.outputs.resolve("stepLogs"),
           (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
-          false,
+          // addEntriesWithNoData: a step that has started but printed no marker yet must
+          // still appear, or the column reports the previous step while this one runs.
+          true,
         )
       : undefined,
   )

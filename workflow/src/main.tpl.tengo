@@ -247,23 +247,26 @@ wf.body(func(args) {
 		}
 	}
 
-	// Per-step logs, keyed [sampleId, step] — the Progress column's source. Separate
-	// from `logs` (analyze only), which is what the Logs view shows.
+	// Per-step logs (ResourceMap keyed [step]; processColumn prepends sampleId) — the
+	// Progress column's source and the Logs view's step picker.
+	//
+	// `ResourceMap`, not `Resource`+`path`: the per-sample template returns a built
+	// resource map here, and a `Resource` target hands it over as one opaque resource, so
+	// `parseResourceMap` in the model finds nothing and the column never leaves "Queued".
 	stepLogsOutput := {
-		type: "Resource",
+		type: "ResourceMap",
+		name: "stepLogs",
 		spec: {
 			kind: "PColumn",
 			name: "pl7.app/log",
 			domain: runScope,
+			valueType: "Log",
 			axesSpec: [{
-				name: "pl7.app/repertoire/pipelineStep",
 				type: "String",
+				name: "pl7.app/repertoire/log/step",
 				annotations: { "pl7.app/label": "Pipeline step" }
-			}],
-			valueType: "Log"
-		},
-		name: "stepLogs",
-		path: ["stepLogs"]
+			}]
+		}
 	}
 
 	targetOutputs := [
