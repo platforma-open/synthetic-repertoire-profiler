@@ -1,0 +1,97 @@
+// Per-sample UMI consensus chain: refine-tags -> sort -> consensus.
+//
+// A subtemplate so the chain is one memoization boundary.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+
+self.defineOutputs(
+	"consensusMic",
+	"refineReportJson", "consensusReportJson",
+	"refineLog", "sortLog", "consensusLog"
+)
+
+// memory-from-limits derives -Xmx from the mem() grant below; the plain entrypoint
+// sizes it from the RAM the JVM sees, which on a desktop run is the whole host.
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
+
+progressPrefix := "[==PROGRESS==]"
+
+self.body(func(inputs) {
+	parsedMic := inputs.parsedMic
+	umiTags := inputs.umiTags
+	payloadTags := inputs.payloadTags
+	minReadsPerConsensus := inputs.minReadsPerConsensus
+	minUmiQuality := inputs.minUmiQuality
+	mitoolCPUs := inputs.mitoolCPUs
+	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
+
+	envelope := func(builder) {
+		return builder.
+			printErrStreamToStdout().
+			saveStdoutStream().
+			env("MI_PROGRESS_PREFIX", progressPrefix).
+			software(mitoolSw).
+			cpu(mitoolCPUs).
+			mem(mitoolMem)
+	}
+
+	// --- refine-tags: correct sequencing errors inside the barcodes ---
+	refineBuilder := envelope(exec.builder()).arg("refine-tags")
+	for tag in umiTags {
+		refineBuilder = refineBuilder.arg("-t").arg(tag)
+	}
+	refineCmd := refineBuilder.
+		arg("-q").arg(string(minUmiQuality)).
+		arg("--json-report").arg("refine.report.json").
+		addFile("parsed.mic", parsedMic).
+		arg("parsed.mic").
+		arg("refined.mic").
+		saveFile("refined.mic").
+		saveFile("refine.report.json").
+		run()
+
+	// --- sort: make equal barcodes adjacent ---
+	// A separate step: the sort `consensus` does internally uses a 2 GB budget against
+	// this command's 256 MB.
+	sortBuilder := envelope(exec.builder()).arg("sort")
+	for tag in umiTags {
+		sortBuilder = sortBuilder.arg("-s").arg(tag)
+	}
+	sortCmd := sortBuilder.
+		arg("--use-local-temp").
+		addFile("refined.mic", refineCmd.getFile("refined.mic")).
+		arg("refined.mic").
+		arg("sorted.mic").
+		saveFile("sorted.mic").
+		run()
+
+	// --- consensus: one record per molecule ---
+	consensusBuilder := envelope(exec.builder()).arg("consensus")
+	for tag in umiTags {
+		consensusBuilder = consensusBuilder.arg("--group-tag").arg(tag)
+	}
+	for tag in payloadTags {
+		consensusBuilder = consensusBuilder.arg("--assemble-tag").arg(tag)
+	}
+	consensusCmd := consensusBuilder.
+		arg("-O").arg("minRecordsPerConsensus=" + string(minReadsPerConsensus)).
+		arg("--threads").argWithVar("{system.cpu}").
+		arg("--json-report").arg("consensus.report.json").
+		addFile("sorted.mic", sortCmd.getFile("sorted.mic")).
+		arg("sorted.mic").
+		arg("consensus.mic").
+		saveFile("consensus.mic").
+		saveFile("consensus.report.json").
+		run()
+
+	return {
+		consensusMic: consensusCmd.getFile("consensus.mic"),
+		refineReportJson: refineCmd.getFile("refine.report.json"),
+		consensusReportJson: consensusCmd.getFile("consensus.report.json"),
+		refineLog: refineCmd.getStdoutStream(),
+		sortLog: sortCmd.getStdoutStream(),
+		consensusLog: consensusCmd.getStdoutStream()
+	}
+})
