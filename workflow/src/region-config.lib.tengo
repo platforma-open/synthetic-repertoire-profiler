@@ -10,6 +10,8 @@ json := import("json")
 //   hasRegions      : at least one parent has a non-empty region partition
 //   hasSubRegions   : at least one region is subdivided — gates the second membership
 //                     column, so a run without grafts is byte-identical to before
+//   subdividedByParent : parentId -> the names of parent regions that hold
+//                     sub-regions. Only parents with at least one appear.
 //   isVdj           : at least one parent uses the canonical `vdj` region scheme —
 //                     the run's modality declaration is derived from this
 //   ntRegionNames   : union of named-region names (first-seen order)
@@ -20,6 +22,7 @@ analyze := func(parentRegionsJson) {
 		enabled: false,
 		hasRegions: false,
 		hasSubRegions: false,
+		subdividedByParent: {},
 		isVdj: false,
 		ntRegionNames: [],
 		aaRegionNames: [],
@@ -63,6 +66,11 @@ analyze := func(parentRegionsJson) {
 			kids := r.children
 			if !is_undefined(kids) && len(kids) > 0 {
 				res.hasSubRegions = true
+				held := res.subdividedByParent[pid]
+				if is_undefined(held) {
+					held = []
+				}
+				res.subdividedByParent[pid] = append(held, r.name)
 				for c in kids {
 					spans = append(spans, c)
 				}
@@ -103,6 +111,7 @@ vdjAuto := func() {
 		hasRegions: true,
 		// Germline-inferred boundaries are the seven canonical regions and nothing below.
 		hasSubRegions: false,
+		subdividedByParent: {},
 		isVdj: true,
 		ntRegionNames: names,
 		aaRegionNames: names,

@@ -1,0 +1,53 @@
+// Per-parent list of the regions that hold sub-regions ([parentId] -> subdividedRegions).
+//
+// Rows are emitted only for parents that subdivide something. A parent absent from the
+// table subdivides nothing — the downstream join then yields no value, which reads the
+// same as "every region of this parent is an ordinary one".
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+
+self.defineOutputs("table")
+
+self.awaitState("InputsLocked")
+self.awaitState("parentsTable", "ResourceReady")
+
+self.body(func(inputs) {
+	// parentId -> comma-joined region names, already formatted by the caller.
+	byParent := inputs.byParent
+	pids := maps.getKeys(byParent)
+	ll.assert(len(pids) > 0, "byParent must name at least one parent")
+
+	// A handful of parents and one row each — the smallest queue is the right home.
+	wf := pt.workflow().
+		inLightQueue()
+
+	// inferSchema:false → parentId reads as String, matching the .eq() comparisons below.
+	df := wf.frame({
+		file: inputs.parentsTable,
+		xsvType: "tsv"
+	}, { id: "parents", inferSchema: false })
+
+	// One when/then arm per subdividing parent; every other parent falls through to "".
+	branch := pt.when(pt.col("parentId").eq(pids[0])).then(pt.lit(byParent[pids[0]]))
+	for i := 1; i < len(pids); i++ {
+		branch = branch.when(pt.col("parentId").eq(pids[i])).then(pt.lit(byParent[pids[i]]))
+	}
+
+	df.
+		select(
+			pt.col("parentId"),
+			branch.otherwise(pt.lit("")).alias("subdividedRegions")
+		).
+		filter(pt.col("subdividedRegions").strLenChars().gt(pt.lit(0))).
+		sort(["parentId"]).
+		save("subdividedRegions.tsv", { xsvType: "tsv" })
+
+	result := wf.run()
+
+	return {
+		table: result.getFile("subdividedRegions.tsv")
+	}
+})
