@@ -446,7 +446,8 @@ export type UmiSettings = Pick<BlockData, "minReadsPerConsensus" | "minUmiQualit
  * body is compiled into `model.json` and cannot be called.
  *
  * The settings are required once a UMI is present: there is no safe implicit default for
- * a threshold that drops molecules. Messages name the Advanced control to fill in.
+ * a threshold that drops molecules. Messages name the control to fill in, which lives in
+ * the Barcodes section beside the pattern that creates the need for it.
  */
 export function validateUmiSettings(umi: UmiSpec, s: UmiSettings): void {
   // A ranged half (`N{4:8}`) makes the molecule key ambiguous — two halves of different
@@ -466,7 +467,7 @@ export function validateUmiSettings(umi: UmiSpec, s: UmiSettings): void {
   if (s.minReadsPerConsensus === undefined) missing.push("Min reads per UMI");
   if (s.minUmiQuality === undefined) missing.push("Min UMI quality");
   if (missing.length > 0)
-    throw new Error(`Set the UMI consensus settings in Advanced: ${missing.join(", ")}.`);
+    throw new Error(`Set the molecule consensus settings under Barcodes: ${missing.join(", ")}.`);
 
   if (!Number.isInteger(s.minReadsPerConsensus) || s.minReadsPerConsensus! < 1)
     throw new Error("Min reads per UMI must be a positive integer.");

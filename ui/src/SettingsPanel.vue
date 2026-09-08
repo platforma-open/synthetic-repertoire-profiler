@@ -4,6 +4,7 @@ import {
   DEFAULT_TAG_PATTERN_SINGLE,
   isDefaultTagPattern,
   parsePattern,
+  patternUmiSpec,
   plRefKey,
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
 import {
@@ -175,6 +176,36 @@ const pairedEndMismatch = computed(() => {
   return app.model.outputs.inputIsPairedEnd === false;
 });
 
+// The UMI declared by the pattern, or undefined. Drives both the two settings fields
+// below (required once a UMI is present) and the structure echo, so a mistyped pattern
+// shows up before a run rather than in the workflow.
+const umi = computed(() => {
+  const pattern = app.model.data.tagPattern;
+  if (!pattern || pattern.trim() === "") return undefined;
+  const parts = parsePattern(pattern.replace(/\s+/g, ""));
+  return parts ? patternUmiSpec(parts) : undefined;
+});
+
+// Reads back what the pattern actually declared, in the terms the chain uses: the halves
+// are separate grouping keys, and it is the pair that identifies a molecule.
+const umiSummary = computed(() => {
+  const u = umi.value;
+  if (!u) return undefined;
+  const parts = parsePattern((app.model.data.tagPattern ?? "").replace(/\s+/g, ""));
+  // A ranged capture has no single length, so report the range rather than a number the
+  // chain will never use — the pattern is refused for exactly that reason.
+  const len = (r: { min: number; max: number }) =>
+    r.min === r.max ? `${r.min} nt` : `${r.min}-${r.max} nt (a range, not allowed)`;
+  const halves: string[] = [];
+  if (u.r1Name && parts?.r1.umi) halves.push(`${len(parts.r1.umi)} on Read 1 (${u.r1Name})`);
+  if (u.r2Name && parts?.r2?.umi) halves.push(`${len(parts.r2.umi)} on Read 2 (${u.r2Name})`);
+  const tail =
+    halves.length > 1 && !u.ranged
+      ? `, used together as the molecule key (${u.totalLength} nt in total)`
+      : "";
+  return `UMI: ${halves.join(" + ")}${tail}.`;
+});
+
 // Both writes happen on the user gesture, never in a watcher on the outputs —
 // that loop would be a hairpin. `.subtitle` is args-only, so it needs the dataset
 // label snapshotted here.
@@ -280,10 +311,61 @@ ACGTACGT..."
     >
       <template #tooltip>
         Tag pattern for primer trimming, UMI extraction etc. Support MiXCR pattern syntax. Required:
-        the insert capture (R1/R2) marks the region aligned to the parent, and any UMI capture
-        enables molecule-level counting.
+        the insert capture (R1/R2) marks the region aligned to the parent.<br /><br />
+        A UMI capture switches on molecule-level analysis: barcodes are error-corrected, reads
+        sharing one are collapsed into a single consensus read, and abundance is then reported in
+        molecules rather than reads. A UMI on each read is allowed — the two are used together as
+        the molecule key, not concatenated. Each capture needs a fixed length (<code>N{12}</code>,
+        not <code>N{8:12}</code>), and at least 8 nt in total: below that, a sequencing error in a
+        barcode cannot be told apart from a different real barcode.
       </template>
     </PlTextField>
+
+    <!-- Reads the pattern back in the chain's own terms, so a mistyped UMI is visible
+         before a run rather than in the workflow. -->
+    <div v-if="umiSummary" class="umi-summary">{{ umiSummary }}</div>
+
+    <!-- Required once the pattern declares a UMI: neither threshold has a safe implicit
+         default, and each trades molecules kept against confidence in the ones kept. -->
+    <template v-if="umi">
+      <PlSectionSeparator>Molecule consensus</PlSectionSeparator>
+      <PlRow>
+        <PlNumberField
+          v-model="app.model.data.minReadsPerConsensus"
+          label="Min reads per UMI"
+          :min-value="1"
+          :step="1"
+          :error-message="
+            app.model.data.minReadsPerConsensus === undefined ? 'Required' : undefined
+          "
+        >
+          <template #tooltip>
+            Reads a molecule needs before it yields a consensus. Higher values correct more
+            sequencing errors but discard rare molecules — <code>1</code> keeps everything, and is
+            what you want on a shallow run or a very diverse library. Default <code>2</code>.
+            Molecules dropped here appear as <em>Groups dropped by count</em> in the Consensus
+            report.
+          </template>
+        </PlNumberField>
+
+        <PlNumberField
+          v-model="app.model.data.minUmiQuality"
+          label="Min UMI quality"
+          :min-value="0"
+          :max-value="58"
+          :step="1"
+          :error-message="app.model.data.minUmiQuality === undefined ? 'Required' : undefined"
+        >
+          <template #tooltip>
+            A barcode with any base below this Phred quality is discarded unless another barcode can
+            absorb it as an error. Raising it discards more reads but leaves fewer wrong molecules;
+            lowering it keeps more reads at the cost of splitting one molecule into several. Default
+            <code>20</code>. See <em>diversity filtered by tag quality</em> in the Refine tags
+            report.
+          </template>
+        </PlNumberField>
+      </PlRow>
+    </template>
   </PlAccordionSection>
 
   <!-- Manual per-parent region annotation. The whole section is hidden when the
@@ -467,3 +549,10 @@ ACGTACGT..."
     </PlNumberField>
   </PlAccordionSection>
 </template>
+
+<style scoped>
+.umi-summary {
+  color: var(--txt-03);
+  font-size: 12px;
+}
+</style>
