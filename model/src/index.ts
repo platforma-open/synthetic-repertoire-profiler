@@ -429,18 +429,28 @@ const MIN_UMI_LENGTH = 8;
 /** The `BlockData` fields [validateUmiSettings] reads. */
 export type UmiSettings = Pick<BlockData, "minReadsPerConsensus" | "minUmiQuality">;
 
-/** Throws when a UMI declaration or its consensus settings cannot produce a molecule count. */
-export function validateUmiSettings(umi: UmiSpec, s: UmiSettings): void {
+/**
+ * What is wrong with the UMI a pattern declares, or undefined. Shown on the tag-pattern
+ * field, and re-checked by [validateUmiSettings] so the two cannot disagree.
+ */
+export function umiPatternError(umi: UmiSpec): string | undefined {
   if (umi.ranged)
-    throw new Error(
+    return (
       "UMI captures must have a fixed length (N{n}), not a range (N{min:max}) — " +
-        "a variable-length barcode cannot identify a molecule.",
+      "a variable-length barcode cannot identify a molecule."
     );
   if (umi.totalLength < MIN_UMI_LENGTH)
-    throw new Error(
+    return (
       `A UMI of ${umi.totalLength} nt is too short to identify molecules; ` +
-        `use at least ${MIN_UMI_LENGTH} nt in total across both reads.`,
+      `use at least ${MIN_UMI_LENGTH} nt in total across both reads.`
     );
+  return undefined;
+}
+
+/** Throws when a UMI declaration or its consensus settings cannot produce a molecule count. */
+export function validateUmiSettings(umi: UmiSpec, s: UmiSettings): void {
+  const patternError = umiPatternError(umi);
+  if (patternError) throw new Error(patternError);
 
   const missing: string[] = [];
   if (s.minReadsPerConsensus === undefined) missing.push("Min reads per UMI");
