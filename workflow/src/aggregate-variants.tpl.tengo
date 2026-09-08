@@ -67,12 +67,22 @@ self.body(func(inputs) {
 
 	// Cross-sample totals from the per-sample abundance parquets ([variantKey,
 	// readCount, readFraction], one row per variantKey per sample).
+	// hasUmi gates the molecule columns everywhere they appear: the per-sample parquets
+	// only carry them on a UMI run, and the Xsv spec in main is gated on the same flag.
+	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
 	totals := func(frames) {
-		return concatF(frames).groupBy("variantKey").agg(
+		aggs := [
 			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
 			pt.col("readFraction").cast("Double").mean().alias("readFractionMean"),
 			pt.col("readCount").count().alias("sampleCount")
-		)
+		]
+		if hasUmi {
+			aggs = append(aggs,
+				pt.col("uniqueMoleculeCount").cast("Long").sum().alias("uniqueMoleculeCountSum"),
+				pt.col("uniqueMoleculeFraction").cast("Double").mean().alias("uniqueMoleculeFractionMean")
+			)
+		}
+		return concatF(frames).groupBy("variantKey").agg(aggs...)
 	}
 
 	withLabel := func(df) {
@@ -107,6 +117,9 @@ self.body(func(inputs) {
 		pt.col("readFractionMean"),
 		pt.col("sampleCount")
 	]
+	if hasUmi {
+		ntSelect = append(ntSelect, pt.col("uniqueMoleculeCountSum"), pt.col("uniqueMoleculeFractionMean"))
+	}
 	for rn in ntRegionCols {
 		ntAggs = append(ntAggs, pt.col("nSeq" + rn).cast("String").first().alias("nSeq" + rn))
 		ntSelect = append(ntSelect, pt.col("nSeq" + rn))
@@ -143,6 +156,9 @@ self.body(func(inputs) {
 		pt.col("sampleCount"),
 		pt.col("ntVariantCount")
 	]
+	if hasUmi {
+		aaSelect = append(aaSelect, pt.col("uniqueMoleculeCountSum"), pt.col("uniqueMoleculeFractionMean"))
+	}
 	for rn in aaRegionCols {
 		aaAggs = append(aaAggs, pt.col("aaSeq" + rn).cast("String").first().alias("aaSeq" + rn))
 		aaMetaSelect = append(aaMetaSelect, pt.col("aaSeq" + rn))

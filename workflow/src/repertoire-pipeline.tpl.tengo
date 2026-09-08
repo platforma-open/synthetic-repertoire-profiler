@@ -409,29 +409,65 @@ self.body(func(inputs) {
 		groupBy("aaVariantKey").agg(pt.col("aaVariantKey").count().alias("_n")).
 		select(pt.col("aaVariantKey"))
 
+	// mitool's TSV column is `moleculeCount`; the PColumn is `uniqueMoleculeCount`. The
+	// rename happens here, once. Summing over synonymous nt members is sound because a
+	// molecule yields one consensus sequence, so it lands in exactly one nt variant.
+	abundAggs := func() {
+		aggs := [
+			pt.col("readCount").cast("Long").sum().alias("readCount"),
+			pt.col("readFraction").cast("Double").sum().alias("readFraction")
+		]
+		if hasUmi {
+			aggs = append(aggs, pt.col("moleculeCount").cast("Long").sum().alias("uniqueMoleculeCount"))
+		}
+		return aggs
+	}
+	withMoleculeFraction := func(df) {
+		if !hasUmi {
+			return df
+		}
+		return df.withColumns(
+			pt.col("uniqueMoleculeCount").cast("Double").truediv(
+				pt.col("uniqueMoleculeCount").sum()
+			).alias("uniqueMoleculeFraction")
+		)
+	}
+
+	knownAbundAggs := func() {
+		aggs := [
+			pt.col("readCount").cast("Long").sum().alias("knownVariantReadCount"),
+			pt.col("readFraction").cast("Double").sum().alias("knownVariantReadFraction")
+		]
+		if hasUmi {
+			aggs = append(aggs, pt.col("moleculeCount").cast("Long").sum().alias("knownVariantMoleculeCount"))
+		}
+		return aggs
+	}
+
 	ntAbundSrc := vAbund
 	if exportOnlyKnown {
 		ntAbundSrc = hasNtKnown ? vAbund.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")) : vAbund.filter(pt.lit(false))
 	}
-	ntAbundSrc.groupBy("variantKey").agg(
-		pt.col("readCount").cast("Long").sum().alias("readCount"),
-		pt.col("readFraction").cast("Double").sum().alias("readFraction")
+	withMoleculeFraction(
+		ntAbundSrc.groupBy("variantKey").agg(abundAggs()...)
 	).sort(["variantKey"]).save("ntAbundance.parquet")
 
 	aaAbundSrc := vAbund.filter(b6NonEmpty("aaVariantKey"))
 	if exportOnlyKnown {
 		aaAbundSrc = aaAbundSrc.join(matchedAaKeys, { how: "inner", on: ["aaVariantKey"] })
 	}
-	aaAbundSrc.
-		groupBy("aaVariantKey").agg(
-			pt.col("readCount").cast("Long").sum().alias("readCount"),
-			pt.col("readFraction").cast("Double").sum().alias("readFraction")
-		).
-		select(
-			pt.col("aaVariantKey").alias("variantKey"),
-			pt.col("readCount"),
-			pt.col("readFraction")
-		).
+	aaAbundSelect := [
+		pt.col("aaVariantKey").alias("variantKey"),
+		pt.col("readCount"),
+		pt.col("readFraction")
+	]
+	if hasUmi {
+		aaAbundSelect = append(aaAbundSelect, pt.col("uniqueMoleculeCount"), pt.col("uniqueMoleculeFraction"))
+	}
+	withMoleculeFraction(
+		aaAbundSrc.groupBy("aaVariantKey").agg(abundAggs()...)
+	).
+		select(aaAbundSelect...).
 		sort(["variantKey"]).
 		save("aaAbundance.parquet")
 
@@ -444,10 +480,7 @@ self.body(func(inputs) {
 	vAbund.
 		filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
 		withColumns(b6SeqHash("ntSequence").alias("knownKey")).
-		groupBy("knownKey").agg(
-			pt.col("readCount").cast("Long").sum().alias("knownVariantReadCount"),
-			pt.col("readFraction").cast("Double").sum().alias("knownVariantReadFraction")
-		).sort(["knownKey"]).save("knownNtAbundance.parquet")
+		groupBy("knownKey").agg(knownAbundAggs()...).sort(["knownKey"]).save("knownNtAbundance.parquet")
 
 	// aa known × this sample: reads of the nt members of each assigned aa variant,
 	// keyed by hash(aa known seq).
@@ -462,10 +495,7 @@ self.body(func(inputs) {
 		filter(b6NonEmpty("aaVariantKey")).
 		join(aaKnownSeq, { how: "inner", on: ["aaVariantKey"] }).
 		withColumns(b6SeqHash("aaSequence").alias("knownKey")).
-		groupBy("knownKey").agg(
-			pt.col("readCount").cast("Long").sum().alias("knownVariantReadCount"),
-			pt.col("readFraction").cast("Double").sum().alias("knownVariantReadFraction")
-		).sort(["knownKey"]).save("knownAaAbundance.parquet")
+		groupBy("knownKey").agg(knownAbundAggs()...).sort(["knownKey"]).save("knownAaAbundance.parquet")
 
 	// declared-member synonymous spread: per known-aa entity, the
 	// SD + CV of its DESIGNED nt members' per-sample fractions, seeding members
