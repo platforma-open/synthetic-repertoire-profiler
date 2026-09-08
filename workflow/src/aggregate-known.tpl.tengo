@@ -44,18 +44,22 @@ self.body(func(inputs) {
 	exportOnlyKnown := !is_undefined(inputs.exportOnlyKnown) && inputs.exportOnlyKnown
 	// The per-sample TSVs carry moleculeCount only on a UMI run.
 	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
-	abundAggs := func() {
-		aggs := [
+	abundAggs := func(...head) {
+		// head first, then the abundance columns — bound here rather than concatenated at
+		// the call site, so the spread never has to bind tighter than `+`.
+		aggs := []
+		for h in head { aggs = append(aggs, h) }
+		aggs = append(aggs,
 			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
-			pt.col("sampleId").nUnique().alias("sampleCount")
-		]
+			pt.col("sampleId").nUnique().alias("sampleCount"))
 		if hasUmi {
 			aggs = append(aggs, pt.col("moleculeCount").cast("Long").sum().alias("moleculeCountTotal"))
 		}
 		return aggs
 	}
-	abundSelect := func() {
+	abundSelect := func(...head) {
 		cols := []
+		for h in head { cols = append(cols, h) }
 		if hasUmi {
 			cols = append(cols, pt.col("moleculeCountTotal"))
 		}
@@ -123,15 +127,15 @@ self.body(func(inputs) {
 	// abundance (budget-0 exact match ⇒ the assigned variant IS the known one).
 	ntAssigned.
 		groupBy("knownKey").
-		agg([
+		agg(abundAggs(
 			pt.col("knownNtKey").cast("String").first().alias("label"),
 			pt.col("ntSequence").first().alias("sequence")
-		] + abundAggs()...).
-		select([
+		)...).
+		select(abundSelect(
 			pt.col("knownKey"),
 			pt.col("label"),
 			pt.col("sequence")
-		] + abundSelect()...).
+		)...).
 		sort(["knownKey"]).save("knownNt.tsv", { xsvType: "tsv" })
 
 	// nt distance-to-nearest (ASSIGNED + AMBIGUOUS carry a distance). Under the
@@ -174,15 +178,15 @@ self.body(func(inputs) {
 		select(pt.col("aaVariantKey"), pt.col("readCount").cast("Long").alias("readCount"), pt.col("sampleId")).
 		join(aaMeta, { how: "inner", on: ["aaVariantKey"] }).
 		groupBy("knownKey").
-		agg([
+		agg(abundAggs(
 			pt.col("label").first().alias("label"),
 			pt.col("sequence").first().alias("sequence")
-		] + abundAggs()...).
-		select([
+		)...).
+		select(abundSelect(
 			pt.col("knownKey"),
 			pt.col("label"),
 			pt.col("sequence")
-		] + abundSelect()...).
+		)...).
 		sort(["knownKey"]).save("knownAa.tsv", { xsvType: "tsv" })
 
 	// aa distance-to-nearest. Under the export-only-matched filter, keep only
@@ -277,11 +281,11 @@ self.body(func(inputs) {
 		)
 	designedNtKeyed.
 		join(matchedNtAbund, { how: "left", on: ["knownKey"] }).
-		select([
+		select(abundSelect(
 			pt.col("knownKey"),
 			pt.col("label"),
 			pt.col("sequence")
-		] + abundSelect()...).
+		)...).
 		sort(["knownKey"]).
 		save("knownNtAll.tsv", { xsvType: "tsv" })
 
