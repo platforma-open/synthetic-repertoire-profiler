@@ -615,24 +615,6 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       ?.getFileHandle(),
   )
 
-  // Per-sample analyze log handles (for the Logs view).
-  .output("logs", (ctx) =>
-    ctx.outputs !== undefined
-      ? parseResourceMap(ctx.outputs.resolve("logs"), (acc) => acc.getLogHandle(), false)
-      : undefined,
-  )
-
-  // Per-sample progress string scraped from the analyze log markers.
-  .output("progress", (ctx) =>
-    ctx.outputs !== undefined
-      ? parseResourceMap(
-          ctx.outputs.resolve("logs"),
-          (acc) => acc.getProgressLog(ProgressPrefix),
-          false,
-        )
-      : undefined,
-  )
-
   // Per-step log handles, keyed [sampleId, step]. Without these a failed
   // pre-processing step has no log in the UI — `logs` carries analyze only, and on a
   // UMI run analyze is three commands downstream of where a failure can happen.

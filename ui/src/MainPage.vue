@@ -129,6 +129,10 @@ const columnDefs: ColDef<SampleRow>[] = [
     field: "progress",
     headerName: "Progress",
     headerComponentParams: { type: "Progress" } satisfies PlAgHeaderComponentParams,
+    // The step label is longer than the bare stage name it replaced
+    // (`[2/5] Correcting UMI: 40.0%`), so it needs room. A minWidth rather than flex:
+    // the Alignments chart beside it is what should take the slack.
+    minWidth: 260,
     progress(_value, cellData) {
       const row = cellData.data;
       if (!row || row.progress === "Queued") return { status: "not_started", text: "Queued" };
