@@ -404,13 +404,29 @@ self.body(func(inputs) {
 		select(pt.col("aaVariantKey"))
 
 	// mitool's TSV column is `moleculeCount`; the PColumn is `uniqueMoleculeCount`.
+	//
+	// The molecule fraction is taken against the sample's whole repertoire, matching
+	// mitool's `readFraction`. The total is broadcast onto every row here, BEFORE the
+	// export filter and before the aa-level scope narrows: dividing by a window sum
+	// after either would normalise against the surviving subset and inflate the
+	// fractions, leaving them on a different denominator from `readFraction` and the QC
+	// molecule fractions.
+	vAbundF := vAbund
+	if hasUmi {
+		vAbundF = vAbund.withColumns(
+			pt.col("moleculeCount").cast("Long").sum().alias("_repertoireMolecules")
+		)
+	}
 	abundAggs := func() {
 		aggs := [
 			pt.col("readCount").cast("Long").sum().alias("readCount"),
 			pt.col("readFraction").cast("Double").sum().alias("readFraction")
 		]
 		if hasUmi {
-			aggs = append(aggs, pt.col("moleculeCount").cast("Long").sum().alias("uniqueMoleculeCount"))
+			aggs = append(aggs,
+				pt.col("moleculeCount").cast("Long").sum().alias("uniqueMoleculeCount"),
+				pt.col("_repertoireMolecules").first().alias("_repertoireMolecules")
+			)
 		}
 		return aggs
 	}
@@ -420,7 +436,7 @@ self.body(func(inputs) {
 		}
 		return df.withColumns(
 			pt.col("uniqueMoleculeCount").cast("Double").truediv(
-				pt.col("uniqueMoleculeCount").sum()
+				pt.col("_repertoireMolecules").cast("Double")
 			).alias("uniqueMoleculeFraction")
 		)
 	}
@@ -436,15 +452,26 @@ self.body(func(inputs) {
 		return aggs
 	}
 
-	ntAbundSrc := vAbund
+	ntAbundSrc := vAbundF
 	if exportOnlyKnown {
-		ntAbundSrc = hasNtKnown ? vAbund.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")) : vAbund.filter(pt.lit(false))
+		ntAbundSrc = hasNtKnown ? vAbundF.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")) : vAbundF.filter(pt.lit(false))
+	}
+	ntAbundSelect := [
+		pt.col("variantKey"),
+		pt.col("readCount"),
+		pt.col("readFraction")
+	]
+	if hasUmi {
+		ntAbundSelect = append(ntAbundSelect, pt.col("uniqueMoleculeCount"), pt.col("uniqueMoleculeFraction"))
 	}
 	withMoleculeFraction(
 		ntAbundSrc.groupBy("variantKey").agg(abundAggs()...)
-	).sort(["variantKey"]).save("ntAbundance.parquet")
+	).
+		select(ntAbundSelect...).
+		sort(["variantKey"]).
+		save("ntAbundance.parquet")
 
-	aaAbundSrc := vAbund.filter(b6NonEmpty("aaVariantKey"))
+	aaAbundSrc := vAbundF.filter(b6NonEmpty("aaVariantKey"))
 	if exportOnlyKnown {
 		aaAbundSrc = aaAbundSrc.join(matchedAaKeys, { how: "inner", on: ["aaVariantKey"] })
 	}
