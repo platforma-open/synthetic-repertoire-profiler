@@ -316,8 +316,7 @@ ACGTACGT..."
             Reads a molecule needs before it yields a consensus. Higher values correct more
             sequencing errors but discard rare molecules — <code>1</code> keeps everything, and is
             what you want on a shallow run or a very diverse library. Default <code>2</code>.
-            Molecules dropped here appear as <em>Groups dropped by count</em> in the Consensus
-            report.
+            Molecules dropped here appear as <em>Groups dropped by count</em> in the Consensus logs.
           </template>
         </PlNumberField>
 
@@ -333,8 +332,7 @@ ACGTACGT..."
             A barcode with any base below this Phred quality is discarded unless another barcode can
             absorb it as an error. Raising it discards more reads but leaves fewer wrong molecules;
             lowering it keeps more reads at the cost of splitting one molecule into several. Default
-            <code>20</code>. See <em>diversity filtered by tag quality</em> in the Refine tags
-            report.
+            <code>20</code>. See <em>diversity filtered by tag quality</em> in the Refine tags logs.
           </template>
         </PlNumberField>
       </PlRow>
