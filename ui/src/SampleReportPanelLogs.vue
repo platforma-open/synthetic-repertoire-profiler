@@ -52,14 +52,20 @@ const logHandle = computed(
 <template>
   <PlContainer>
     <PlBtnGroup v-if="tabOptions.length > 1" v-model="currentStep" :options="tabOptions" />
-    <PlLogView v-if="logHandle" :log-handle="logHandle" :label="current?.label ?? 'Log'" />
+    <PlLogView
+      v-if="logHandle"
+      :class="{ 'log-first': tabOptions.length <= 1 }"
+      :log-handle="logHandle"
+      :label="current?.label ?? 'Log'"
+    />
     <div v-else>No log available for this sample yet.</div>
   </PlContainer>
 </template>
 
-<style lang="css">
-.pl-log-view {
-  max-height: calc(100% - var(--contour-offset));
-  max-width: calc(100% - var(--contour-offset));
+<style lang="css" scoped>
+/* The label floats 8px above the log view's own top edge; without a step picker
+   above it there is nothing to sit in and it gets clipped. */
+.log-first {
+  margin-top: 8px;
 }
 </style>
