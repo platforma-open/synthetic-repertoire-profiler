@@ -1,0 +1,113 @@
+// Per-sample UMI consensus chain: refine-tags -> sort -> consensus.
+//
+// Its own subtemplate so the whole chain forms one memoization boundary — a settings
+// change below it does not re-run three exec steps. Ported from peptide-extraction,
+// which is the reference implementation for this chain (A-0016), with two changes:
+// the `memory-from-limits` entrypoint (see :main below) and JSON reports alongside the
+// text ones, so QC reads fields rather than scraping prose.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+
+self.defineOutputs(
+	"consensusMic",
+	"refineReportTxt", "refineReportJson",
+	"consensusReportTxt", "consensusReportJson"
+)
+
+// `memory-from-limits`, not `:main`: `:main` sizes the JVM heap by MaxRAMPercentage of
+// the RAM the JVM sees, which on a native/desktop run is the whole host, ignoring the
+// mem() grant below. Both sorts here budget from Runtime.maxMemory().
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
+
+progressPrefix := "[==PROGRESS==]"
+
+self.body(func(inputs) {
+	parsedMic := inputs.parsedMic
+	// Molecule tag names, per read half. Either may be absent; at least one is present
+	// or this template is not rendered.
+	umiTags := inputs.umiTags
+	// Payload (Targets) tags to assemble a consensus for — the pattern's insert captures.
+	payloadTags := inputs.payloadTags
+	minReadsPerConsensus := inputs.minReadsPerConsensus
+	minUmiQuality := inputs.minUmiQuality
+	mitoolCPUs := inputs.mitoolCPUs
+	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
+
+	envelope := func(builder) {
+		return builder.
+			printErrStreamToStdout().
+			saveStdoutStream().
+			env("MI_PROGRESS_PREFIX", progressPrefix).
+			software(mitoolSw).
+			cpu(mitoolCPUs).
+			mem(mitoolMem)
+	}
+
+	// --- refine-tags: correct sequencing errors inside the barcodes ---
+	// Barcode error rates are left at mitool's defaults. peptide-extraction overrides
+	// --substitution-rate to 1e-5, which needs ~413 reads on a barcode before any
+	// neighbour can be merged; at this block's depth (single-digit to tens of reads per
+	// molecule) that switches correction off in practice. mitool's 1e-3 needs ~41.
+	refineBuilder := envelope(exec.builder()).arg("refine-tags")
+	for tag in umiTags {
+		refineBuilder = refineBuilder.arg("-t").arg(tag)
+	}
+	refineCmd := refineBuilder.
+		arg("-q").arg(string(minUmiQuality)).
+		arg("--report").arg("refine.report.txt").
+		arg("--json-report").arg("refine.report.json").
+		addFile("parsed.mic", parsedMic).
+		arg("parsed.mic").
+		arg("refined.mic").
+		saveFile("refined.mic").
+		saveFile("refine.report.txt").
+		saveFile("refine.report.json").
+		run()
+
+	// --- sort: make equal barcodes adjacent ---
+	// Not redundant with the sort `consensus` does internally: that path hardcodes a
+	// 2 GB sort budget (Consensus.kt) against this command's 256 MB (Sort.kt), and peak
+	// heap runs ~12x the budget — the difference between ~24 GB and ~3 GB.
+	sortBuilder := envelope(exec.builder()).arg("sort")
+	for tag in umiTags {
+		sortBuilder = sortBuilder.arg("-s").arg(tag)
+	}
+	sortCmd := sortBuilder.
+		arg("--use-local-temp").
+		addFile("refined.mic", refineCmd.getFile("refined.mic")).
+		arg("refined.mic").
+		arg("sorted.mic").
+		saveFile("sorted.mic").
+		run()
+
+	// --- consensus: one record per molecule ---
+	consensusBuilder := envelope(exec.builder()).arg("consensus")
+	for tag in umiTags {
+		consensusBuilder = consensusBuilder.arg("--group-tag").arg(tag)
+	}
+	for tag in payloadTags {
+		consensusBuilder = consensusBuilder.arg("--assemble-tag").arg(tag)
+	}
+	consensusCmd := consensusBuilder.
+		arg("-O").arg("minRecordsPerConsensus=" + string(minReadsPerConsensus)).
+		arg("--threads").argWithVar("{system.cpu}").
+		arg("--report").arg("consensus.report.txt").
+		arg("--json-report").arg("consensus.report.json").
+		addFile("sorted.mic", sortCmd.getFile("sorted.mic")).
+		arg("sorted.mic").
+		arg("consensus.mic").
+		saveFile("consensus.mic").
+		saveFile("consensus.report.txt").
+		saveFile("consensus.report.json").
+		run()
+
+	return {
+		consensusMic: consensusCmd.getFile("consensus.mic"),
+		refineReportTxt: refineCmd.getFile("refine.report.txt"),
+		refineReportJson: refineCmd.getFile("refine.report.json"),
+		consensusReportTxt: consensusCmd.getFile("consensus.report.txt"),
+		consensusReportJson: consensusCmd.getFile("consensus.report.json")
+	}
+})

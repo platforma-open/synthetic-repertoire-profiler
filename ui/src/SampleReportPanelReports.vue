@@ -9,15 +9,19 @@ const { model } = useApp();
 const reactiveFileContent = ReactiveFileContent.useGlobal();
 
 const STEP_LABELS: Record<string, string> = {
+  "refine-tags": "Refine tags",
+  consensus: "Consensus",
   align: "Align",
   assemble: "Assemble",
   "call-mutations": "Call mutations",
   assign: "Assign",
 };
-const STEP_ORDER = ["align", "assemble", "call-mutations", "assign"];
+// Pipeline order. The two UMI steps run before align, and are present only on a run
+// whose tag pattern declares a UMI.
+const STEP_ORDER = ["refine-tags", "consensus", "align", "assemble", "call-mutations", "assign"];
 
-// Steps present for this sample (assign only when a known set was used), in
-// pipeline order.
+// Steps present for this sample (the UMI pair only on a UMI run, assign only when a
+// known set was used), in pipeline order.
 const availableSteps = computed(() => {
   const steps = new Set<string>();
   for (const d of model.outputs.reports?.data ?? []) {

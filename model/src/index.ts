@@ -24,7 +24,7 @@ import type {
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
 import { kind } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
 import type { PatternParts, UmiSpec } from "./pattern";
-import { parsePattern, patternHasUmi, patternUmiSpec } from "./pattern";
+import { parsePattern, patternUmiSpec } from "./pattern";
 
 export { parsePattern, patternHasUmi, patternUmiSpec } from "./pattern";
 export type { LengthRange, PatternHalf, PatternParts, UmiSpec } from "./pattern";
@@ -152,8 +152,8 @@ export type BlockData = {
   // Input reads — a fastq dataset from the result pool.
   input?: PlRef;
 
-  // mitool tag pattern: insert capture (R1/R2) + optional UMI. `hasUmi` is
-  // derived by parsing this string (no separate flag).
+  // mitool tag pattern: insert capture (R1/R2) + optional UMI. UMI presence and
+  // layout are derived by parsing this string (no separate flag) — see patternUmiSpec.
   tagPattern?: string;
 
   // Parents (alignment references) — FASTA, two modes.
@@ -261,9 +261,9 @@ export type BlockArgs = {
   input: PlRef;
   tagPattern: string;
   patternParts: PatternParts;
-  hasUmi: boolean;
-  // Absent when the pattern has no UMI. Carries the per-half tag names the workflow
-  // passes to refine-tags/sort/consensus, so the workflow never re-parses the pattern.
+  // Absent when the pattern has no UMI — its presence is what switches the UMI chain on.
+  // Carries the per-half tag names the workflow passes to refine-tags/sort/consensus, so
+  // the workflow never re-parses the pattern.
   umi?: UmiSpec;
   minReadsPerConsensus?: number;
   minUmiQuality?: number;
@@ -885,7 +885,6 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       input: data.input,
       tagPattern,
       patternParts,
-      hasUmi: patternHasUmi(patternParts),
       umi,
       // Suppressed without a UMI so the staleness gate ignores them on a non-UMI run.
       minReadsPerConsensus: umi ? data.minReadsPerConsensus : undefined,
