@@ -7,11 +7,11 @@ import SampleReportPanelVisualReport from "./SampleReportPanelVisualReport.vue";
 
 const props = defineProps<{ sampleId: string | undefined }>();
 
-type TabId = "visualReport" | "steps";
+type TabId = "visualReport" | "logs";
 const currentTab = ref<TabId>("visualReport");
 const tabOptions: SimpleOption<TabId>[] = [
   { value: "visualReport", text: "Visual Report" },
-  { value: "steps", text: "Pipeline Steps" },
+  { value: "logs", text: "Logs" },
 ];
 </script>
 
@@ -22,7 +22,7 @@ const tabOptions: SimpleOption<TabId>[] = [
       v-if="currentTab === 'visualReport'"
       :sample-id="props.sampleId"
     />
-    <SampleReportPanelSteps v-else-if="currentTab === 'steps'" :sample-id="props.sampleId" />
+    <SampleReportPanelSteps v-else-if="currentTab === 'logs'" :sample-id="props.sampleId" />
   </div>
   <div v-else>No sample selected</div>
 </template>
