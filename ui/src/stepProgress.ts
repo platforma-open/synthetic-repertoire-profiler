@@ -50,8 +50,11 @@ export function pipelineStatus(
   const line = (best.info.progressLine ?? "").replace(ProgressPrefix, "").trim();
   if (!line) return { text: `${prefix} ${name}`, running: true };
 
+  // Not every marker is `stage: pct%` — `sort` ends with a bare "Sorting finished" and
+  // `refine-tags` opens with "Initialization: progress unknown". An unparseable line is
+  // still the tool's own words, so show it rather than falling back to the step name.
   const m = line.match(ProgressPattern);
-  const stage = m?.groups?.stage?.trim() || name;
+  const stage = m?.groups?.stage?.trim() || line || name;
   const percent = m?.groups?.progress;
   return {
     text: percent ? `${prefix} ${stage}: ${percent}%` : `${prefix} ${stage}`,
