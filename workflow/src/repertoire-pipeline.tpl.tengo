@@ -717,10 +717,16 @@ self.body(func(inputs) {
 	aaMutations := adf.
 		groupBy("aaVariantKey").
 		agg(pt.col("mutationCount").cast("Int").first().alias("mutationCount"))
+	// Every abundance column histogram() reads must survive this roll-up.
+	aaMembers := [pt.col("readCount").cast("Long").sum().alias("readCount")]
+	if hasUmi {
+		aaMembers = append(aaMembers,
+			pt.col("moleculeCount").cast("Long").sum().alias("moleculeCount"))
+	}
 	histogram(
 		vdf.
 			filter(b6NonEmpty("aaVariantKey")).
-			groupBy("aaVariantKey").agg(pt.col("readCount").cast("Long").sum().alias("readCount")).
+			groupBy("aaVariantKey").agg(aaMembers...).
 			join(aaMutations, { how: "inner", on: ["aaVariantKey"] }),
 		"aaVariantKey"
 	).save("aaMutationHistogram.parquet")
