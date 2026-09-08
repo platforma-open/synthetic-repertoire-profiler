@@ -295,13 +295,8 @@ ACGTACGT..."
     >
       <template #tooltip>
         Tag pattern for primer trimming, UMI extraction etc. Support MiXCR pattern syntax. Required:
-        the insert capture (R1/R2) marks the region aligned to the parent.<br /><br />
-        A UMI capture switches on molecule-level analysis: barcodes are error-corrected, reads
-        sharing one are collapsed into a single consensus read, and abundance is then reported in
-        molecules rather than reads. A UMI on each read is allowed — the two are used together as
-        the molecule key, not concatenated. Each capture needs a fixed length (<code>N{12}</code>,
-        not <code>N{8:12}</code>), and at least 8 nt in total: below that, a sequencing error in a
-        barcode cannot be told apart from a different real barcode.
+        the insert capture (R1/R2) marks the region aligned to the parent, and any UMI capture
+        enables molecule-level counting.
       </template>
     </PlTextField>
 
