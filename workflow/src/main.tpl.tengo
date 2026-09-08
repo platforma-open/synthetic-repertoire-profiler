@@ -129,7 +129,10 @@ wf.body(func(args) {
 		fileExtension: fileExtension,
 		pattern: args.tagPattern,
 		patternParts: args.patternParts,
-		hasUmi: args.hasUmi,
+		// Absent without a UMI; presence is what switches the chain on downstream.
+		umi: args.umi,
+		minReadsPerConsensus: args.minReadsPerConsensus,
+		minUmiQuality: args.minUmiQuality,
 		exportNt: exportNt,
 		exportOnlyKnown: exportOnlyKnown,
 		parentFastaStr: parentFastaStr,
