@@ -13,6 +13,7 @@ pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
+render := import("@platforma-sdk/workflow-tengo:render")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
@@ -22,7 +23,7 @@ json := import("json")
 
 // The state matrix leaves this template already split by position: one File-valued
 // output per level per chunk key. See state-matrix-chunks.
-outputNames := ["parsedMic", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "logs"]
+outputNames := ["parsedMic", "stepLogs", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv"]
 for chunkKey in smChunks.keys() {
 	outputNames = append(outputNames, smChunks.outputName("aa", chunkKey))
 	outputNames = append(outputNames, smChunks.outputName("nt", chunkKey))
@@ -40,6 +41,8 @@ progressPrefix := "[==PROGRESS==]"
 // is the whole host — ignoring mem(mitoolMem). Match the MiXCR blocks here.
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 
+umiConsensusTpl := assets.importTemplate(":umi-consensus")
+
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
 	aggregationAxesNames := inputs[pConstants.AGGREGATION_AXES_NAMES_FIELD_NAME]
@@ -51,7 +54,8 @@ self.body(func(inputs) {
 	fileExtension := params.fileExtension
 	pattern := params.pattern
 	parts := params.patternParts
-	hasUmi := params.hasUmi
+	umi := params.umi
+	hasUmi := !is_undefined(umi)
 	// Opt-in nt export: gates the nt state matrix computation here; main gates the
 	// nt column exports. Defensive default when the param is absent (removeUndefs).
 	exportNt := !is_undefined(params.exportNt) && params.exportNt
@@ -85,14 +89,12 @@ self.body(func(inputs) {
 	// 20 for minVariantQuality). 0 disables — Phred is never negative.
 	minBaseQuality := params.minBaseQuality
 	minVariantQuality := params.minVariantQuality
+	minReadsPerConsensus := params.minReadsPerConsensus
+	minUmiQuality := params.minUmiQuality
 	mitoolCPUs := inputs.mitoolCPUs
 	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
 
 	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
-	ll.assert(
-		!hasUmi,
-		"UMI consensus path is not implemented yet; use a non-UMI tag pattern for now"
-	)
 
 	inputDataMeta := inputData.getDataAsJson()
 	inputMap := inputData.inputs()
@@ -183,6 +185,35 @@ self.body(func(inputs) {
 	parseCmd := parseBuilder.saveFile("parsed.mic").run()
 	micFile := parseCmd.getFile("parsed.mic")
 
+	// --- UMI chain: refine-tags -> sort -> consensus, one record per molecule ---
+	// Without a UMI, analyze reads the parsed .mic and moleculeCount stays empty.
+	umiRun := undefined
+	analyzeMic := micFile
+	if hasUmi {
+		// The halves stay separate grouping keys; mitool's molecule key spans both.
+		umiTags := []
+		if !is_undefined(umi.r1Name) { umiTags = append(umiTags, umi.r1Name) }
+		if !is_undefined(umi.r2Name) { umiTags = append(umiTags, umi.r2Name) }
+		payloadTags := []
+		if !is_undefined(parts.r1.insertName) { payloadTags = append(payloadTags, parts.r1.insertName) }
+		if isPairedEnd && !is_undefined(parts.r2) && !is_undefined(parts.r2.insertName) {
+			payloadTags = append(payloadTags, parts.r2.insertName)
+		}
+		ll.assert(len(umiTags) > 0, "UMI pattern with no named UMI tag")
+		ll.assert(len(payloadTags) > 0, "no payload tag to assemble a consensus for")
+
+		umiRun = render.create(umiConsensusTpl, {
+			parsedMic: micFile,
+			umiTags: umiTags,
+			payloadTags: payloadTags,
+			minReadsPerConsensus: minReadsPerConsensus,
+			minUmiQuality: minUmiQuality,
+			mitoolCPUs: mitoolCPUs,
+			mitoolMemGB: inputs.mitoolMemGB
+		})
+		analyzeMic = umiRun.output("consensusMic")
+	}
+
 	// --- repertoire analyze: .mic -> variant / aa / state-matrix TSVs + qc.json ---
 	analyzeBuilder := exec.builder().
 		printErrStreamToStdout().
@@ -270,7 +301,7 @@ self.body(func(inputs) {
 	}
 
 	analyzeBuilder = analyzeBuilder.
-		addFile("input.mic", micFile).
+		addFile("input.mic", analyzeMic).
 		saveFile("out.variants.tsv").
 		saveFile("out.aa-variants.tsv").
 		saveFile("out.aa-state-matrix.tsv").
@@ -296,9 +327,7 @@ self.body(func(inputs) {
 		reportSteps = append(reportSteps, "assign")
 	}
 	for step in reportSteps {
-		analyzeBuilder = analyzeBuilder.
-			saveFile("out." + step + ".report.json").
-			saveFile("out." + step + ".report.txt")
+		analyzeBuilder = analyzeBuilder.saveFile("out." + step + ".report.json")
 	}
 
 	// Designed known-set export (full designed set + nt→aa grouping). Written by
@@ -319,7 +348,10 @@ self.body(func(inputs) {
 	reportsMap := pcolumn.resourceMapBuilder(2)
 	for step in reportSteps {
 		reportsMap.add([step, "json"], analyzeCmd.getFile("out." + step + ".report.json"))
-		reportsMap.add([step, "txt"], analyzeCmd.getFile("out." + step + ".report.txt"))
+	}
+	if hasUmi {
+		reportsMap.add(["refine-tags", "json"], umiRun.output("refineReportJson"))
+		reportsMap.add(["consensus", "json"], umiRun.output("consensusReportJson"))
 	}
 
 	// --- Per-sample tables (ptabler) --------------------------------------
@@ -366,29 +398,111 @@ self.body(func(inputs) {
 		groupBy("aaVariantKey").agg(pt.col("aaVariantKey").count().alias("_n")).
 		select(pt.col("aaVariantKey"))
 
-	ntAbundSrc := vAbund
-	if exportOnlyKnown {
-		ntAbundSrc = hasNtKnown ? vAbund.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")) : vAbund.filter(pt.lit(false))
+	// mitool's TSV column is `moleculeCount`; the PColumn is `uniqueMoleculeCount`.
+	//
+	// The molecule fraction is taken against the sample's whole repertoire, matching
+	// mitool's `readFraction`. The total is broadcast onto every row here, BEFORE the
+	// export filter and before the aa-level scope narrows: dividing by a window sum
+	// after either would normalise against the surviving subset and inflate the
+	// fractions, leaving them on a different denominator from `readFraction` and the QC
+	// molecule fractions.
+	vAbundF := vAbund
+	if hasUmi {
+		vAbundF = vAbund.withColumns(
+			pt.col("moleculeCount").cast("Long").sum().alias("_repertoireMolecules")
+		)
 	}
-	ntAbundSrc.groupBy("variantKey").agg(
-		pt.col("readCount").cast("Long").sum().alias("readCount"),
-		pt.col("readFraction").cast("Double").sum().alias("readFraction")
-	).sort(["variantKey"]).save("ntAbundance.parquet")
+	abundAggs := func() {
+		aggs := [
+			pt.col("readCount").cast("Long").sum().alias("readCount"),
+			pt.col("readFraction").cast("Double").sum().alias("readFraction")
+		]
+		if hasUmi {
+			aggs = append(aggs,
+				pt.col("moleculeCount").cast("Long").sum().alias("uniqueMoleculeCount"),
+				pt.col("_repertoireMolecules").first().alias("_repertoireMolecules")
+			)
+		}
+		return aggs
+	}
+	withMoleculeFraction := func(df) {
+		if !hasUmi {
+			return df
+		}
+		return df.withColumns(
+			pt.col("uniqueMoleculeCount").cast("Double").truediv(
+				pt.col("_repertoireMolecules").cast("Double")
+			).alias("uniqueMoleculeFraction")
+		)
+	}
 
-	aaAbundSrc := vAbund.filter(b6NonEmpty("aaVariantKey"))
+	knownAbundAggs := func() {
+		aggs := [
+			pt.col("readCount").cast("Long").sum().alias("knownVariantReadCount"),
+			pt.col("readFraction").cast("Double").sum().alias("knownVariantReadFraction")
+		]
+		if hasUmi {
+			aggs = append(aggs,
+				pt.col("moleculeCount").cast("Long").sum().alias("knownVariantMoleculeCount"),
+				pt.col("_repertoireMolecules").first().alias("_repertoireMolecules")
+			)
+		}
+		return aggs
+	}
+	// The fraction is derived after the group-by, never inside it: an aggregate result
+	// accepts `alias` only, so casting or dividing one is not expressible.
+	withKnownMoleculeFraction := func(df) {
+		if !hasUmi {
+			return df
+		}
+		return df.withColumns(
+			pt.col("knownVariantMoleculeCount").cast("Double").truediv(
+				pt.col("_repertoireMolecules").cast("Double")
+			).alias("knownVariantMoleculeFraction")
+		).select(
+			pt.col("knownKey"),
+			pt.col("knownVariantReadCount"),
+			pt.col("knownVariantReadFraction"),
+			pt.col("knownVariantMoleculeCount"),
+			pt.col("knownVariantMoleculeFraction")
+		)
+	}
+
+	ntAbundSrc := vAbundF
+	if exportOnlyKnown {
+		ntAbundSrc = hasNtKnown ? vAbundF.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")) : vAbundF.filter(pt.lit(false))
+	}
+	ntAbundSelect := [
+		pt.col("variantKey"),
+		pt.col("readCount"),
+		pt.col("readFraction")
+	]
+	if hasUmi {
+		ntAbundSelect = append(ntAbundSelect, pt.col("uniqueMoleculeCount"), pt.col("uniqueMoleculeFraction"))
+	}
+	withMoleculeFraction(
+		ntAbundSrc.groupBy("variantKey").agg(abundAggs()...)
+	).
+		select(ntAbundSelect...).
+		sort(["variantKey"]).
+		save("ntAbundance.parquet")
+
+	aaAbundSrc := vAbundF.filter(b6NonEmpty("aaVariantKey"))
 	if exportOnlyKnown {
 		aaAbundSrc = aaAbundSrc.join(matchedAaKeys, { how: "inner", on: ["aaVariantKey"] })
 	}
-	aaAbundSrc.
-		groupBy("aaVariantKey").agg(
-			pt.col("readCount").cast("Long").sum().alias("readCount"),
-			pt.col("readFraction").cast("Double").sum().alias("readFraction")
-		).
-		select(
-			pt.col("aaVariantKey").alias("variantKey"),
-			pt.col("readCount"),
-			pt.col("readFraction")
-		).
+	aaAbundSelect := [
+		pt.col("aaVariantKey").alias("variantKey"),
+		pt.col("readCount"),
+		pt.col("readFraction")
+	]
+	if hasUmi {
+		aaAbundSelect = append(aaAbundSelect, pt.col("uniqueMoleculeCount"), pt.col("uniqueMoleculeFraction"))
+	}
+	withMoleculeFraction(
+		aaAbundSrc.groupBy("aaVariantKey").agg(abundAggs()...)
+	).
+		select(aaAbundSelect...).
 		sort(["variantKey"]).
 		save("aaAbundance.parquet")
 
@@ -398,13 +512,12 @@ self.body(func(inputs) {
 	// (b6SeqHash / b6NonEmpty are defined above, reused by the export filter.)
 
 	// nt known × this sample: reads summed over assigned nt variants per known nt seq.
-	vAbund.
-		filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
-		withColumns(b6SeqHash("ntSequence").alias("knownKey")).
-		groupBy("knownKey").agg(
-			pt.col("readCount").cast("Long").sum().alias("knownVariantReadCount"),
-			pt.col("readFraction").cast("Double").sum().alias("knownVariantReadFraction")
-		).sort(["knownKey"]).save("knownNtAbundance.parquet")
+	withKnownMoleculeFraction(
+		vAbundF.
+			filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
+			withColumns(b6SeqHash("ntSequence").alias("knownKey")).
+			groupBy("knownKey").agg(knownAbundAggs()...)
+	).sort(["knownKey"]).save("knownNtAbundance.parquet")
 
 	// aa known × this sample: reads of the nt members of each assigned aa variant,
 	// keyed by hash(aa known seq).
@@ -415,14 +528,13 @@ self.body(func(inputs) {
 	aaKnownSeq := aaForKnown.
 		filter(b6NonEmpty("knownAaKey")).
 		groupBy("aaVariantKey").agg(pt.col("aaSequence").first().alias("aaSequence"))
-	vAbund.
-		filter(b6NonEmpty("aaVariantKey")).
-		join(aaKnownSeq, { how: "inner", on: ["aaVariantKey"] }).
-		withColumns(b6SeqHash("aaSequence").alias("knownKey")).
-		groupBy("knownKey").agg(
-			pt.col("readCount").cast("Long").sum().alias("knownVariantReadCount"),
-			pt.col("readFraction").cast("Double").sum().alias("knownVariantReadFraction")
-		).sort(["knownKey"]).save("knownAaAbundance.parquet")
+	withKnownMoleculeFraction(
+		vAbundF.
+			filter(b6NonEmpty("aaVariantKey")).
+			join(aaKnownSeq, { how: "inner", on: ["aaVariantKey"] }).
+			withColumns(b6SeqHash("aaSequence").alias("knownKey")).
+			groupBy("knownKey").agg(knownAbundAggs()...)
+	).sort(["knownKey"]).save("knownAaAbundance.parquet")
 
 	// declared-member synonymous spread: per known-aa entity, the
 	// SD + CV of its DESIGNED nt members' per-sample fractions, seeding members
@@ -531,14 +643,18 @@ self.body(func(inputs) {
 	isUnassigned := pt.col("assignStatus").cast("String").eq("UNASSIGNED")
 	isAmbiguous := pt.col("assignStatus").cast("String").eq("AMBIGUOUS")
 	reads := pt.col("readCount").cast("Long")
+	mols := pt.col("moleculeCount").cast("Long")
 	countWhen := func(cond) {
 		return pt.when(cond).then(pt.lit(1)).otherwise(pt.lit(0)).sum()
 	}
 	readsWhen := func(cond) {
 		return pt.when(cond).then(reads).otherwise(pt.lit(0)).sum()
 	}
+	molsWhen := func(cond) {
+		return pt.when(cond).then(mols).otherwise(pt.lit(0)).sum()
+	}
 
-	vStats := vdf.select(
+	vSelect := [
 		pt.lit(sampleId).alias("sampleId"),
 		pt.col("variantKey").count().alias("ntVariants"),
 		reads.sum().alias("totalReads"),
@@ -552,7 +668,19 @@ self.body(func(inputs) {
 		readsWhen(isUnassigned).alias("unassignedReads"),
 		countWhen(isAmbiguous).alias("ambiguousVariants"),
 		readsWhen(isAmbiguous).alias("ambiguousReads")
-	)
+	]
+	// Gated on hasUmi, like the abundance columns above.
+	if hasUmi {
+		vSelect = append(vSelect,
+			mols.sum().alias("totalMolecules"),
+			molsWhen(fs).alias("frameShiftMolecules"),
+			molsWhen(aae).alias("aaMutationsExceededMolecules"),
+			molsWhen(isAssigned).alias("assignedMolecules"),
+			molsWhen(isUnassigned).alias("unassignedMolecules"),
+			molsWhen(isAmbiguous).alias("ambiguousMolecules")
+		)
+	}
+	vStats := vdf.select(vSelect...)
 	aaStats := adf.select(
 		pt.lit(sampleId).alias("sampleId"),
 		pt.col("aaVariantKey").count().alias("aaVariants")
@@ -560,16 +688,26 @@ self.body(func(inputs) {
 
 	// Per-sample mutation-load histogram
 	histogram := func(df, keyCol) {
+		perVariant := [
+			pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
+			pt.col("readCount").cast("Long").sum().alias("readCount")
+		]
+		perBin := [
+			pt.col(keyCol).count().alias("variantCount"),
+			pt.col("readCount").cast("Long").sum().alias("readCount")
+		]
+		outCols := [pt.col("mutationCount"), pt.col("variantCount"), pt.col("readCount")]
+		if hasUmi {
+			perVariant = append(perVariant,
+				pt.col("moleculeCount").cast("Long").sum().alias("moleculeCount"))
+			perBin = append(perBin,
+				pt.col("moleculeCount").cast("Long").sum().alias("moleculeCount"))
+			outCols = append(outCols, pt.col("moleculeCount"))
+		}
 		return df.
-			groupBy(keyCol).agg(
-				pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
-				pt.col("readCount").cast("Long").sum().alias("readCount")
-			).
-			groupBy("mutationCount").agg(
-				pt.col(keyCol).count().alias("variantCount"),
-				pt.col("readCount").cast("Long").sum().alias("readCount")
-			).
-			select(pt.col("mutationCount"), pt.col("variantCount"), pt.col("readCount")).
+			groupBy(keyCol).agg(perVariant...).
+			groupBy("mutationCount").agg(perBin...).
+			select(outCols...).
 			sort(["mutationCount"])
 	}
 	histogram(vdf, "variantKey").save("ntMutationHistogram.parquet")
@@ -579,26 +717,51 @@ self.body(func(inputs) {
 	aaMutations := adf.
 		groupBy("aaVariantKey").
 		agg(pt.col("mutationCount").cast("Int").first().alias("mutationCount"))
+	// Every abundance column histogram() reads must survive this roll-up.
+	aaMembers := [pt.col("readCount").cast("Long").sum().alias("readCount")]
+	if hasUmi {
+		aaMembers = append(aaMembers,
+			pt.col("moleculeCount").cast("Long").sum().alias("moleculeCount"))
+	}
 	histogram(
 		vdf.
 			filter(b6NonEmpty("aaVariantKey")).
-			groupBy("aaVariantKey").agg(pt.col("readCount").cast("Long").sum().alias("readCount")).
+			groupBy("aaVariantKey").agg(aaMembers...).
 			join(aaMutations, { how: "inner", on: ["aaVariantKey"] }),
 		"aaVariantKey"
 	).save("aaMutationHistogram.parquet")
 
-	frac := func(numCol) {
-		return pt.when(pt.col("totalReads").gt(pt.lit(0))).then(
-			pt.col(numCol).cast("Double").truediv(pt.col("totalReads").cast("Double"))
-		).otherwise(pt.lit(0.0))
+	fracOf := func(denomCol) {
+		return func(numCol) {
+			return pt.when(pt.col(denomCol).gt(pt.lit(0))).then(
+				pt.col(numCol).cast("Double").truediv(pt.col(denomCol).cast("Double"))
+			).otherwise(pt.lit(0.0))
+		}
 	}
-	vStats.join(aaStats, { how: "left", on: ["sampleId"] }).withColumns(
+	frac := fracOf("totalReads")
+	molFrac := fracOf("totalMolecules")
+
+	qcCols := [
 		frac("frameShiftReads").alias("frameShiftReadFraction"),
 		frac("aaMutationsExceededReads").alias("aaMutationsExceededReadFraction"),
 		frac("assignedReads").alias("assignedReadFraction"),
 		frac("unassignedReads").alias("unassignedReadFraction"),
 		frac("ambiguousReads").alias("ambiguousReadFraction")
-	).save("qcRow.parquet")
+	]
+	if hasUmi {
+		qcCols = append(qcCols,
+			molFrac("frameShiftMolecules").alias("frameShiftMoleculeFraction"),
+			molFrac("aaMutationsExceededMolecules").alias("aaMutationsExceededMoleculeFraction"),
+			molFrac("assignedMolecules").alias("assignedMoleculeFraction"),
+			molFrac("unassignedMolecules").alias("unassignedMoleculeFraction"),
+			molFrac("ambiguousMolecules").alias("ambiguousMoleculeFraction"),
+			// Reads over molecules: a ratio, not a fraction.
+			molFrac("totalReads").alias("readsPerMolecule")
+		)
+	}
+	vStats.join(aaStats, { how: "left", on: ["sampleId"] }).
+		withColumns(qcCols...).
+		save("qcRow.parquet")
 
 	// --- Per-sample state-matrix chunking ----------------------------------
 	// Splits each level's state matrix into disjoint slices of the position axis, so
@@ -661,6 +824,15 @@ self.body(func(inputs) {
 
 	ptResult := ptWf.run()
 
+	stepLogs := pcolumn.resourceMapBuilder(1)
+	stepLogs.add(["1-parse"], parseCmd.getStdoutStream())
+	if hasUmi {
+		stepLogs.add(["2-refine-tags"], umiRun.output("refineLog"))
+		stepLogs.add(["3-sort"], umiRun.output("sortLog"))
+		stepLogs.add(["4-consensus"], umiRun.output("consensusLog"))
+	}
+	stepLogs.add(["5-analyze"], analyzeCmd.getStdoutStream())
+
 
 
 	result := {
@@ -669,8 +841,10 @@ self.body(func(inputs) {
 		// parsed .mic as a retained output pins it by content hash so reruns
 		// recover it instead of recomputing a byte-different file — otherwise a
 		// settings-change rerun produces a new CID and collides with the one the
-		// completed run settled (CIDConflictError). Mirrors peptide-extraction.
-		parsedMic: micFile,
+		// completed run settled (CIDConflictError).
+		//
+		// On a UMI run this is the post-consensus .mic, i.e. what analyze read.
+		parsedMic: analyzeMic,
 		variantsTsv: analyzeCmd.getFile("out.variants.tsv"),
 		aaVariantsTsv: analyzeCmd.getFile("out.aa-variants.tsv"),
 		regionAnnotationTsv: emitRegionAnnotation ? analyzeCmd.getFile("out.region-annotation.tsv") : ptResult.getFile("emptyRegionAnnotation.tsv"),
@@ -697,9 +871,9 @@ self.body(func(inputs) {
 		// No sampleId column — processColumn supplies the sample key from the partition.
 		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),
 		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet"),
-		// analyze stdout (stderr merged in) carries the align/assemble progress
-		// markers + the run summary — the per-sample Progress + Logs source.
-		logs: analyzeCmd.getStdoutStream()
+		// Keyed by an ordered step name, so the UI can pick the furthest step reached
+		// by string comparison.
+		stepLogs: stepLogs.build()
 	}
 
 	// One File output per level per chunk key, so each dedup job gets its own slice.
