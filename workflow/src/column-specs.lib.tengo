@@ -567,6 +567,9 @@ knownAbundanceColumns := func(hasUmi) {
 			}
 		})
 	}
+	// Read columns demote on a UMI run, as they do for the per-variant and cross-sample
+	// abundance: the molecule pair above is the primary readout.
+	readVis := hasUmi ? "optional" : "default"
 	return append(cols, {
 		column: "knownVariantReadCount",
 		id: "known-read-count",
@@ -574,7 +577,7 @@ knownAbundanceColumns := func(hasUmi) {
 		spec: {
 			name: "pl7.app/knownVariantReadCount",
 			valueType: "Long",
-			annotations: tableAnno(90000, "default", {
+			annotations: tableAnno(90000, readVis, {
 				"pl7.app/min": "0",
 				"pl7.app/isAbundance": "true",
 				"pl7.app/abundance/unit": "reads",
@@ -590,7 +593,7 @@ knownAbundanceColumns := func(hasUmi) {
 		spec: {
 			name: "pl7.app/knownVariantReadFraction",
 			valueType: "Double",
-			annotations: tableAnno(89000, "default", {
+			annotations: tableAnno(89000, readVis, {
 				"pl7.app/min": "0",
 				"pl7.app/max": "1",
 				"pl7.app/isAbundance": "true",
