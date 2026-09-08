@@ -430,28 +430,54 @@ const MIN_UMI_LENGTH = 8;
 export type UmiSettings = Pick<BlockData, "minReadsPerConsensus" | "minUmiQuality">;
 
 /**
- * What is wrong with the UMI a pattern declares, or undefined. Shown on the tag-pattern
- * field, and re-checked by [validateUmiSettings] so the two cannot disagree.
+ * What is wrong with a tag pattern, or undefined. Shown on the tag-pattern field, and
+ * re-checked by `.args(...)` so the field and the run gate cannot disagree.
  */
-export function umiPatternError(umi: UmiSpec): string | undefined {
-  if (umi.ranged)
+export function tagPatternError(tagPattern: string | undefined): string | undefined {
+  const canonical = (tagPattern ?? "").replace(/\s+/g, "");
+  if (canonical === "") return "Tag pattern is required.";
+
+  const parts = parsePattern(canonical);
+  if (!parts)
+    return (
+      "Tag pattern is invalid. Each read must have the shape " +
+      "^[*][(UMI:N{min[:max]})][leftAnchor](R1:*|N{n}|N{min:max})[rightAnchor][>{trim}]*. " +
+      "UMI captures are optional; the insert (R) capture marks the region aligned to the " +
+      "parent. UMI tags are named UMI, UMI1, …; insert tags R1, R2, …. All defined tag " +
+      "names must be unique."
+    );
+
+  // At least one half must capture an insert — the region aligned to the parent. The
+  // insert may be variable-length (`*`); the alignment bounds it, not a fixed length.
+  if (parts.r1.insertName === undefined && parts.r2?.insertName === undefined)
+    return "Pattern must capture an insert (R1 or R2) to align against the parent.";
+
+  const halves = parts.r2 ? [parts.r1, parts.r2] : [parts.r1];
+  for (const half of halves)
+    for (const anchor of [half.leftAnchor, half.rightAnchor])
+      if (anchor && !DNA_IUPAC_RE.test(anchor))
+        return (
+          "Anchor sequences must use DNA letters or IUPAC codes only " +
+          "(A, C, G, T, M, K, R, Y, W, S, B, D, H, V, N — upper or lower case)."
+        );
+
+  const umi = patternUmiSpec(parts);
+  if (umi?.ranged)
     return (
       "UMI captures must have a fixed length (N{n}), not a range (N{min:max}) — " +
       "a variable-length barcode cannot identify a molecule."
     );
-  if (umi.totalLength < MIN_UMI_LENGTH)
+  if (umi && umi.totalLength < MIN_UMI_LENGTH)
     return (
       `A UMI of ${umi.totalLength} nt is too short to identify molecules; ` +
       `use at least ${MIN_UMI_LENGTH} nt in total across both reads.`
     );
+
   return undefined;
 }
 
 /** Throws when a UMI declaration or its consensus settings cannot produce a molecule count. */
-export function validateUmiSettings(umi: UmiSpec, s: UmiSettings): void {
-  const patternError = umiPatternError(umi);
-  if (patternError) throw new Error(patternError);
-
+export function validateUmiSettings(s: UmiSettings): void {
   const missing: string[] = [];
   if (s.minReadsPerConsensus === undefined) missing.push("Min reads per UMI");
   if (s.minUmiQuality === undefined) missing.push("Min UMI quality");
@@ -741,36 +767,10 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   .args<BlockArgs>((data) => {
     if (!data.input) throw new Error("Input dataset (FASTQ) is required");
 
-    if (!data.tagPattern || data.tagPattern.trim() === "")
-      throw new Error("Tag pattern is required");
-    const tagPattern = data.tagPattern.replace(/\s+/g, ""); // canonicalize
-    const patternParts = parsePattern(tagPattern);
-    if (!patternParts)
-      throw new Error(
-        "Tag pattern is invalid. Each read must have the shape " +
-          "^[*][(UMI:N{min[:max]})][leftAnchor](R1:*|N{n}|N{min:max})[rightAnchor][>{trim}]*. " +
-          "UMI captures are optional; the insert (R) capture marks the region aligned to the parent. " +
-          "UMI tags are named UMI, UMI1, …; insert tags R1, R2, …. All defined tag names must be unique.",
-      );
-
-    // At least one read half must carry an insert (R) capture — the region
-    // aligned to the parent. The insert may be variable-length (`*`); the parent
-    // alignment, not a fixed length/anchor, bounds it.
-    const r1HasInsert = patternParts.r1.insertName !== undefined;
-    const r2HasInsert = patternParts.r2?.insertName !== undefined;
-    if (!r1HasInsert && !r2HasInsert)
-      throw new Error("Pattern must capture an insert (R1 or R2) to align against the parent.");
-
-    // Anchor characters must be DNA letters or IUPAC ambiguity codes.
-    const halves = patternParts.r2 ? [patternParts.r1, patternParts.r2] : [patternParts.r1];
-    for (const half of halves)
-      for (const anchor of [half.leftAnchor, half.rightAnchor])
-        if (anchor && !DNA_IUPAC_RE.test(anchor))
-          throw new Error(
-            "Anchor sequences must use DNA letters or IUPAC codes only " +
-              "(A, C, G, T, M, K, R, Y, W, S, B, D, H, V, N — upper or lower case).",
-          );
-
+    const patternError = tagPatternError(data.tagPattern);
+    if (patternError) throw new Error(patternError);
+    const tagPattern = data.tagPattern!.replace(/\s+/g, ""); // canonicalize
+    const patternParts = parsePattern(tagPattern)!;
     const umi = patternUmiSpec(patternParts);
     // Pattern-vs-input read-structure mismatch (paired pattern, single-end input)
     // is checked live in the UI (SettingsPanel, via the `inputIsPairedEnd` output)
@@ -850,7 +850,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     checkQuality(minBaseQuality, "Min base quality");
     checkQuality(minVariantQuality, "Min variant quality");
 
-    if (umi) validateUmiSettings(umi, data);
+    if (umi) validateUmiSettings(data);
 
     // Resource overrides: positive when set (empty = workflow defaults).
     if (data.perProcessMemGB !== undefined && data.perProcessMemGB < 1)
