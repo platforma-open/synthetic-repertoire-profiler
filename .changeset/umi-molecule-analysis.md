@@ -22,9 +22,10 @@ all.
 
 Two settings appear under the pattern that creates the need for them, both required once a
 UMI is declared: reads a molecule needs before it yields a consensus, and the quality below
-which a barcode is discarded. The panel also reads the declared UMI back, so a mistyped
-pattern shows up before a run rather than during one. Two UMI halves stay two grouping
-keys — the pair identifies the molecule, without being concatenated.
+which a barcode is discarded. A pattern the run gate would refuse now reports its reason on
+the pattern field itself, so a mistyped pattern shows up before a run rather than during
+one. Two UMI halves stay two grouping keys — the pair identifies the molecule, without
+being concatenated.
 
 The Progress column now names the pre-processing step a sample is in rather than sitting at
 "Queued" until the last command. The sample panel's Logs view carries one log per command,
