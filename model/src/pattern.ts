@@ -133,14 +133,13 @@ export function patternHasUmi(parts: PatternParts): boolean {
   return parts.r1.umi !== undefined || parts.r2?.umi !== undefined;
 }
 
-/** What the UMI chain needs to know: the tag name per half and the total barcode length.
- *  Halves are kept as separate grouping keys, never merged — see A-0016. */
+/** The UMI a pattern declares: the tag name per half, and the combined length. */
 export type UmiSpec = {
   r1Name?: string;
   r2Name?: string;
   /** Combined nucleotide length across both halves. */
   totalLength: number;
-  /** True when a half declares a length range (`N{4:8}`) — an ambiguous molecule key. */
+  /** True when a half declares a length range (`N{4:8}`). */
   ranged: boolean;
 };
 

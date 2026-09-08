@@ -186,18 +186,14 @@ self.body(func(inputs) {
 	micFile := parseCmd.getFile("parsed.mic")
 
 	// --- UMI chain: refine-tags -> sort -> consensus, one record per molecule ---
-	// Skipped entirely without a UMI, in which case analyze reads the parsed .mic and the
-	// per-variant moleculeCount column stays empty.
+	// Without a UMI, analyze reads the parsed .mic and moleculeCount stays empty.
 	umiRun := undefined
 	analyzeMic := micFile
 	if hasUmi {
-		// The halves stay separate grouping keys (U1): TagsInfo.getDepthFor(Molecule)
-		// makes the pair the molecule identity without concatenating them.
+		// The halves stay separate grouping keys; mitool's molecule key spans both.
 		umiTags := []
 		if !is_undefined(umi.r1Name) { umiTags = append(umiTags, umi.r1Name) }
 		if !is_undefined(umi.r2Name) { umiTags = append(umiTags, umi.r2Name) }
-		// Payload tags mirror the pattern's insert captures — the same R1/R2 decision
-		// isPairedEnd already made above.
 		payloadTags := []
 		if !is_undefined(parts.r1.insertName) { payloadTags = append(payloadTags, parts.r1.insertName) }
 		if isPairedEnd && !is_undefined(parts.r2) && !is_undefined(parts.r2.insertName) {
@@ -356,8 +352,6 @@ self.body(func(inputs) {
 		reportsMap.add([step, "json"], analyzeCmd.getFile("out." + step + ".report.json"))
 		reportsMap.add([step, "txt"], analyzeCmd.getFile("out." + step + ".report.txt"))
 	}
-	// The UMI steps report from their own exec commands, not from analyze, so they join
-	// the map here rather than the save loop above.
 	if hasUmi {
 		reportsMap.add(["refine-tags", "json"], umiRun.output("refineReportJson"))
 		reportsMap.add(["refine-tags", "txt"], umiRun.output("refineReportTxt"))
@@ -409,9 +403,7 @@ self.body(func(inputs) {
 		groupBy("aaVariantKey").agg(pt.col("aaVariantKey").count().alias("_n")).
 		select(pt.col("aaVariantKey"))
 
-	// mitool's TSV column is `moleculeCount`; the PColumn is `uniqueMoleculeCount`. The
-	// rename happens here, once. Summing over synonymous nt members is sound because a
-	// molecule yields one consensus sequence, so it lands in exactly one nt variant.
+	// mitool's TSV column is `moleculeCount`; the PColumn is `uniqueMoleculeCount`.
 	abundAggs := func() {
 		aggs := [
 			pt.col("readCount").cast("Long").sum().alias("readCount"),
@@ -630,8 +622,7 @@ self.body(func(inputs) {
 		countWhen(isAmbiguous).alias("ambiguousVariants"),
 		readsWhen(isAmbiguous).alias("ambiguousReads")
 	]
-	// Molecule-weighted twins. Gated like the abundance columns (stage 5): the spec and
-	// the parquet must agree, and a non-UMI run should not carry a NaN column per metric.
+	// Gated on hasUmi, like the abundance columns above.
 	if hasUmi {
 		vSelect = append(vSelect,
 			mols.sum().alias("totalMolecules"),
@@ -701,8 +692,7 @@ self.body(func(inputs) {
 			molFrac("assignedMolecules").alias("assignedMoleculeFraction"),
 			molFrac("unassignedMolecules").alias("unassignedMoleculeFraction"),
 			molFrac("ambiguousMolecules").alias("ambiguousMoleculeFraction"),
-			// Sequencing depth per molecule — the headline number for a UMI run, and the
-			// one that says whether the consensus had anything to work with.
+			// Reads over molecules: a ratio, not a fraction.
 			molFrac("totalReads").alias("readsPerMolecule")
 		)
 	}
@@ -788,11 +778,9 @@ self.body(func(inputs) {
 		// parsed .mic as a retained output pins it by content hash so reruns
 		// recover it instead of recomputing a byte-different file — otherwise a
 		// settings-change rerun produces a new CID and collides with the one the
-		// completed run settled (CIDConflictError). Mirrors peptide-extraction.
+		// completed run settled (CIDConflictError).
 		//
-		// On a UMI run this is the post-consensus .mic — what analyze read, and what a
-		// consumer of "the reads behind this repertoire" wants. The pre-consensus file is
-		// an intermediate of the chain and is not published.
+		// On a UMI run this is the post-consensus .mic, i.e. what analyze read.
 		parsedMic: analyzeMic,
 		variantsTsv: analyzeCmd.getFile("out.variants.tsv"),
 		aaVariantsTsv: analyzeCmd.getFile("out.aa-variants.tsv"),
@@ -820,10 +808,8 @@ self.body(func(inputs) {
 		// No sampleId column — processColumn supplies the sample key from the partition.
 		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),
 		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet"),
-		// One log per mitool command, keyed by an ORDERED step name. The numeric
-		// prefix is what lets the UI pick "the furthest step reached" by plain string
-		// comparison; without the per-step map the Progress column has nothing to show
-		// until analyze starts, which on a UMI run is three commands in.
+		// Keyed by an ordered step name, so the UI can pick the furthest step reached
+		// by string comparison.
 		stepLogs: stepLogs.build()
 	}
 

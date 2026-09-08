@@ -16,12 +16,10 @@ const STEP_LABELS: Record<string, string> = {
   "call-mutations": "Call mutations",
   assign: "Assign",
 };
-// Pipeline order. The two UMI steps run before align, and are present only on a run
-// whose tag pattern declares a UMI.
+// Pipeline order. The two UMI steps are present only on a UMI run.
 const STEP_ORDER = ["refine-tags", "consensus", "align", "assemble", "call-mutations", "assign"];
 
-// Steps present for this sample (the UMI pair only on a UMI run, assign only when a
-// known set was used), in pipeline order.
+// Steps present for this sample, in pipeline order.
 const availableSteps = computed(() => {
   const steps = new Set<string>();
   for (const d of model.outputs.reports?.data ?? []) {

@@ -152,8 +152,8 @@ export type BlockData = {
   // Input reads — a fastq dataset from the result pool.
   input?: PlRef;
 
-  // mitool tag pattern: insert capture (R1/R2) + optional UMI. UMI presence and
-  // layout are derived by parsing this string (no separate flag) — see patternUmiSpec.
+  // mitool tag pattern: insert capture (R1/R2) + optional UMI. UMI presence and layout
+  // are derived by parsing this string — see patternUmiSpec.
   tagPattern?: string;
 
   // Parents (alignment references) — FASTA, two modes.
@@ -232,14 +232,7 @@ export type BlockData = {
   // aggregated per-position quality dips below this Phred at ANY position.
   minVariantQuality?: number;
 
-  // UMI consensus knobs, used only when the tag pattern carries a UMI, and required
-  // once one is (see the args gate) — neither has a safe implicit default, both trade
-  // molecules kept against confidence in each.
-  //
-  // `maxIndels` is deliberately NOT here. mitool already clamps the indel budget per
-  // barcode from its read count: at minUmiQuality 20 a second indel is only searched
-  // above ~450 reads, so the setting is a no-op across this block's depth regime. Its
-  // default stays mitool's (2), which is also the right direction for ONT (A-0011).
+  // UMI consensus settings, used and required only when the tag pattern carries a UMI.
   minReadsPerConsensus?: number; // consensus -O minRecordsPerConsensus
   minUmiQuality?: number; // refine-tags -q
 
@@ -261,9 +254,7 @@ export type BlockArgs = {
   input: PlRef;
   tagPattern: string;
   patternParts: PatternParts;
-  // Absent when the pattern has no UMI — its presence is what switches the UMI chain on.
-  // Carries the per-half tag names the workflow passes to refine-tags/sort/consensus, so
-  // the workflow never re-parses the pattern.
+  // Absent when the pattern has no UMI; its presence switches the UMI chain on.
   umi?: UmiSpec;
   minReadsPerConsensus?: number;
   minUmiQuality?: number;
@@ -430,28 +421,16 @@ const DEFAULT_BLOCK_LABEL = "Amplicon Profiling";
  *  gates. A threshold above it can never be met, so nothing would pass. */
 export const MAX_PHRED_QUALITY = 58;
 
-/** Inherited from peptide-extraction, the reference implementation of this chain. */
 const UMI_DEFAULTS = { minReadsPerConsensus: 2, minUmiQuality: 20 } as const;
 
-/** Below this, barcode correction cannot work: 4^8 = 65k values means most 1-error
- *  neighbours of an abundant barcode are real molecules, not errors. */
+/** Below this a barcode cannot be told apart from a 1-error neighbour of another. */
 const MIN_UMI_LENGTH = 8;
 
 /** The `BlockData` fields [validateUmiSettings] reads. */
 export type UmiSettings = Pick<BlockData, "minReadsPerConsensus" | "minUmiQuality">;
 
-/**
- * Throws when a UMI declaration or its consensus settings cannot produce a molecule
- * count. Extracted from the `.args(...)` lambda so it is directly testable — the lambda
- * body is compiled into `model.json` and cannot be called.
- *
- * The settings are required once a UMI is present: there is no safe implicit default for
- * a threshold that drops molecules. Messages name the control to fill in, which lives in
- * the Barcodes section beside the pattern that creates the need for it.
- */
+/** Throws when a UMI declaration or its consensus settings cannot produce a molecule count. */
 export function validateUmiSettings(umi: UmiSpec, s: UmiSettings): void {
-  // A ranged half (`N{4:8}`) makes the molecule key ambiguous — two halves of different
-  // lengths can carry the same combined barcode.
   if (umi.ranged)
     throw new Error(
       "UMI captures must have a fixed length (N{n}), not a range (N{min:max}) — " +
@@ -615,9 +594,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       ?.getFileHandle(),
   )
 
-  // Per-step log handles, keyed [sampleId, step]. Without these a failed
-  // pre-processing step has no log in the UI — `logs` carries analyze only, and on a
-  // UMI run analyze is three commands downstream of where a failure can happen.
+  // Per-step log handles, keyed [sampleId, step].
   .output("stepLogs", (ctx) =>
     ctx.outputs !== undefined
       ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
@@ -625,15 +602,13 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   )
 
   // Per-step progress, keyed [sampleId, step]. `WithInfo` adds the `live` flag, which
-  // is how the UI tells "still running" from "finished, log frozen at its last marker" —
-  // a plain progress log sticks at the last stage it printed.
+  // separates a running step from one whose log froze at its last marker.
   .output("stepProgress", (ctx) =>
     ctx.outputs !== undefined
       ? parseResourceMap(
           ctx.outputs.resolve("stepLogs"),
           (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
-          // addEntriesWithNoData: a step that has started but printed no marker yet must
-          // still appear, or the column reports the previous step while this one runs.
+          // A step that has started but printed no marker yet must still appear.
           true,
         )
       : undefined,

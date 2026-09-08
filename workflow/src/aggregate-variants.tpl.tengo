@@ -67,8 +67,7 @@ self.body(func(inputs) {
 
 	// Cross-sample totals from the per-sample abundance parquets ([variantKey,
 	// readCount, readFraction], one row per variantKey per sample).
-	// hasUmi gates the molecule columns everywhere they appear: the per-sample parquets
-	// only carry them on a UMI run, and the Xsv spec in main is gated on the same flag.
+	// The per-sample parquets carry the molecule columns only on a UMI run.
 	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
 	totals := func(frames) {
 		aggs := [
