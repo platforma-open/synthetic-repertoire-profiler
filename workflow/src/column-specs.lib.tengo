@@ -237,6 +237,25 @@ parentSequenceColumns := func(alphabet, column) {
 	}]
 }
 
+// Which of a parent's regions hold sub-regions, keyed [parentId] — a comma-separated
+// list of region names, present only for parents that subdivide something.
+parentSubdividedRegionsColumns := func(runScope) {
+	return [{
+		column: "subdividedRegions",
+		id: "parent-subdivided-regions",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/subdividedRegions",
+			valueType: "String",
+			domain: runScope,
+			annotations: tableAnno(74000, "default", {
+				"pl7.app/label": "Regions with sub-regions",
+				"pl7.app/description": "Regions of this parent that are split into sub-regions, comma-separated. A region listed here is not a plain region: it contains a user-defined partition, such as an insert occupying a CDR slot."
+			})
+		}
+	}]
+}
+
 // Region membership as the composition heat map's OWN track, keyed
 // [parentId, position]. Deliberately not the exported `regionAnnotation` column
 // borrowed into the plot frame: that one carries no alphabet domain, so inside a
@@ -952,6 +971,7 @@ export {
 	stateHeatmapColumns: stateHeatmapColumns,
 	parentResidueColumns: parentResidueColumns,
 	parentSequenceColumns: parentSequenceColumns,
+	parentSubdividedRegionsColumns: parentSubdividedRegionsColumns,
 	heatmapRegionColumns: heatmapRegionColumns,
 	knownVariantKeyAxisSpec: knownVariantKeyAxisSpec,
 	knownVariantColumns: knownVariantColumns,

@@ -16,6 +16,7 @@ columnSpecs := import(":column-specs")
 regionConfig := import(":region-config")
 smChunks := import(":state-matrix-chunks")
 json := import("json")
+text := import("text")
 
 prerunTpl := assets.importTemplate(":prerun")
 repertoirePipelineTpl := assets.importTemplate(":repertoire-pipeline")
@@ -26,6 +27,7 @@ mergeStateMatrixTpl := assets.importTemplate(":merge-state-matrix")
 computeStateHeatmapTpl := assets.importTemplate(":compute-state-heatmap")
 aggregateRegionAnnotationTpl := assets.importTemplate(":aggregate-region-annotation")
 aggregateParentTablesTpl := assets.importTemplate(":aggregate-parent-tables")
+parentSubRegionsTpl := assets.importTemplate(":parent-subregions")
 aggregateLinkersTpl := assets.importTemplate(":aggregate-linkers")
 aggregateKnownTpl := assets.importTemplate(":aggregate-known")
 processKnownSetTpl := assets.importTemplate(":process-known-set")
@@ -480,6 +482,33 @@ wf.body(func(args) {
 		ntParentSeqCols = importParentSequence("nucleotide", "ntSequence")
 	}
 
+	// Which regions each parent subdivides, keyed [parentId]. Emitted only when some parent
+	// does, so a run without sub-regions carries no such column at all — its absence is the
+	// spec-level answer to "does this dataset hold non-canonical regions", available to a
+	// downstream model without reading any data.
+	parentSubRegionCols := undefined
+	if rc.hasSubRegions {
+		byParent := {}
+		for pid, names in rc.subdividedByParent {
+			byParent[pid] = text.join(names, ",")
+		}
+		subRegionsRun := render.createEphemeral(parentSubRegionsTpl, {
+			parentsTable: parentSeqRun.output("table"),
+			byParent: byParent
+		})
+		parentSubRegionCols = xsv.importFile(
+			subRegionsRun.output("table"),
+			"tsv",
+			{
+				axes: [columnSpecs.parentIdAxisSpec("Parent")],
+				columns: columnSpecs.parentSubdividedRegionsColumns(runScope),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{ splitDataAndSpec: true }
+		)
+	}
+
 	// Linkers (nt→aa, parent→nt, parent→aa). One-side leads in the axes.
 	linkersRun := render.createEphemeral(aggregateLinkersTpl, {
 		variantsTsvData: perSampleResults.outputData("variantsTsv"),
@@ -609,6 +638,13 @@ wf.body(func(args) {
 		}
 		for k, v in ntParentSeqCols {
 			variantsPfBuilder.add("parentSequenceNt/" + k, ntTrace.inject(v.spec), v.data)
+		}
+	}
+	// Which regions each parent subdivides (parent-derived, level-neutral, so it takes the
+	// base trace rather than either level's).
+	if !is_undefined(parentSubRegionCols) {
+		for k, v in parentSubRegionCols {
+			variantsPfBuilder.add("subdividedRegions/" + k, baseTrace.inject(v.spec), v.data)
 		}
 	}
 	// Region membership (parent-derived; colours the aa state-matrix heat map).
