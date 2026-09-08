@@ -174,8 +174,17 @@ self.body(func(inputs) {
 	// known aa table with abundance. aa-variants.tsv has no readCount, so the
 	// abundance is the summed reads of the nt members (variants.tsv) of each
 	// assigned aa variant — joined nt→aa on aaVariantKey.
+	// Keep every column abundAggs reads — the projection is the only place they can be lost.
+	aaMembers := [
+		pt.col("aaVariantKey"),
+		pt.col("readCount").cast("Long").alias("readCount"),
+		pt.col("sampleId")
+	]
+	if hasUmi {
+		aaMembers = append(aaMembers, pt.col("moleculeCount").cast("Long").alias("moleculeCount"))
+	}
 	vdf.
-		select(pt.col("aaVariantKey"), pt.col("readCount").cast("Long").alias("readCount"), pt.col("sampleId")).
+		select(aaMembers...).
 		join(aaMeta, { how: "inner", on: ["aaVariantKey"] }).
 		groupBy("knownKey").
 		agg(abundAggs(
