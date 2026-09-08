@@ -240,7 +240,7 @@ wf.body(func(args) {
 				type: "String",
 				name: "pl7.app/repertoire/report/format",
 				annotations: { "pl7.app/label": "Report format" },
-				domain: { "pl7.app/dense": string(json.encode(["json", "txt"])) }
+				domain: { "pl7.app/dense": string(json.encode(["json"])) }
 			}]
 		}
 	}

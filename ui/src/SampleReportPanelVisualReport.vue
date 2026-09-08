@@ -11,7 +11,7 @@ const props = defineProps<{ sampleId: string }>();
 const { model } = useApp();
 const reactiveFileContent = ReactiveFileContent.useGlobal();
 
-const reportHandle = (step: string, format: "json" | "txt") =>
+const reportHandle = (step: string, format: "json") =>
   model.outputs.reports?.data?.find(
     (d) => String(d.key[0]) === props.sampleId && d.key[1] === step && d.key[2] === format,
   )?.value?.handle;
