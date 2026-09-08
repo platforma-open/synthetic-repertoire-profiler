@@ -6,7 +6,7 @@ import {
   parsePattern,
   patternUmiSpec,
   plRefKey,
-  umiPatternError,
+  tagPatternError,
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
 import {
   getRawPlatformaInstance,
@@ -185,9 +185,10 @@ const umi = computed(() => {
   return parts ? patternUmiSpec(parts) : undefined;
 });
 
-// Shown on the pattern field itself, so a UMI the chain cannot use is caught where it
-// was typed rather than as a block-level error after Run.
-const umiError = computed(() => (umi.value ? umiPatternError(umi.value) : undefined));
+// Shown on the pattern field itself, so a pattern the run gate would refuse is caught
+// where it was typed. Same function the gate uses, so the two agree — including the
+// unparseable case, which has no `umi` to report against.
+const patternError = computed(() => tagPatternError(app.model.data.tagPattern));
 
 // Both writes happen on the user gesture, never in a watcher on the outputs —
 // that loop would be a hairpin. `.subtitle` is args-only, so it needs the dataset
@@ -289,7 +290,7 @@ ACGTACGT..."
       :error="
         pairedEndMismatch
           ? 'Pattern includes a Read 2 half but the selected input is single-end. Remove the R2 half or pick a paired-end input.'
-          : umiError
+          : patternError
       "
     >
       <template #tooltip>
