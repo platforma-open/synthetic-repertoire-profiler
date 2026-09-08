@@ -176,9 +176,7 @@ const pairedEndMismatch = computed(() => {
   return app.model.outputs.inputIsPairedEnd === false;
 });
 
-// The UMI declared by the pattern, or undefined. Drives both the two settings fields
-// below (required once a UMI is present) and the structure echo, so a mistyped pattern
-// shows up before a run rather than in the workflow.
+// The UMI declared by the pattern, or undefined.
 const umi = computed(() => {
   const pattern = app.model.data.tagPattern;
   if (!pattern || pattern.trim() === "") return undefined;
@@ -186,14 +184,12 @@ const umi = computed(() => {
   return parts ? patternUmiSpec(parts) : undefined;
 });
 
-// Reads back what the pattern actually declared, in the terms the chain uses: the halves
-// are separate grouping keys, and it is the pair that identifies a molecule.
+// Reads the declared UMI back for display.
 const umiSummary = computed(() => {
   const u = umi.value;
   if (!u) return undefined;
   const parts = parsePattern((app.model.data.tagPattern ?? "").replace(/\s+/g, ""));
-  // A ranged capture has no single length, so report the range rather than a number the
-  // chain will never use — the pattern is refused for exactly that reason.
+  // A ranged capture has no single length, so report the range.
   const len = (r: { min: number; max: number }) =>
     r.min === r.max ? `${r.min} nt` : `${r.min}-${r.max} nt (a range, not allowed)`;
   const halves: string[] = [];
@@ -321,12 +317,8 @@ ACGTACGT..."
       </template>
     </PlTextField>
 
-    <!-- Reads the pattern back in the chain's own terms, so a mistyped UMI is visible
-         before a run rather than in the workflow. -->
     <div v-if="umiSummary" class="umi-summary">{{ umiSummary }}</div>
 
-    <!-- Required once the pattern declares a UMI: neither threshold has a safe implicit
-         default, and each trades molecules kept against confidence in the ones kept. -->
     <template v-if="umi">
       <PlSectionSeparator>Molecule consensus</PlSectionSeparator>
       <PlRow>

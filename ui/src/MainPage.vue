@@ -34,7 +34,6 @@ type SampleRow = {
   sampleId: string;
   label: string;
   progress: string;
-  /** Percent within the current step, when the step reports one. */
   progressPercent?: string;
   running: boolean;
   alignReport?: AlignReport;
@@ -52,14 +51,12 @@ watch(
   },
 );
 
-// Every sample the run knows about, from the per-step progress map. Its entries appear
-// as soon as the per-sample template returns, which is well before analyze starts.
+// Per-step progress entries for every sample the run knows about.
 const stepEntries = computed(() => model.outputs.stepProgress?.data ?? []);
 
 const doneSet = computed(() => new Set((model.outputs.done ?? []).map(String)));
 
-// A UMI run has three more mitool commands than a plain one, so the [n/N] label has to
-// know which shape this run is. Derived from the pattern, the same source args uses.
+// The [n/N] denominator: a UMI run has three more commands than a plain one.
 const stepCount = computed(() => {
   const pattern = model.data.tagPattern;
   const parts = pattern ? parsePattern(pattern.replace(/\s+/g, "")) : undefined;
@@ -129,9 +126,7 @@ const columnDefs: ColDef<SampleRow>[] = [
     field: "progress",
     headerName: "Progress",
     headerComponentParams: { type: "Progress" } satisfies PlAgHeaderComponentParams,
-    // The step label is longer than the bare stage name it replaced
-    // (`[2/5] Correcting UMI: 40.0%`), so it needs room. A minWidth rather than flex:
-    // the Alignments chart beside it is what should take the slack.
+    // The step label needs room; the Alignments chart beside it takes the flex.
     minWidth: 260,
     progress(_value, cellData) {
       const row = cellData.data;

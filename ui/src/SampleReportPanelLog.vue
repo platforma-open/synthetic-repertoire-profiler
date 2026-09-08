@@ -7,8 +7,7 @@ import { useApp } from "./app";
 const props = defineProps<{ sampleId: string }>();
 const { model } = useApp();
 
-// One log per mitool command. The keys carry an ordinal prefix (`1-parse`, …) so the
-// picker orders itself; a non-UMI run simply has fewer of them.
+// One log per mitool command. The ordinal prefix orders the picker.
 const STEP_LABELS: Record<string, string> = {
   "1-parse": "Parse",
   "2-refine-tags": "Refine tags",
@@ -28,7 +27,6 @@ const tabOptions = computed<SimpleOption<string>[]>(() =>
   steps.value.map((s) => ({ value: s, text: STEP_LABELS[s] ?? s })),
 );
 
-// Default to the last step that has a log — the one a failure is most likely in.
 const currentStep = ref<string | undefined>(undefined);
 watch(
   steps,

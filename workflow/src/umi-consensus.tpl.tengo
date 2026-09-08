@@ -1,10 +1,6 @@
 // Per-sample UMI consensus chain: refine-tags -> sort -> consensus.
 //
-// Its own subtemplate so the whole chain forms one memoization boundary — a settings
-// change below it does not re-run three exec steps. Ported from peptide-extraction,
-// which is the reference implementation for this chain (A-0016), with two changes:
-// the `memory-from-limits` entrypoint (see :main below) and JSON reports alongside the
-// text ones, so QC reads fields rather than scraping prose.
+// A subtemplate so the chain is one memoization boundary.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -14,24 +10,18 @@ self.defineOutputs(
 	"consensusMic",
 	"refineReportTxt", "refineReportJson",
 	"consensusReportTxt", "consensusReportJson",
-	// One log per step, so the Progress column can name the stage a sample is in
-	// rather than showing nothing until analyze starts.
 	"refineLog", "sortLog", "consensusLog"
 )
 
-// `memory-from-limits`, not `:main`: `:main` sizes the JVM heap by MaxRAMPercentage of
-// the RAM the JVM sees, which on a native/desktop run is the whole host, ignoring the
-// mem() grant below. Both sorts here budget from Runtime.maxMemory().
+// memory-from-limits derives -Xmx from the mem() grant below; the plain entrypoint
+// sizes it from the RAM the JVM sees, which on a desktop run is the whole host.
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 
 progressPrefix := "[==PROGRESS==]"
 
 self.body(func(inputs) {
 	parsedMic := inputs.parsedMic
-	// Molecule tag names, per read half. Either may be absent; at least one is present
-	// or this template is not rendered.
 	umiTags := inputs.umiTags
-	// Payload (Targets) tags to assemble a consensus for — the pattern's insert captures.
 	payloadTags := inputs.payloadTags
 	minReadsPerConsensus := inputs.minReadsPerConsensus
 	minUmiQuality := inputs.minUmiQuality
@@ -49,10 +39,6 @@ self.body(func(inputs) {
 	}
 
 	// --- refine-tags: correct sequencing errors inside the barcodes ---
-	// Barcode error rates are left at mitool's defaults. peptide-extraction overrides
-	// --substitution-rate to 1e-5, which needs ~413 reads on a barcode before any
-	// neighbour can be merged; at this block's depth (single-digit to tens of reads per
-	// molecule) that switches correction off in practice. mitool's 1e-3 needs ~41.
 	refineBuilder := envelope(exec.builder()).arg("refine-tags")
 	for tag in umiTags {
 		refineBuilder = refineBuilder.arg("-t").arg(tag)
@@ -70,9 +56,8 @@ self.body(func(inputs) {
 		run()
 
 	// --- sort: make equal barcodes adjacent ---
-	// Not redundant with the sort `consensus` does internally: that path hardcodes a
-	// 2 GB sort budget (Consensus.kt) against this command's 256 MB (Sort.kt), and peak
-	// heap runs ~12x the budget — the difference between ~24 GB and ~3 GB.
+	// A separate step: the sort `consensus` does internally uses a 2 GB budget against
+	// this command's 256 MB.
 	sortBuilder := envelope(exec.builder()).arg("sort")
 	for tag in umiTags {
 		sortBuilder = sortBuilder.arg("-s").arg(tag)

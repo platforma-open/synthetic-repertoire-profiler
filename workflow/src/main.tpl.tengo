@@ -113,9 +113,8 @@ wf.body(func(args) {
 		parentRegionsJson = args.parentRegionsJson
 	}
 
-	// Whether molecules are the primary abundance. Derived from the pattern (args.umi is
-	// absent without a UMI), and it must gate the specs and the ptabler aggregations
-	// together: an Xsv spec naming a column the parquet does not carry fails the import.
+	// Gates the molecule columns. Must match the workflow's own hasUmi: an Xsv spec
+	// naming a column the parquet does not carry fails the import.
 	hasUmi := !is_undefined(args.umi)
 
 	// Modality: one pipeline produces two genuinely different kinds of repertoire —
@@ -208,8 +207,7 @@ wf.body(func(args) {
 			path: [path]
 		}
 	}
-	// Per-variant abundance (nt + aa). The downstream anchor is the molecule count on a
-	// UMI run and the read count otherwise.
+	// Per-variant abundance (nt + aa).
 	ntAbundanceXsv := xsvTarget("ntAbundanceXsv", "ntAbundance", [ntVariantAxis], columnSpecs.perSampleAbundanceColumns(hasUmi))
 	aaAbundanceXsv := xsvTarget("aaAbundanceXsv", "aaAbundance", [aaVariantAxis], columnSpecs.perSampleAbundanceColumns(hasUmi))
 	// Known-level per-sample abundance + synonymous spread (always declared;
@@ -247,12 +245,9 @@ wf.body(func(args) {
 		}
 	}
 
-	// Per-step logs (ResourceMap keyed [step]; processColumn prepends sampleId) — the
-	// Progress column's source and the Logs view's step picker.
-	//
+	// Per-step logs (ResourceMap keyed [step]; processColumn prepends sampleId).
 	// `ResourceMap`, not `Resource`+`path`: the per-sample template returns a built
-	// resource map here, and a `Resource` target hands it over as one opaque resource, so
-	// `parseResourceMap` in the model finds nothing and the column never leaves "Queued".
+	// resource map, which a `Resource` target would pass through as one opaque resource.
 	stepLogsOutput := {
 		type: "ResourceMap",
 		name: "stepLogs",

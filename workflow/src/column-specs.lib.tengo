@@ -645,10 +645,8 @@ linkerColumns := func(name) {
 // and aa level — the variantKey axis alphabet domain distinguishes them.
 // readCount is the primary abundance + anchor (no UMI in v1) — the column
 // downstream blocks (clonotype-browser etc.) discover as the dataset anchor.
-// With a UMI, molecules are the primary abundance and reads become a secondary,
-// default-hidden one; without a UMI, reads are primary. Same names and annotations as
-// the peptide-extraction block, so downstream consumers discovering abundance by
-// annotation see one convention across both.
+// With a UMI, molecules are the primary abundance and reads become secondary and
+// default-hidden; without a UMI, reads are primary.
 perSampleAbundanceColumns := func(hasUmi) {
 	cols := []
 	if hasUmi {
@@ -1012,9 +1010,7 @@ qcColumns := func(sampleIdAxisSpec, hasUmi) {
 			}
 		}
 	}
-	// A UMI run leads with molecules: totals and per-bucket counts in molecules, reads
-	// demoted to `optional` beside them. Gated rather than NaN-filled, like the
-	// abundance columns — the spec and the parquet must agree.
+	// A UMI run leads with molecules; read-based columns demote to `optional`.
 	readVis := hasUmi ? "optional" : "default"
 	cols := [
 			longCol("ntVariants", "nt-variants", 100000, "default", "NT Variants", "Distinct nucleotide variants assembled."),
@@ -1039,9 +1035,7 @@ qcColumns := func(sampleIdAxisSpec, hasUmi) {
 	if hasUmi {
 		cols = append(cols,
 			longCol("totalMolecules", "total-molecules", 98500, "default", "Total Molecules", "Distinct molecules (UMIs) behind the variants."),
-			// Not a fraction: reads divided by molecules, so no 0-1 range and no percent
-			// format. The headline number for a UMI run — it says whether the consensus
-			// had anything to work with.
+			// Reads over molecules: a ratio, so no 0-1 range and no percent format.
 			{
 				column: "readsPerMolecule",
 				id: "reads-per-molecule",
