@@ -261,6 +261,25 @@ wf.body(func(args) {
 		path: ["logs"]
 	}
 
+	// Per-step logs, keyed [sampleId, step] — the Progress column's source. Separate
+	// from `logs` (analyze only), which is what the Logs view shows.
+	stepLogsOutput := {
+		type: "Resource",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: runScope,
+			axesSpec: [{
+				name: "pl7.app/repertoire/pipelineStep",
+				type: "String",
+				annotations: { "pl7.app/label": "Pipeline step" }
+			}],
+			valueType: "Log"
+		},
+		name: "stepLogs",
+		path: ["stepLogs"]
+	}
+
 	targetOutputs := [
 		// Parse output — surfaced for deduplication. mitool parse writes the .mic
 		// in non-deterministic record order, so it must be retained by content
@@ -288,7 +307,8 @@ wf.body(func(args) {
 		knownNtAbundanceXsv,
 		knownAaAbundanceXsv,
 		aaConvergenceXsv,
-		logsOutput
+		logsOutput,
+		stepLogsOutput
 	]
 	// State matrix, split by position chunk inside the per-sample job: one plain File
 	// output per level per chunk key (see state-matrix-chunks outputName).
@@ -1001,7 +1021,8 @@ wf.body(func(args) {
 		// Return the resource-map DATA under the "logs" key so the model can
 		// resolve("logs") + parseResourceMap it (a plain output() reads back as
 		// an opaque std/map).
-		logs: perSampleResults.outputData("logs")
+		logs: perSampleResults.outputData("logs"),
+		stepLogs: perSampleResults.outputData("stepLogs")
 	}
 	// Known Variants tables — present only when the matching known set ran.
 	if !is_undefined(knownVariantsNtPf) {

@@ -1,20 +1,59 @@
 <script setup lang="ts">
-import { PlLogView } from "@platforma-sdk/ui-vue";
-import { computed } from "vue";
+import type { SimpleOption } from "@platforma-sdk/ui-vue";
+import { PlBtnGroup, PlLogView } from "@platforma-sdk/ui-vue";
+import { computed, ref, watch } from "vue";
 import { useApp } from "./app";
 
 const props = defineProps<{ sampleId: string }>();
 const { model } = useApp();
 
-// The per-sample analyze log (parse → align → assemble → call-mutations →
-// [assign] output + progress markers).
+// One log per mitool command. The keys carry an ordinal prefix (`1-parse`, …) so the
+// picker orders itself; a non-UMI run simply has fewer of them.
+const STEP_LABELS: Record<string, string> = {
+  "1-parse": "Parse",
+  "2-refine-tags": "Refine tags",
+  "3-sort": "Sort",
+  "4-consensus": "Consensus",
+  "5-analyze": "Analysis",
+};
+
+const steps = computed(() =>
+  (model.outputs.stepLogs?.data ?? [])
+    .filter((e) => String(e.key[0]) === props.sampleId && e.value !== undefined)
+    .map((e) => String(e.key[1]))
+    .sort(),
+);
+
+const tabOptions = computed<SimpleOption<string>[]>(() =>
+  steps.value.map((s) => ({ value: s, text: STEP_LABELS[s] ?? s })),
+);
+
+// Default to the last step that has a log — the one a failure is most likely in.
+const currentStep = ref<string | undefined>(undefined);
+watch(
+  steps,
+  (list) => {
+    if (list.length > 0 && (!currentStep.value || !list.includes(currentStep.value)))
+      currentStep.value = list[list.length - 1];
+  },
+  { immediate: true },
+);
+
 const logHandle = computed(
-  () => model.outputs.logs?.data.find((e) => String(e.key[0]) === props.sampleId)?.value,
+  () =>
+    model.outputs.stepLogs?.data.find(
+      (e) => String(e.key[0]) === props.sampleId && String(e.key[1]) === currentStep.value,
+    )?.value,
 );
 </script>
 
 <template>
-  <PlLogView v-if="logHandle" :log-handle="logHandle" label="Analysis log" />
+  <PlBtnGroup v-if="tabOptions.length > 1" v-model="currentStep" :options="tabOptions" />
+  <PlLogView
+    v-if="logHandle"
+    :log-handle="logHandle"
+    :label="currentStep ? (STEP_LABELS[currentStep] ?? currentStep) : 'Log'"
+  />
   <div v-else>No log available for this sample yet.</div>
 </template>
 

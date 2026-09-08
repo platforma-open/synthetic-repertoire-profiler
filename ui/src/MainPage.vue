@@ -17,8 +17,12 @@ import {
 import { computed, ref, watch } from "vue";
 import type { AlignReport } from "./alignmentChartSettings";
 import { getAlignmentChartSettings } from "./alignmentChartSettings";
+import {
+  parsePattern,
+  patternUmiSpec,
+} from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
 import { useApp } from "./app";
-import { parseProgressString } from "./parseProgress";
+import { pipelineStatus, totalPipelineSteps } from "./stepProgress";
 import SampleReportPanel from "./SampleReportPanel.vue";
 import SettingsPanel from "./SettingsPanel.vue";
 
@@ -30,6 +34,9 @@ type SampleRow = {
   sampleId: string;
   label: string;
   progress: string;
+  /** Percent within the current step, when the step reports one. */
+  progressPercent?: string;
+  running: boolean;
   alignReport?: AlignReport;
 };
 
@@ -45,16 +52,19 @@ watch(
   },
 );
 
-// sampleId -> latest progress string scraped from the analyze log.
-const progressMap = computed(() => {
-  const m = new Map<string, string>();
-  for (const e of model.outputs.progress?.data ?? []) {
-    m.set(String(e.key[0]), (e.value as string) ?? "");
-  }
-  return m;
-});
+// Every sample the run knows about, from the per-step progress map. Its entries appear
+// as soon as the per-sample template returns, which is well before analyze starts.
+const stepEntries = computed(() => model.outputs.stepProgress?.data ?? []);
 
 const doneSet = computed(() => new Set((model.outputs.done ?? []).map(String)));
+
+// A UMI run has three more mitool commands than a plain one, so the [n/N] label has to
+// know which shape this run is. Derived from the pattern, the same source args uses.
+const stepCount = computed(() => {
+  const pattern = model.data.tagPattern;
+  const parts = pattern ? parsePattern(pattern.replace(/\s+/g, "")) : undefined;
+  return totalPipelineSteps(!!(parts && patternUmiSpec(parts)));
+});
 
 // sampleId -> parsed align.report.json (alignment outcome) for the Alignments
 // column, read from the consolidated reports map (step "align", format "json").
@@ -73,15 +83,24 @@ const alignReportMap = computed(() => {
 
 const rows = computed<SampleRow[]>(() => {
   const labels = model.outputs.sampleLabels ?? {};
-  const ids = new Set<string>([...Object.keys(labels), ...progressMap.value.keys()]);
-  return [...ids].map((sampleId) => ({
-    sampleId,
-    label: labels[sampleId] ?? sampleId,
-    // A finished sample shows "Done"; the raw log otherwise sticks at its last
-    // marker. Before that, show the latest scraped progress line, else "Queued".
-    progress: doneSet.value.has(sampleId) ? "Done" : (progressMap.value.get(sampleId) ?? "Queued"),
-    alignReport: alignReportMap.value.get(sampleId),
-  }));
+  const ids = new Set<string>([
+    ...Object.keys(labels),
+    ...stepEntries.value.map((e) => String(e.key[0])),
+  ]);
+  return [...ids].map((sampleId) => {
+    const status = pipelineStatus(sampleId, stepEntries.value, {
+      done: doneSet.value.has(sampleId),
+      totalSteps: stepCount.value,
+    });
+    return {
+      sampleId,
+      label: labels[sampleId] ?? sampleId,
+      progress: status.text,
+      progressPercent: status.percent,
+      running: status.running,
+      alignReport: alignReportMap.value.get(sampleId),
+    };
+  });
 });
 
 // Per-sample report slide-over (opened from the Sample cell button / row double-click).
@@ -110,15 +129,11 @@ const columnDefs: ColDef<SampleRow>[] = [
     field: "progress",
     headerName: "Progress",
     headerComponentParams: { type: "Progress" } satisfies PlAgHeaderComponentParams,
-    progress(cellData) {
-      const parsed = parseProgressString(cellData);
-      if (parsed.stage === "Queued") return { status: "not_started", text: "Queued" };
-      return {
-        status: parsed.stage === "Done" ? "done" : "running",
-        percent: parsed.percentage,
-        text: parsed.percentage ? `${parsed.stage}: ${parsed.percentage}%` : parsed.stage,
-        suffix: parsed.etaLabel ?? "",
-      };
+    progress(_value, cellData) {
+      const row = cellData.data;
+      if (!row || row.progress === "Queued") return { status: "not_started", text: "Queued" };
+      if (!row.running) return { status: "done", text: row.progress };
+      return { status: "running", percent: row.progressPercent, text: row.progress };
     },
   }),
   createAgGridColDef<SampleRow, string>({
