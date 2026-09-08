@@ -6,6 +6,7 @@ import {
   parsePattern,
   patternUmiSpec,
   plRefKey,
+  umiPatternError,
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
 import {
   getRawPlatformaInstance,
@@ -184,23 +185,9 @@ const umi = computed(() => {
   return parts ? patternUmiSpec(parts) : undefined;
 });
 
-// Reads the declared UMI back for display.
-const umiSummary = computed(() => {
-  const u = umi.value;
-  if (!u) return undefined;
-  const parts = parsePattern((app.model.data.tagPattern ?? "").replace(/\s+/g, ""));
-  // A ranged capture has no single length, so report the range.
-  const len = (r: { min: number; max: number }) =>
-    r.min === r.max ? `${r.min} nt` : `${r.min}-${r.max} nt (a range, not allowed)`;
-  const halves: string[] = [];
-  if (u.r1Name && parts?.r1.umi) halves.push(`${len(parts.r1.umi)} on Read 1 (${u.r1Name})`);
-  if (u.r2Name && parts?.r2?.umi) halves.push(`${len(parts.r2.umi)} on Read 2 (${u.r2Name})`);
-  const tail =
-    halves.length > 1 && !u.ranged
-      ? `, used together as the molecule key (${u.totalLength} nt in total)`
-      : "";
-  return `UMI: ${halves.join(" + ")}${tail}.`;
-});
+// Shown on the pattern field itself, so a UMI the chain cannot use is caught where it
+// was typed rather than as a block-level error after Run.
+const umiError = computed(() => (umi.value ? umiPatternError(umi.value) : undefined));
 
 // Both writes happen on the user gesture, never in a watcher on the outputs —
 // that loop would be a hairpin. `.subtitle` is args-only, so it needs the dataset
@@ -302,7 +289,7 @@ ACGTACGT..."
       :error="
         pairedEndMismatch
           ? 'Pattern includes a Read 2 half but the selected input is single-end. Remove the R2 half or pick a paired-end input.'
-          : undefined
+          : umiError
       "
     >
       <template #tooltip>
@@ -316,8 +303,6 @@ ACGTACGT..."
         barcode cannot be told apart from a different real barcode.
       </template>
     </PlTextField>
-
-    <div v-if="umiSummary" class="umi-summary">{{ umiSummary }}</div>
 
     <template v-if="umi">
       <PlSectionSeparator>Molecule consensus</PlSectionSeparator>
@@ -541,10 +526,3 @@ ACGTACGT..."
     </PlNumberField>
   </PlAccordionSection>
 </template>
-
-<style scoped>
-.umi-summary {
-  color: var(--txt-03);
-  font-size: 12px;
-}
-</style>
