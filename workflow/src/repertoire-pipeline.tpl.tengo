@@ -442,7 +442,12 @@ self.body(func(inputs) {
 			pt.col("readFraction").cast("Double").sum().alias("knownVariantReadFraction")
 		]
 		if hasUmi {
-			aggs = append(aggs, pt.col("moleculeCount").cast("Long").sum().alias("knownVariantMoleculeCount"))
+			aggs = append(aggs,
+				pt.col("moleculeCount").cast("Long").sum().alias("knownVariantMoleculeCount"),
+				pt.col("moleculeCount").cast("Long").sum().cast("Double").truediv(
+					pt.col("_repertoireMolecules").first().cast("Double")
+				).alias("knownVariantMoleculeFraction")
+			)
 		}
 		return aggs
 	}

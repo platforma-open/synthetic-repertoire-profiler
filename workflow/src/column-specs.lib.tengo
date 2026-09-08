@@ -547,6 +547,24 @@ knownAbundanceColumns := func(hasUmi) {
 					"pl7.app/label": "Known UMIs"
 				})
 			}
+		}, {
+			column: "knownVariantMoleculeFraction",
+			id: "known-umi-fraction",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/knownVariantMoleculeFraction",
+				valueType: "Double",
+				annotations: tableAnno(90500, "default", {
+					"pl7.app/min": "0",
+					"pl7.app/max": "1",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "true",
+					"pl7.app/abundance/aggregated": "true",
+					"pl7.app/label": "Known UMI fraction",
+					"pl7.app/format": ".2p"
+				})
+			}
 		})
 	}
 	return append(cols, {
