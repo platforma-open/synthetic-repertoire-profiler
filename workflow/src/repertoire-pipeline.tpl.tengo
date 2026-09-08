@@ -444,12 +444,28 @@ self.body(func(inputs) {
 		if hasUmi {
 			aggs = append(aggs,
 				pt.col("moleculeCount").cast("Long").sum().alias("knownVariantMoleculeCount"),
-				pt.col("moleculeCount").cast("Long").sum().cast("Double").truediv(
-					pt.col("_repertoireMolecules").first().cast("Double")
-				).alias("knownVariantMoleculeFraction")
+				pt.col("_repertoireMolecules").first().alias("_repertoireMolecules")
 			)
 		}
 		return aggs
+	}
+	// The fraction is derived after the group-by, never inside it: an aggregate result
+	// accepts `alias` only, so casting or dividing one is not expressible.
+	withKnownMoleculeFraction := func(df) {
+		if !hasUmi {
+			return df
+		}
+		return df.withColumns(
+			pt.col("knownVariantMoleculeCount").cast("Double").truediv(
+				pt.col("_repertoireMolecules").cast("Double")
+			).alias("knownVariantMoleculeFraction")
+		).select(
+			pt.col("knownKey"),
+			pt.col("knownVariantReadCount"),
+			pt.col("knownVariantReadFraction"),
+			pt.col("knownVariantMoleculeCount"),
+			pt.col("knownVariantMoleculeFraction")
+		)
 	}
 
 	ntAbundSrc := vAbundF
@@ -496,10 +512,12 @@ self.body(func(inputs) {
 	// (b6SeqHash / b6NonEmpty are defined above, reused by the export filter.)
 
 	// nt known × this sample: reads summed over assigned nt variants per known nt seq.
-	vAbund.
-		filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
-		withColumns(b6SeqHash("ntSequence").alias("knownKey")).
-		groupBy("knownKey").agg(knownAbundAggs()...).sort(["knownKey"]).save("knownNtAbundance.parquet")
+	withKnownMoleculeFraction(
+		vAbundF.
+			filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
+			withColumns(b6SeqHash("ntSequence").alias("knownKey")).
+			groupBy("knownKey").agg(knownAbundAggs()...)
+	).sort(["knownKey"]).save("knownNtAbundance.parquet")
 
 	// aa known × this sample: reads of the nt members of each assigned aa variant,
 	// keyed by hash(aa known seq).
@@ -510,11 +528,13 @@ self.body(func(inputs) {
 	aaKnownSeq := aaForKnown.
 		filter(b6NonEmpty("knownAaKey")).
 		groupBy("aaVariantKey").agg(pt.col("aaSequence").first().alias("aaSequence"))
-	vAbund.
-		filter(b6NonEmpty("aaVariantKey")).
-		join(aaKnownSeq, { how: "inner", on: ["aaVariantKey"] }).
-		withColumns(b6SeqHash("aaSequence").alias("knownKey")).
-		groupBy("knownKey").agg(knownAbundAggs()...).sort(["knownKey"]).save("knownAaAbundance.parquet")
+	withKnownMoleculeFraction(
+		vAbundF.
+			filter(b6NonEmpty("aaVariantKey")).
+			join(aaKnownSeq, { how: "inner", on: ["aaVariantKey"] }).
+			withColumns(b6SeqHash("aaSequence").alias("knownKey")).
+			groupBy("knownKey").agg(knownAbundAggs()...)
+	).sort(["knownKey"]).save("knownAaAbundance.parquet")
 
 	// declared-member synonymous spread: per known-aa entity, the
 	// SD + CV of its DESIGNED nt members' per-sample fractions, seeding members
