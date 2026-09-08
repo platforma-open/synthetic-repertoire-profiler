@@ -113,6 +113,11 @@ wf.body(func(args) {
 		parentRegionsJson = args.parentRegionsJson
 	}
 
+	// Whether molecules are the primary abundance. Derived from the pattern (args.umi is
+	// absent without a UMI), and it must gate the specs and the ptabler aggregations
+	// together: an Xsv spec naming a column the parquet does not carry fails the import.
+	hasUmi := !is_undefined(args.umi)
+
 	// Modality: one pipeline produces two genuinely different kinds of repertoire —
 	// a VDJ one from antibody/TCR parents, a general amplicon one from designed
 	// libraries, phage pools and deep mutational scans. Derived from the region
@@ -203,14 +208,15 @@ wf.body(func(args) {
 			path: [path]
 		}
 	}
-	// Per-variant abundance (nt + aa); readCount is the downstream anchor.
-	ntAbundanceXsv := xsvTarget("ntAbundanceXsv", "ntAbundance", [ntVariantAxis], columnSpecs.perSampleAbundanceColumns())
-	aaAbundanceXsv := xsvTarget("aaAbundanceXsv", "aaAbundance", [aaVariantAxis], columnSpecs.perSampleAbundanceColumns())
+	// Per-variant abundance (nt + aa). The downstream anchor is the molecule count on a
+	// UMI run and the read count otherwise.
+	ntAbundanceXsv := xsvTarget("ntAbundanceXsv", "ntAbundance", [ntVariantAxis], columnSpecs.perSampleAbundanceColumns(hasUmi))
+	aaAbundanceXsv := xsvTarget("aaAbundanceXsv", "aaAbundance", [aaVariantAxis], columnSpecs.perSampleAbundanceColumns(hasUmi))
 	// Known-level per-sample abundance + synonymous spread (always declared;
 	// the per-sample parquets are empty when nothing is assigned — added to the
 	// frame below only when a known set was supplied).
-	knownNtAbundanceXsv := xsvTarget("knownNtAbundanceXsv", "knownNtAbundance", [ntKnownAxis], columnSpecs.knownAbundanceColumns())
-	knownAaAbundanceXsv := xsvTarget("knownAaAbundanceXsv", "knownAaAbundance", [aaKnownAxis], columnSpecs.knownAbundanceColumns())
+	knownNtAbundanceXsv := xsvTarget("knownNtAbundanceXsv", "knownNtAbundance", [ntKnownAxis], columnSpecs.knownAbundanceColumns(hasUmi))
+	knownAaAbundanceXsv := xsvTarget("knownAaAbundanceXsv", "knownAaAbundance", [aaKnownAxis], columnSpecs.knownAbundanceColumns(hasUmi))
 	// Declared-member synonymous spread, keyed by the known-aa entity.
 	aaConvergenceXsv := xsvTarget("aaConvergenceXsv", "aaConvergence", [aaKnownAxis], columnSpecs.convergenceColumns())
 	// Per-sample mutation-load histogram — feeds the in-block plot, not exported.
@@ -327,7 +333,8 @@ wf.body(func(args) {
 		variantsTsvData: perSampleResults.outputData("variantsTsv"),
 		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
 		ntRegionCols: rc.ntRegionNames,
-		aaRegionCols: rc.aaRegionNames
+		aaRegionCols: rc.aaRegionNames,
+		hasUmi: hasUmi
 	})
 	importProps := func(file, axis, isAa, regionNames) {
 		return xsv.importFile(
@@ -335,7 +342,7 @@ wf.body(func(args) {
 			"tsv",
 			{
 				axes: [axis],
-				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName),
+				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName, hasUmi),
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
