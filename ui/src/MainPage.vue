@@ -17,12 +17,8 @@ import {
 import { computed, ref, watch } from "vue";
 import type { AlignReport } from "./alignmentChartSettings";
 import { getAlignmentChartSettings } from "./alignmentChartSettings";
-import {
-  parsePattern,
-  patternUmiSpec,
-} from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
 import { useApp } from "./app";
-import { pipelineStatus, totalPipelineSteps } from "./stepProgress";
+import { pipelineStatus } from "./stepProgress";
 import SampleReportPanel from "./SampleReportPanel.vue";
 import SettingsPanel from "./SettingsPanel.vue";
 
@@ -56,13 +52,6 @@ const stepEntries = computed(() => model.outputs.stepProgress?.data ?? []);
 
 const doneSet = computed(() => new Set((model.outputs.done ?? []).map(String)));
 
-// The [n/N] denominator: a UMI run has three more commands than a plain one.
-const stepCount = computed(() => {
-  const pattern = model.data.tagPattern;
-  const parts = pattern ? parsePattern(pattern.replace(/\s+/g, "")) : undefined;
-  return totalPipelineSteps(!!(parts && patternUmiSpec(parts)));
-});
-
 // sampleId -> parsed align.report.json (alignment outcome) for the Alignments
 // column, read from the consolidated reports map (step "align", format "json").
 // Content is fetched + cached reactively by handle.
@@ -87,7 +76,6 @@ const rows = computed<SampleRow[]>(() => {
   return [...ids].map((sampleId) => {
     const status = pipelineStatus(sampleId, stepEntries.value, {
       done: doneSet.value.has(sampleId),
-      totalSteps: stepCount.value,
     });
     return {
       sampleId,
