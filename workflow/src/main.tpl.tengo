@@ -218,8 +218,8 @@ wf.body(func(args) {
 	// Declared-member synonymous spread, keyed by the known-aa entity.
 	aaConvergenceXsv := xsvTarget("aaConvergenceXsv", "aaConvergence", [aaKnownAxis], columnSpecs.convergenceColumns())
 	// Per-sample mutation-load histogram — feeds the in-block plot, not exported.
-	ntMutationHistogramXsv := xsvTarget("ntMutationHistogramXsv", "ntMutationHistogram", [ntMutationCountAxis], columnSpecs.mutationHistogramColumns("nucleotide"))
-	aaMutationHistogramXsv := xsvTarget("aaMutationHistogramXsv", "aaMutationHistogram", [aaMutationCountAxis], columnSpecs.mutationHistogramColumns("aminoacid"))
+	ntMutationHistogramXsv := xsvTarget("ntMutationHistogramXsv", "ntMutationHistogram", [ntMutationCountAxis], columnSpecs.mutationHistogramColumns("nucleotide", hasUmi))
+	aaMutationHistogramXsv := xsvTarget("aaMutationHistogramXsv", "aaMutationHistogram", [aaMutationCountAxis], columnSpecs.mutationHistogramColumns("aminoacid", hasUmi))
 
 	// Per-sample step reports (ResourceMap keyed [step, format]; processColumn
 	// prepends sampleId). Feeds the sample report panel (json charts + txt views)
@@ -676,7 +676,8 @@ wf.body(func(args) {
 	addStateHeatmap := func(prefix, stateMatrixTsv, propertiesTsv, alphabet, posLabel, trace, parentResidueCols) {
 		hmRun := render.createEphemeral(computeStateHeatmapTpl, {
 			stateMatrixTsv: stateMatrixTsv,
-			propertiesTsv: propertiesTsv
+			propertiesTsv: propertiesTsv,
+			hasUmi: hasUmi
 		})
 		hmCols := xsv.importFile(
 			hmRun.output("stateHeatmap"),
@@ -687,7 +688,7 @@ wf.body(func(args) {
 					columnSpecs.positionAxisSpec(alphabet, posLabel),
 					columnSpecs.stateAxisSpec(alphabet)
 				],
-				columns: columnSpecs.stateHeatmapColumns(alphabet),
+				columns: columnSpecs.stateHeatmapColumns(alphabet, hasUmi),
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},

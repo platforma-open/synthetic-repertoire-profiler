@@ -8,10 +8,11 @@
 // sample in the run.
 //
 //   stateHeatmap.tsv   [parentId, position, state] -> readCount, frequency
+//                       (+ moleculeCount, moleculeFrequency on a UMI run)
 //
 // `frequency` is the same sum divided by its (parentId, position) column total, so
-// each position column adds up to 1 — the per-position residue composition. Both
-// value columns ride in one frame; the plot page defaults to frequency.
+// each position column adds up to 1 — the per-position residue composition. Every
+// value column rides in one frame; the plot page defaults to frequency.
 //
 // The parent-residue track is NOT built here — it comes from mitool via
 // aggregate-parent-tables.
@@ -40,31 +41,47 @@ self.body(func(inputs) {
 		xsvType: "tsv"
 	}, { id: "sm", inferSchema: false })
 
-	// Cross-sample per-variant read total from the aggregated properties table —
-	// already pooled over every sample, which is what this map plots.
+	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
+
+	// Cross-sample per-variant totals from the aggregated properties table — already
+	// pooled over every sample, which is what this map plots.
+	propsSelect := [
+		pt.col("variantKey"),
+		pt.col("readCountTotal").cast("Long").alias("variantReads")
+	]
+	if hasUmi {
+		propsSelect = append(propsSelect,
+			pt.col("uniqueMoleculeCountSum").cast("Long").alias("variantMolecules"))
+	}
 	variantReadsDf := wf.frame({
 		file: inputs.propertiesTsv,
 		xsvType: "tsv"
 	}, { id: "props", inferSchema: false }).
-		select(
-			pt.col("variantKey"),
-			pt.col("readCountTotal").cast("Long").alias("variantReads")
-		)
+		select(propsSelect...)
 
 	// Collapse to [parentId, position, state]. Inner join drops variants with no
 	// abundance row.
+	cellAggs := [pt.col("variantReads").sum().alias("readCount")]
+	if hasUmi {
+		cellAggs = append(cellAggs, pt.col("variantMolecules").sum().alias("moleculeCount"))
+	}
 	cells := smDf.
 		join(variantReadsDf, { on: "variantKey", how: "inner" }).
 		groupBy("parentId", "position", "state").
-		agg(pt.col("variantReads").sum().alias("readCount"))
+		agg(cellAggs...)
 
-	// Both sides cast to Double: readCount is a Long sum, and an integer division
+	// Both sides cast to Double: the count is a Long sum, and an integer division
 	// here would floor every frequency to 0.
-	cells.withColumns(
-		pt.col("readCount").cast("Double").
-			truediv(pt.col("readCount").cast("Double").sum().over(["parentId", "position"])).
-			alias("frequency")
-	).save("stateHeatmap.tsv", { xsvType: "tsv" })
+	freqOf := func(countCol, alias) {
+		return pt.col(countCol).cast("Double").
+			truediv(pt.col(countCol).cast("Double").sum().over(["parentId", "position"])).
+			alias(alias)
+	}
+	freqCols := [freqOf("readCount", "frequency")]
+	if hasUmi {
+		freqCols = append(freqCols, freqOf("moleculeCount", "moleculeFrequency"))
+	}
+	cells.withColumns(freqCols...).save("stateHeatmap.tsv", { xsvType: "tsv" })
 
 	result := wf.run()
 
