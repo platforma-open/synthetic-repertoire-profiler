@@ -751,7 +751,8 @@ wf.body(func(args) {
 			// When exporting only matched variants, the distance-to-known columns
 			// (variant-axis keyed, part of the export) are restricted to matched
 			// variants too, so they carry no keys absent from the filtered repertoire.
-			exportOnlyKnown: exportOnlyKnown
+			exportOnlyKnown: exportOnlyKnown,
+			hasUmi: hasUmi
 		})
 		importKnown := func(file, axes, columns) {
 			return xsv.importFile(file, "tsv", {
@@ -808,7 +809,7 @@ wf.body(func(args) {
 			// feeds both the export overlay and the block-local table. The combined
 			// block-local table itself uses knownNtAll (all designed) — built below.
 			// The linker and distance columns are export-only — inside the exportNt gate.
-			knownNtCols := importKnown(knownRun.output("knownNt"), [ntKnownAxis], columnSpecs.knownVariantColumns("nucleotide", true))
+			knownNtCols := importKnown(knownRun.output("knownNt"), [ntKnownAxis], columnSpecs.knownVariantColumns("nucleotide", true, hasUmi))
 			knownNtMetaCols := importKnownMetadata(knownNtFile, knownRun.output("knownNt"), args.knownNtSequenceColumn, args.knownNtMetadata, ntKnownAxis)
 
 			// The nt known-set overlay is exported only when nt export is enabled;
@@ -875,7 +876,7 @@ wf.body(func(args) {
 			knownNtAllCols := importKnown(
 				knownRun.output("knownNtAll"),
 				[ntKnownAxis],
-				columnSpecs.knownVariantColumns("nucleotide", true, true)
+				columnSpecs.knownVariantColumns("nucleotide", true, hasUmi, true)
 			)
 			knownVariantsNtPfBuilder := pframes.pFrameBuilder()
 			for k, v in knownNtAllCols {
@@ -897,7 +898,7 @@ wf.body(func(args) {
 			columnSpecs.linkerColumns("pl7.app/repertoire/knownLink")
 		)
 		aaDistanceCols := importKnown(knownRun.output("aaDistance"), [aaVariantAxis], columnSpecs.knownDistanceColumns(true))
-		knownAaCols := importKnown(knownRun.output("knownAa"), [aaKnownAxis], columnSpecs.knownVariantColumns("aminoacid", true))
+		knownAaCols := importKnown(knownRun.output("knownAa"), [aaKnownAxis], columnSpecs.knownVariantColumns("aminoacid", true, hasUmi))
 		knownAaMetaCols := importKnownMetadata(knownAaFile, knownRun.output("knownAa"), args.knownAaSequenceColumn, args.knownAaMetadata, aaKnownAxis)
 
 		for k, v in knownLinkerAaCols {

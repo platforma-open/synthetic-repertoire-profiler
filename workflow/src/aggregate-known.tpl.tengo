@@ -42,6 +42,25 @@ self.body(func(inputs) {
 	// this template emits (known tables, linkers, unmatched designed) is inherently
 	// keyed on the known axis / already ASSIGNED-only, so it is unaffected.
 	exportOnlyKnown := !is_undefined(inputs.exportOnlyKnown) && inputs.exportOnlyKnown
+	// The per-sample TSVs carry moleculeCount only on a UMI run.
+	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
+	abundAggs := func() {
+		aggs := [
+			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
+			pt.col("sampleId").nUnique().alias("sampleCount")
+		]
+		if hasUmi {
+			aggs = append(aggs, pt.col("moleculeCount").cast("Long").sum().alias("moleculeCountTotal"))
+		}
+		return aggs
+	}
+	abundSelect := func() {
+		cols := []
+		if hasUmi {
+			cols = append(cols, pt.col("moleculeCountTotal"))
+		}
+		return append(cols, pt.col("readCountTotal"), pt.col("sampleCount"))
+	}
 
 	// Tags each row with its sampleId (from the resource-map key) so the known
 	// table can count samples + sum reads across the run.
@@ -104,19 +123,15 @@ self.body(func(inputs) {
 	// abundance (budget-0 exact match ⇒ the assigned variant IS the known one).
 	ntAssigned.
 		groupBy("knownKey").
-		agg(
+		agg([
 			pt.col("knownNtKey").cast("String").first().alias("label"),
-			pt.col("ntSequence").first().alias("sequence"),
-			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
-			pt.col("sampleId").nUnique().alias("sampleCount")
-		).
-		select(
+			pt.col("ntSequence").first().alias("sequence")
+		] + abundAggs()...).
+		select([
 			pt.col("knownKey"),
 			pt.col("label"),
-			pt.col("sequence"),
-			pt.col("readCountTotal"),
-			pt.col("sampleCount")
-		).
+			pt.col("sequence")
+		] + abundSelect()...).
 		sort(["knownKey"]).save("knownNt.tsv", { xsvType: "tsv" })
 
 	// nt distance-to-nearest (ASSIGNED + AMBIGUOUS carry a distance). Under the
@@ -159,19 +174,15 @@ self.body(func(inputs) {
 		select(pt.col("aaVariantKey"), pt.col("readCount").cast("Long").alias("readCount"), pt.col("sampleId")).
 		join(aaMeta, { how: "inner", on: ["aaVariantKey"] }).
 		groupBy("knownKey").
-		agg(
+		agg([
 			pt.col("label").first().alias("label"),
-			pt.col("sequence").first().alias("sequence"),
-			pt.col("readCount").sum().alias("readCountTotal"),
-			pt.col("sampleId").nUnique().alias("sampleCount")
-		).
-		select(
+			pt.col("sequence").first().alias("sequence")
+		] + abundAggs()...).
+		select([
 			pt.col("knownKey"),
 			pt.col("label"),
-			pt.col("sequence"),
-			pt.col("readCountTotal"),
-			pt.col("sampleCount")
-		).
+			pt.col("sequence")
+		] + abundSelect()...).
 		sort(["knownKey"]).save("knownAa.tsv", { xsvType: "tsv" })
 
 	// aa distance-to-nearest. Under the export-only-matched filter, keep only
@@ -262,18 +273,15 @@ self.body(func(inputs) {
 	matchedNtAbund := ntAssigned.
 		groupBy("knownKey").
 		agg(
-			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
-			pt.col("sampleId").nUnique().alias("sampleCount")
+			abundAggs()...
 		)
 	designedNtKeyed.
 		join(matchedNtAbund, { how: "left", on: ["knownKey"] }).
-		select(
+		select([
 			pt.col("knownKey"),
 			pt.col("label"),
-			pt.col("sequence"),
-			pt.col("readCountTotal"),
-			pt.col("sampleCount")
-		).
+			pt.col("sequence")
+		] + abundSelect()...).
 		sort(["knownKey"]).
 		save("knownNtAll.tsv", { xsvType: "tsv" })
 

@@ -379,7 +379,7 @@ knownVariantKeyAxisSpec := func(runScope, alphabet, label, ...rest) {
 // `naAbundance` (optional, default false): allow the abundance columns to be
 // empty (NA). Used by the combined designed-nt table, where undetected designed
 // entries carry no readCountTotal/sampleCount.
-knownVariantColumns := func(alphabet, withAbundance, ...rest) {
+knownVariantColumns := func(alphabet, withAbundance, hasUmi, ...rest) {
 	naAbundance := len(rest) > 0 && rest[0]
 	cols := [{
 		column: "label",
@@ -416,6 +416,22 @@ knownVariantColumns := func(alphabet, withAbundance, ...rest) {
 		}
 	}]
 	if withAbundance {
+		moleculeCountCol := {
+			column: "moleculeCountTotal",
+			id: "known-umi-count-total",
+			allowNA: naAbundance,
+			spec: {
+				name: "pl7.app/uniqueMoleculeCountTotal",
+				valueType: "Long",
+				annotations: tableAnno(91000, "default", {
+					"pl7.app/min": "1",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "false",
+					"pl7.app/label": "Supporting UMIs"
+				})
+			}
+		}
 		readCountCol := {
 			column: "readCountTotal",
 			id: "known-read-count-total",
@@ -423,7 +439,7 @@ knownVariantColumns := func(alphabet, withAbundance, ...rest) {
 			spec: {
 				name: "pl7.app/readCountTotal",
 				valueType: "Long",
-				annotations: tableAnno(90000, "default", {
+				annotations: tableAnno(90000, hasUmi ? "optional" : "default", {
 					"pl7.app/min": "1",
 					"pl7.app/isAbundance": "true",
 					"pl7.app/abundance/unit": "reads",
@@ -447,8 +463,12 @@ knownVariantColumns := func(alphabet, withAbundance, ...rest) {
 		}
 		// Empty cell → NA for undetected designed entries in the combined table.
 		if naAbundance {
+			moleculeCountCol.naRegex = ""
 			readCountCol.naRegex = ""
 			sampleCountCol.naRegex = ""
+		}
+		if hasUmi {
+			cols = append(cols, moleculeCountCol)
 		}
 		cols = append(cols, readCountCol, sampleCountCol)
 	}
