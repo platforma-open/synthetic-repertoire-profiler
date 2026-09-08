@@ -544,7 +544,7 @@ knownAbundanceColumns := func(hasUmi) {
 					"pl7.app/abundance/unit": "molecules",
 					"pl7.app/abundance/normalized": "false",
 					"pl7.app/abundance/aggregated": "true",
-					"pl7.app/label": "Known molecules"
+					"pl7.app/label": "Known UMIs"
 				})
 			}
 		})
@@ -664,7 +664,7 @@ perSampleAbundanceColumns := func(hasUmi) {
 					"pl7.app/abundance/normalized": "false",
 					"pl7.app/abundance/isPrimary": "true",
 					"pl7.app/isAnchor": "true",
-					"pl7.app/label": "Number of Molecules"
+					"pl7.app/label": "Number of UMIs"
 				})
 			}
 		}, {
@@ -681,7 +681,7 @@ perSampleAbundanceColumns := func(hasUmi) {
 					"pl7.app/abundance/unit": "molecules",
 					"pl7.app/abundance/normalized": "true",
 					"pl7.app/abundance/isPrimary": "true",
-					"pl7.app/label": "Fraction of Molecules",
+					"pl7.app/label": "Fraction of UMIs",
 					"pl7.app/format": ".2p"
 				})
 			}
@@ -928,7 +928,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName, hasU
 					"pl7.app/isAbundance": "true",
 					"pl7.app/abundance/unit": "molecules",
 					"pl7.app/abundance/normalized": "false",
-					"pl7.app/label": "Supporting Molecules"
+					"pl7.app/label": "Supporting UMIs"
 				})
 			}
 		}, {
@@ -941,7 +941,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName, hasU
 				annotations: tableAnno(89500, "default", {
 					"pl7.app/min": "0",
 					"pl7.app/max": "1",
-					"pl7.app/label": "Mean Fraction of Molecules",
+					"pl7.app/label": "Mean Fraction of UMIs",
 					"pl7.app/format": ".2p"
 				})
 			}
@@ -1034,7 +1034,7 @@ qcColumns := func(sampleIdAxisSpec, hasUmi) {
 	]
 	if hasUmi {
 		cols = append(cols,
-			longCol("totalMolecules", "total-molecules", 98500, "default", "Total Molecules", "Distinct molecules (UMIs) behind the variants."),
+			longCol("totalMolecules", "total-molecules", 98500, "default", "Total UMIs", "Distinct molecules (UMIs) behind the variants."),
 			// Reads over molecules: a ratio, so no 0-1 range and no percent format.
 			{
 				column: "readsPerMolecule",
@@ -1047,21 +1047,21 @@ qcColumns := func(sampleIdAxisSpec, hasUmi) {
 					annotations: tableAnno(98400, "default", {
 						"pl7.app/min": "0",
 						"pl7.app/format": ".2f",
-						"pl7.app/label": "Reads per Molecule",
-						"pl7.app/description": "Sequencing depth per molecule: total reads divided by distinct molecules."
+						"pl7.app/label": "Reads per UMI",
+						"pl7.app/description": "Sequencing depth per molecule: total reads divided by distinct UMIs."
 					})
 				}
 			},
-			longCol("frameShiftMolecules", "frame-shift-molecules", 89500, "optional", "Frame-Shift Molecules", "Molecules on frame-shift variants."),
-			fracCol("frameShiftMoleculeFraction", "frame-shift-molecule-fraction", 88500, "default", "Frame-Shift Molecules (%)", "Fraction of total molecules on frame-shift variants."),
-			longCol("aaMutationsExceededMolecules", "aa-mutations-exceeded-molecules", 86500, "optional", "AA Mutation-Limit Molecules", "Molecules on aa mutation-limit variants."),
-			fracCol("aaMutationsExceededMoleculeFraction", "aa-mutations-exceeded-molecule-fraction", 85500, "default", "AA Mutation-Limit Molecules (%)", "Fraction of total molecules on aa mutation-limit variants."),
-			longCol("assignedMolecules", "assigned-molecules", 79500, "optional", "Assigned Molecules", "Molecules on assigned variants."),
-			fracCol("assignedMoleculeFraction", "assigned-molecule-fraction", 78500, "optional", "Assigned Molecules (%)", "Fraction of total molecules on assigned variants."),
-			longCol("unassignedMolecules", "unassigned-molecules", 76500, "optional", "Unassigned Molecules", "Molecules on unassigned (novel) variants."),
-			fracCol("unassignedMoleculeFraction", "unassigned-molecule-fraction", 75500, "optional", "Unassigned Molecules (%)", "Fraction of total molecules on unassigned variants."),
-			longCol("ambiguousMolecules", "ambiguous-molecules", 73500, "optional", "Ambiguous Molecules", "Molecules on ambiguous variants."),
-			fracCol("ambiguousMoleculeFraction", "ambiguous-molecule-fraction", 72500, "optional", "Ambiguous Molecules (%)", "Fraction of total molecules on ambiguous variants.")
+			longCol("frameShiftMolecules", "frame-shift-molecules", 89500, "optional", "Frame-Shift UMIs", "UMIs on frame-shift variants."),
+			fracCol("frameShiftMoleculeFraction", "frame-shift-molecule-fraction", 88500, "default", "Frame-Shift UMIs (%)", "Fraction of total UMIs on frame-shift variants."),
+			longCol("aaMutationsExceededMolecules", "aa-mutations-exceeded-molecules", 86500, "optional", "AA Mutation-Limit UMIs", "UMIs on aa mutation-limit variants."),
+			fracCol("aaMutationsExceededMoleculeFraction", "aa-mutations-exceeded-molecule-fraction", 85500, "default", "AA Mutation-Limit UMIs (%)", "Fraction of total UMIs on aa mutation-limit variants."),
+			longCol("assignedMolecules", "assigned-molecules", 79500, "optional", "Assigned UMIs", "UMIs on assigned variants."),
+			fracCol("assignedMoleculeFraction", "assigned-molecule-fraction", 78500, "optional", "Assigned UMIs (%)", "Fraction of total UMIs on assigned variants."),
+			longCol("unassignedMolecules", "unassigned-molecules", 76500, "optional", "Unassigned UMIs", "UMIs on unassigned (novel) variants."),
+			fracCol("unassignedMoleculeFraction", "unassigned-molecule-fraction", 75500, "optional", "Unassigned UMIs (%)", "Fraction of total UMIs on unassigned variants."),
+			longCol("ambiguousMolecules", "ambiguous-molecules", 73500, "optional", "Ambiguous UMIs", "UMIs on ambiguous variants."),
+			fracCol("ambiguousMoleculeFraction", "ambiguous-molecule-fraction", 72500, "optional", "Ambiguous UMIs (%)", "Fraction of total UMIs on ambiguous variants.")
 		)
 	}
 	return {
