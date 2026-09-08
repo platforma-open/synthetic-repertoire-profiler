@@ -13,7 +13,10 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 self.defineOutputs(
 	"consensusMic",
 	"refineReportTxt", "refineReportJson",
-	"consensusReportTxt", "consensusReportJson"
+	"consensusReportTxt", "consensusReportJson",
+	// One log per step, so the Progress column can name the stage a sample is in
+	// rather than showing nothing until analyze starts.
+	"refineLog", "sortLog", "consensusLog"
 )
 
 // `memory-from-limits`, not `:main`: `:main` sizes the JVM heap by MaxRAMPercentage of
@@ -108,6 +111,9 @@ self.body(func(inputs) {
 		refineReportTxt: refineCmd.getFile("refine.report.txt"),
 		refineReportJson: refineCmd.getFile("refine.report.json"),
 		consensusReportTxt: consensusCmd.getFile("consensus.report.txt"),
-		consensusReportJson: consensusCmd.getFile("consensus.report.json")
+		consensusReportJson: consensusCmd.getFile("consensus.report.json"),
+		refineLog: refineCmd.getStdoutStream(),
+		sortLog: sortCmd.getStdoutStream(),
+		consensusLog: consensusCmd.getStdoutStream()
 	}
 })

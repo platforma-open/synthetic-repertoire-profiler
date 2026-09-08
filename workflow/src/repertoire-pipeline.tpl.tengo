@@ -23,7 +23,7 @@ json := import("json")
 
 // The state matrix leaves this template already split by position: one File-valued
 // output per level per chunk key. See state-matrix-chunks.
-outputNames := ["parsedMic", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "logs"]
+outputNames := ["parsedMic", "stepLogs", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "logs"]
 for chunkKey in smChunks.keys() {
 	outputNames = append(outputNames, smChunks.outputName("aa", chunkKey))
 	outputNames = append(outputNames, smChunks.outputName("nt", chunkKey))
@@ -771,6 +771,15 @@ self.body(func(inputs) {
 
 	ptResult := ptWf.run()
 
+	stepLogs := pcolumn.resourceMapBuilder(1)
+	stepLogs.add(["1-parse"], parseCmd.getStdoutStream())
+	if hasUmi {
+		stepLogs.add(["2-refine-tags"], umiRun.output("refineLog"))
+		stepLogs.add(["3-sort"], umiRun.output("sortLog"))
+		stepLogs.add(["4-consensus"], umiRun.output("consensusLog"))
+	}
+	stepLogs.add(["5-analyze"], analyzeCmd.getStdoutStream())
+
 
 
 	result := {
@@ -812,8 +821,13 @@ self.body(func(inputs) {
 		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),
 		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet"),
 		// analyze stdout (stderr merged in) carries the align/assemble progress
-		// markers + the run summary — the per-sample Progress + Logs source.
-		logs: analyzeCmd.getStdoutStream()
+		// markers + the run summary — the per-sample Logs source.
+		logs: analyzeCmd.getStdoutStream(),
+		// One log per mitool command, keyed by an ORDERED step name. The numeric
+		// prefix is what lets the UI pick "the furthest step reached" by plain string
+		// comparison; without the per-step map the Progress column has nothing to show
+		// until analyze starts, which on a UMI run is three commands in.
+		stepLogs: stepLogs.build()
 	}
 
 	// One File output per level per chunk key, so each dedup job gets its own slice.

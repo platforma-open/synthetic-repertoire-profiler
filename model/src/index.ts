@@ -633,6 +633,28 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       : undefined,
   )
 
+  // Per-step log handles, keyed [sampleId, step]. Without these a failed
+  // pre-processing step has no log in the UI — `logs` carries analyze only, and on a
+  // UMI run analyze is three commands downstream of where a failure can happen.
+  .output("stepLogs", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
+      : undefined,
+  )
+
+  // Per-step progress, keyed [sampleId, step]. `WithInfo` adds the `live` flag, which
+  // is how the UI tells "still running" from "finished, log frozen at its last marker" —
+  // a plain progress log sticks at the last stage it printed.
+  .output("stepProgress", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(
+          ctx.outputs.resolve("stepLogs"),
+          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          false,
+        )
+      : undefined,
+  )
+
   // Per-sample step reports, keyed [sampleId, step, format] (step ∈ align /
   // assemble / call-mutations / assign; format ∈ json / txt). Feeds the sample
   // report panel and the Main-page Alignments cell. UI reads content via
