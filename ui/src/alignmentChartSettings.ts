@@ -19,6 +19,7 @@ const categoryLabels: Record<string, string> = {
   NoAlignment: "No alignment to parent",
   IncompleteParentCoverage: "Partial parent coverage",
   TooManyMutations: "Too many mutations",
+  TooManyIndels: "Indels present",
   LowBaseQuality: "Low base quality",
   NoInput: "No usable sequence",
 };
@@ -49,6 +50,7 @@ export function getAlignmentChartSettings(alignReport: AlignReport | undefined) 
     NoAlignment: magma.getNthOf(1, 9),
     IncompleteParentCoverage: magma.getNthOf(3, 9),
     TooManyMutations: magma.getNthOf(5, 9),
+    TooManyIndels: magma.getNthOf(4, 9),
     LowBaseQuality: magma.getNthOf(6, 9),
     NoInput: magma.getNthOf(7, 9),
   } as Record<string, Color>;

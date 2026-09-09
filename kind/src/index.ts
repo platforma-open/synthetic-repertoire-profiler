@@ -70,6 +70,7 @@ export type BlockParams = {
 
   maxMutations?: number;
   maxMutationFraction?: number;
+  substitutionsOnly?: boolean;
   maxAaMutations?: number;
   maxAaMutationFraction?: number;
   minBaseQuality?: number;
@@ -115,6 +116,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     exportOnlyKnown,
     maxMutations,
     maxMutationFraction,
+    substitutionsOnly,
     maxAaMutations,
     maxAaMutationFraction,
     minBaseQuality,
@@ -138,6 +140,7 @@ function parseInitializationParams(value: unknown): BlockParams {
 
     maxMutations: optionalNumber(maxMutations, "maxMutations"),
     maxMutationFraction: optionalNumber(maxMutationFraction, "maxMutationFraction"),
+    substitutionsOnly: optionalBoolean(substitutionsOnly, "substitutionsOnly"),
     maxAaMutations: optionalNumber(maxAaMutations, "maxAaMutations"),
     maxAaMutationFraction: optionalNumber(maxAaMutationFraction, "maxAaMutationFraction"),
     minBaseQuality: optionalNumber(minBaseQuality, "minBaseQuality"),
