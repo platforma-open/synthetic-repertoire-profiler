@@ -42,6 +42,16 @@ const parentModeOptions = [
   { label: "FASTA file", value: "fastaFile" as const },
 ];
 
+const frameShiftModeOptions = [
+  { label: "AA mismatch", value: "AA_MISMATCH" as const },
+  { label: "Triplet", value: "TRIPLET" as const },
+];
+
+// The threshold is read only in AA_MISMATCH mode, so the field is disabled under
+// TRIPLET rather than accepting a number mitool would ignore. The model drops it
+// from args in that mode too, so a stale value cannot leak into a run.
+const frameShiftThresholdDisabled = computed(() => app.model.data.frameShiftMode === "TRIPLET");
+
 // --- Known-set column mapping -------------------------------------------------
 // The known TSVs have arbitrary headers, so the user maps which column is the
 // ID, the Sequence, and which to import as metadata. We discover headers + types
@@ -508,6 +518,40 @@ ACGTACGT..."
         </template>
       </PlTooltip>
     </PlCheckbox>
+
+    <PlSectionSeparator>Frame Shift</PlSectionSeparator>
+    <PlRow>
+      <PlDropdown
+        v-model="app.model.data.frameShiftMode"
+        :options="frameShiftModeOptions"
+        label="Frame shift mode"
+        placeholder="AA mismatch"
+        :clearable="true"
+      >
+        <template #tooltip>
+          An insertion or deletion that is not a multiple of three shifts the reading frame, so the
+          protein after it is nonsense. Such variants are left out of the amino-acid results.
+          <b>Triplet</b> sets aside every one of them. <b>AA mismatch</b> keeps those whose protein
+          still resembles the parent — an indel near the end spoils only the tail. Leave empty for
+          AA mismatch.
+        </template>
+      </PlDropdown>
+
+      <PlNumberField
+        v-model="app.model.data.frameShiftAaThreshold"
+        label="Max AA mismatches"
+        :min-value="0"
+        :step="1"
+        :clearable="true"
+        :disabled="frameShiftThresholdDisabled"
+      >
+        <template #tooltip>
+          How much protein a frame shift may spoil before the variant is set aside: drop it above
+          this many wrong amino acids. Leave empty for the default of 10, which suits parents of a
+          few tens of residues.
+        </template>
+      </PlNumberField>
+    </PlRow>
 
     <PlSectionSeparator>Resource Allocation</PlSectionSeparator>
     <PlNumberField

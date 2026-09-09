@@ -87,6 +87,10 @@ self.body(func(inputs) {
 	// Per-variant aa mutation-load filter (undefined = mitool default, off).
 	maxAaMutations := params.maxAaMutations
 	maxAaMutationFraction := params.maxAaMutationFraction
+	// Frame-shift guard (undefined = mitool defaults: AA_MISMATCH, threshold 10).
+	// The model drops the threshold under TRIPLET, where mitool ignores it.
+	frameShiftMode := params.frameShiftMode
+	frameShiftAaThreshold := params.frameShiftAaThreshold
 	// Quality gates (undefined = mitool default, which is ON: 5 for minBaseQuality,
 	// 20 for minVariantQuality). 0 disables — Phred is never negative.
 	minBaseQuality := params.minBaseQuality
@@ -248,6 +252,13 @@ self.body(func(inputs) {
 	}
 	if !is_undefined(maxAaMutationFraction) {
 		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.maxAaMutationFraction=" + string(maxAaMutationFraction))
+	}
+	// Frame-shift guard: same step, same -M mixin route as the aa gate above.
+	if !is_undefined(frameShiftMode) {
+		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.frameShiftMode=" + frameShiftMode)
+	}
+	if !is_undefined(frameShiftAaThreshold) {
+		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.frameShiftAaThreshold=" + string(int(frameShiftAaThreshold)))
 	}
 	// Quality gates. minBaseQuality is an align-step filter param; minVariantQuality
 	// belongs to the assemble step, whose -M prefix mitool only accepts from the
