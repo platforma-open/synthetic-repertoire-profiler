@@ -216,6 +216,10 @@ export type BlockData = {
   maxMutations?: number; // reject if the alignment has more than this many mutations (edit ops)
   maxMutationFraction?: number; // reject if mutations / parentLength exceeds this (0 < f ≤ 1)
 
+  // Rejects any read whose alignment carries an indel (-Malign.filter.maxIndels=0),
+  // so no indel-bearing variant forms and read counts fall accordingly.
+  substitutionsOnly?: boolean;
+
   // Optional per-variant amino-acid mutation-load filter (Advanced). Applied by
   // mitool's call-mutations step (CallMutationsParams, via -Mcall-mutations.*):
   // an in-frame variant whose aa-mutation count (aaMutations edit ops vs the
@@ -288,6 +292,8 @@ export type BlockArgs = {
   // Mutation-load filter → mitool -Malign.filter.maxMutations / maxMutationFraction.
   maxMutations?: number;
   maxMutationFraction?: number;
+  // Indel gate → mitool -Malign.filter.maxIndels. 0 = substitutions only; absent = off.
+  maxIndels?: number;
   // AA mutation-load filter → mitool -Mcall-mutations.maxAaMutations / maxAaMutationFraction.
   maxAaMutations?: number;
   maxAaMutationFraction?: number;
@@ -391,6 +397,7 @@ const dataModel = new DataModelBuilder({ kind })
     exportOnlyKnown: params?.exportOnlyKnown,
     maxMutations: params?.maxMutations,
     maxMutationFraction: params?.maxMutationFraction,
+    substitutionsOnly: params?.substitutionsOnly,
     maxAaMutations: params?.maxAaMutations,
     maxAaMutationFraction: params?.maxAaMutationFraction,
     minBaseQuality: params?.minBaseQuality,
@@ -630,25 +637,36 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       ?.getFileHandle(),
   )
 
-  // Per-step log handles, keyed [sampleId, step].
-  .output("stepLogs", (ctx) =>
-    ctx.outputs !== undefined
-      ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
-      : undefined,
-  )
+  // Per-step log handles, keyed [sampleId, step]. Absent in projects computed before
+  // 1.2.9, where this output was named `logs`; allowPermanentAbsence is only honoured
+  // alongside assertFieldType.
+  .output("stepLogs", (ctx) => {
+    const acc = ctx.outputs?.resolve({
+      field: "stepLogs",
+      assertFieldType: "Input",
+      allowPermanentAbsence: true,
+    });
+    return acc !== undefined ? parseResourceMap(acc, (a) => a.getLogHandle(), false) : undefined;
+  })
 
   // Per-step progress, keyed [sampleId, step]. `WithInfo` adds the `live` flag, which
   // separates a running step from one whose log froze at its last marker.
-  .output("stepProgress", (ctx) =>
-    ctx.outputs !== undefined
+  // Same pre-1.2.9 absence as stepLogs.
+  .output("stepProgress", (ctx) => {
+    const acc = ctx.outputs?.resolve({
+      field: "stepLogs",
+      assertFieldType: "Input",
+      allowPermanentAbsence: true,
+    });
+    return acc !== undefined
       ? parseResourceMap(
-          ctx.outputs.resolve("stepLogs"),
-          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          acc,
+          (a) => a.getProgressLogWithInfo(ProgressPrefix),
           // A step that has started but printed no marker yet must still appear.
           true,
         )
-      : undefined,
-  )
+      : undefined;
+  })
 
   // Per-sample step reports, keyed [sampleId, step, format] (step ∈ align /
   // assemble / call-mutations / assign; format ∈ json / txt). Feeds the sample
@@ -820,6 +838,9 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     if (maxMutationFraction !== undefined && (maxMutationFraction <= 0 || maxMutationFraction > 1))
       throw new Error("Max mutation fraction must be between 0 and 1.");
 
+    // undefined, not -1, so an off block emits no mixin and mitool keeps its default.
+    const maxIndels = data.substitutionsOnly === true ? 0 : undefined;
+
     // AA mutation-load filter (Advanced): aa-level analog of the above, applied
     // by mitool's call-mutations step. Same null → undefined normalization and
     // positivity/range gates. maxAaMutations counts aa edit ops (positive
@@ -920,6 +941,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       exportNt: data.exportNt,
       maxMutations,
       maxMutationFraction,
+      maxIndels,
       maxAaMutations,
       maxAaMutationFraction,
       minBaseQuality,
@@ -953,6 +975,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     exportOnlyKnown: data.exportOnlyKnown,
     maxMutations: data.maxMutations,
     maxMutationFraction: data.maxMutationFraction,
+    substitutionsOnly: data.substitutionsOnly,
     maxAaMutations: data.maxAaMutations,
     maxAaMutationFraction: data.maxAaMutationFraction,
     minBaseQuality: data.minBaseQuality,
