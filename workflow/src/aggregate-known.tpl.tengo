@@ -42,6 +42,29 @@ self.body(func(inputs) {
 	// this template emits (known tables, linkers, unmatched designed) is inherently
 	// keyed on the known axis / already ASSIGNED-only, so it is unaffected.
 	exportOnlyKnown := !is_undefined(inputs.exportOnlyKnown) && inputs.exportOnlyKnown
+	// The per-sample TSVs carry moleculeCount only on a UMI run.
+	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
+	abundAggs := func(...head) {
+		// head first, then the abundance columns — bound here rather than concatenated at
+		// the call site, so the spread never has to bind tighter than `+`.
+		aggs := []
+		for h in head { aggs = append(aggs, h) }
+		aggs = append(aggs,
+			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
+			pt.col("sampleId").nUnique().alias("sampleCount"))
+		if hasUmi {
+			aggs = append(aggs, pt.col("moleculeCount").cast("Long").sum().alias("moleculeCountTotal"))
+		}
+		return aggs
+	}
+	abundSelect := func(...head) {
+		cols := []
+		for h in head { cols = append(cols, h) }
+		if hasUmi {
+			cols = append(cols, pt.col("moleculeCountTotal"))
+		}
+		return append(cols, pt.col("readCountTotal"), pt.col("sampleCount"))
+	}
 
 	// Tags each row with its sampleId (from the resource-map key) so the known
 	// table can count samples + sum reads across the run.
@@ -104,19 +127,15 @@ self.body(func(inputs) {
 	// abundance (budget-0 exact match ⇒ the assigned variant IS the known one).
 	ntAssigned.
 		groupBy("knownKey").
-		agg(
+		agg(abundAggs(
 			pt.col("knownNtKey").cast("String").first().alias("label"),
-			pt.col("ntSequence").first().alias("sequence"),
-			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
-			pt.col("sampleId").nUnique().alias("sampleCount")
-		).
-		select(
+			pt.col("ntSequence").first().alias("sequence")
+		)...).
+		select(abundSelect(
 			pt.col("knownKey"),
 			pt.col("label"),
-			pt.col("sequence"),
-			pt.col("readCountTotal"),
-			pt.col("sampleCount")
-		).
+			pt.col("sequence")
+		)...).
 		sort(["knownKey"]).save("knownNt.tsv", { xsvType: "tsv" })
 
 	// nt distance-to-nearest (ASSIGNED + AMBIGUOUS carry a distance). Under the
@@ -155,23 +174,28 @@ self.body(func(inputs) {
 	// known aa table with abundance. aa-variants.tsv has no readCount, so the
 	// abundance is the summed reads of the nt members (variants.tsv) of each
 	// assigned aa variant — joined nt→aa on aaVariantKey.
+	// Keep every column abundAggs reads — the projection is the only place they can be lost.
+	aaMembers := [
+		pt.col("aaVariantKey"),
+		pt.col("readCount").cast("Long").alias("readCount"),
+		pt.col("sampleId")
+	]
+	if hasUmi {
+		aaMembers = append(aaMembers, pt.col("moleculeCount").cast("Long").alias("moleculeCount"))
+	}
 	vdf.
-		select(pt.col("aaVariantKey"), pt.col("readCount").cast("Long").alias("readCount"), pt.col("sampleId")).
+		select(aaMembers...).
 		join(aaMeta, { how: "inner", on: ["aaVariantKey"] }).
 		groupBy("knownKey").
-		agg(
+		agg(abundAggs(
 			pt.col("label").first().alias("label"),
-			pt.col("sequence").first().alias("sequence"),
-			pt.col("readCount").sum().alias("readCountTotal"),
-			pt.col("sampleId").nUnique().alias("sampleCount")
-		).
-		select(
+			pt.col("sequence").first().alias("sequence")
+		)...).
+		select(abundSelect(
 			pt.col("knownKey"),
 			pt.col("label"),
-			pt.col("sequence"),
-			pt.col("readCountTotal"),
-			pt.col("sampleCount")
-		).
+			pt.col("sequence")
+		)...).
 		sort(["knownKey"]).save("knownAa.tsv", { xsvType: "tsv" })
 
 	// aa distance-to-nearest. Under the export-only-matched filter, keep only
@@ -262,18 +286,15 @@ self.body(func(inputs) {
 	matchedNtAbund := ntAssigned.
 		groupBy("knownKey").
 		agg(
-			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
-			pt.col("sampleId").nUnique().alias("sampleCount")
+			abundAggs()...
 		)
 	designedNtKeyed.
 		join(matchedNtAbund, { how: "left", on: ["knownKey"] }).
-		select(
+		select(abundSelect(
 			pt.col("knownKey"),
 			pt.col("label"),
-			pt.col("sequence"),
-			pt.col("readCountTotal"),
-			pt.col("sampleCount")
-		).
+			pt.col("sequence")
+		)...).
 		sort(["knownKey"]).
 		save("knownNtAll.tsv", { xsvType: "tsv" })
 

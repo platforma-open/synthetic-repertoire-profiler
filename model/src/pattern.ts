@@ -132,3 +132,24 @@ export function parsePattern(str: string): PatternParts | null {
 export function patternHasUmi(parts: PatternParts): boolean {
   return parts.r1.umi !== undefined || parts.r2?.umi !== undefined;
 }
+
+/** The UMI a pattern declares: the tag name per half, and the combined length. */
+export type UmiSpec = {
+  r1Name?: string;
+  r2Name?: string;
+  /** Combined nucleotide length across both halves. */
+  totalLength: number;
+  /** True when a half declares a length range (`N{4:8}`). */
+  ranged: boolean;
+};
+
+export function patternUmiSpec(parts: PatternParts): UmiSpec | undefined {
+  const halves = [parts.r1, parts.r2];
+  if (!halves.some((h) => h?.umi !== undefined)) return undefined;
+  return {
+    r1Name: parts.r1.umi ? parts.r1.umiName : undefined,
+    r2Name: parts.r2?.umi ? parts.r2.umiName : undefined,
+    totalLength: halves.reduce((n, h) => n + (h?.umi?.min ?? 0), 0),
+    ranged: halves.some((h) => h?.umi !== undefined && h.umi.min !== h.umi.max),
+  };
+}

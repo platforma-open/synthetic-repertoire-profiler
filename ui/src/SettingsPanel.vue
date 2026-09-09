@@ -4,7 +4,9 @@ import {
   DEFAULT_TAG_PATTERN_SINGLE,
   isDefaultTagPattern,
   parsePattern,
+  patternUmiSpec,
   plRefKey,
+  tagPatternError,
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
 import {
   getRawPlatformaInstance,
@@ -175,6 +177,19 @@ const pairedEndMismatch = computed(() => {
   return app.model.outputs.inputIsPairedEnd === false;
 });
 
+// The UMI declared by the pattern, or undefined.
+const umi = computed(() => {
+  const pattern = app.model.data.tagPattern;
+  if (!pattern || pattern.trim() === "") return undefined;
+  const parts = parsePattern(pattern.replace(/\s+/g, ""));
+  return parts ? patternUmiSpec(parts) : undefined;
+});
+
+// Shown on the pattern field itself, so a pattern the run gate would refuse is caught
+// where it was typed. Same function the gate uses, so the two agree — including the
+// unparseable case, which has no `umi` to report against.
+const patternError = computed(() => tagPatternError(app.model.data.tagPattern));
+
 // Both writes happen on the user gesture, never in a watcher on the outputs —
 // that loop would be a hairpin. `.subtitle` is args-only, so it needs the dataset
 // label snapshotted here.
@@ -275,7 +290,7 @@ ACGTACGT..."
       :error="
         pairedEndMismatch
           ? 'Pattern includes a Read 2 half but the selected input is single-end. Remove the R2 half or pick a paired-end input.'
-          : undefined
+          : patternError
       "
     >
       <template #tooltip>
@@ -284,6 +299,44 @@ ACGTACGT..."
         enables molecule-level counting.
       </template>
     </PlTextField>
+
+    <template v-if="umi">
+      <PlSectionSeparator>Molecule consensus</PlSectionSeparator>
+      <PlRow>
+        <PlNumberField
+          v-model="app.model.data.minReadsPerConsensus"
+          label="Min reads per UMI"
+          :min-value="1"
+          :step="1"
+          :error-message="
+            app.model.data.minReadsPerConsensus === undefined ? 'Required' : undefined
+          "
+        >
+          <template #tooltip>
+            Reads a molecule needs before it yields a consensus. Higher values correct more
+            sequencing errors but discard rare molecules — <code>1</code> keeps everything, and is
+            what you want on a shallow run or a very diverse library. Default <code>2</code>.
+            Molecules dropped here appear as <em>Groups dropped by count</em> in the Consensus logs.
+          </template>
+        </PlNumberField>
+
+        <PlNumberField
+          v-model="app.model.data.minUmiQuality"
+          label="Min UMI quality"
+          :min-value="0"
+          :max-value="58"
+          :step="1"
+          :error-message="app.model.data.minUmiQuality === undefined ? 'Required' : undefined"
+        >
+          <template #tooltip>
+            A barcode with any base below this Phred quality is discarded unless another barcode can
+            absorb it as an error. Raising it discards more reads but leaves fewer wrong molecules;
+            lowering it keeps more reads at the cost of splitting one molecule into several. Default
+            <code>20</code>. See <em>diversity filtered by tag quality</em> in the Refine tags logs.
+          </template>
+        </PlNumberField>
+      </PlRow>
+    </template>
   </PlAccordionSection>
 
   <!-- Manual per-parent region annotation. The whole section is hidden when the

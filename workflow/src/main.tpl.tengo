@@ -115,6 +115,10 @@ wf.body(func(args) {
 		parentRegionsJson = args.parentRegionsJson
 	}
 
+	// Gates the molecule columns. Must match the workflow's own hasUmi: an Xsv spec
+	// naming a column the parquet does not carry fails the import.
+	hasUmi := !is_undefined(args.umi)
+
 	// Modality: one pipeline produces two genuinely different kinds of repertoire —
 	// a VDJ one from antibody/TCR parents, a general amplicon one from designed
 	// libraries, phage pools and deep mutational scans. Derived from the region
@@ -131,7 +135,10 @@ wf.body(func(args) {
 		fileExtension: fileExtension,
 		pattern: args.tagPattern,
 		patternParts: args.patternParts,
-		hasUmi: args.hasUmi,
+		// Absent without a UMI; presence is what switches the chain on downstream.
+		umi: args.umi,
+		minReadsPerConsensus: args.minReadsPerConsensus,
+		minUmiQuality: args.minUmiQuality,
 		exportNt: exportNt,
 		exportOnlyKnown: exportOnlyKnown,
 		parentFastaStr: parentFastaStr,
@@ -202,19 +209,19 @@ wf.body(func(args) {
 			path: [path]
 		}
 	}
-	// Per-variant abundance (nt + aa); readCount is the downstream anchor.
-	ntAbundanceXsv := xsvTarget("ntAbundanceXsv", "ntAbundance", [ntVariantAxis], columnSpecs.perSampleAbundanceColumns())
-	aaAbundanceXsv := xsvTarget("aaAbundanceXsv", "aaAbundance", [aaVariantAxis], columnSpecs.perSampleAbundanceColumns())
+	// Per-variant abundance (nt + aa).
+	ntAbundanceXsv := xsvTarget("ntAbundanceXsv", "ntAbundance", [ntVariantAxis], columnSpecs.perSampleAbundanceColumns(hasUmi))
+	aaAbundanceXsv := xsvTarget("aaAbundanceXsv", "aaAbundance", [aaVariantAxis], columnSpecs.perSampleAbundanceColumns(hasUmi))
 	// Known-level per-sample abundance + synonymous spread (always declared;
 	// the per-sample parquets are empty when nothing is assigned — added to the
 	// frame below only when a known set was supplied).
-	knownNtAbundanceXsv := xsvTarget("knownNtAbundanceXsv", "knownNtAbundance", [ntKnownAxis], columnSpecs.knownAbundanceColumns())
-	knownAaAbundanceXsv := xsvTarget("knownAaAbundanceXsv", "knownAaAbundance", [aaKnownAxis], columnSpecs.knownAbundanceColumns())
+	knownNtAbundanceXsv := xsvTarget("knownNtAbundanceXsv", "knownNtAbundance", [ntKnownAxis], columnSpecs.knownAbundanceColumns(hasUmi))
+	knownAaAbundanceXsv := xsvTarget("knownAaAbundanceXsv", "knownAaAbundance", [aaKnownAxis], columnSpecs.knownAbundanceColumns(hasUmi))
 	// Declared-member synonymous spread, keyed by the known-aa entity.
 	aaConvergenceXsv := xsvTarget("aaConvergenceXsv", "aaConvergence", [aaKnownAxis], columnSpecs.convergenceColumns())
 	// Per-sample mutation-load histogram — feeds the in-block plot, not exported.
-	ntMutationHistogramXsv := xsvTarget("ntMutationHistogramXsv", "ntMutationHistogram", [ntMutationCountAxis], columnSpecs.mutationHistogramColumns("nucleotide"))
-	aaMutationHistogramXsv := xsvTarget("aaMutationHistogramXsv", "aaMutationHistogram", [aaMutationCountAxis], columnSpecs.mutationHistogramColumns("aminoacid"))
+	ntMutationHistogramXsv := xsvTarget("ntMutationHistogramXsv", "ntMutationHistogram", [ntMutationCountAxis], columnSpecs.mutationHistogramColumns("nucleotide", hasUmi))
+	aaMutationHistogramXsv := xsvTarget("aaMutationHistogramXsv", "aaMutationHistogram", [aaMutationCountAxis], columnSpecs.mutationHistogramColumns("aminoacid", hasUmi))
 
 	// Per-sample step reports (ResourceMap keyed [step, format]; processColumn
 	// prepends sampleId). Feeds the sample report panel (json charts + txt views)
@@ -235,23 +242,28 @@ wf.body(func(args) {
 				type: "String",
 				name: "pl7.app/repertoire/report/format",
 				annotations: { "pl7.app/label": "Report format" },
-				domain: { "pl7.app/dense": string(json.encode(["json", "txt"])) }
+				domain: { "pl7.app/dense": string(json.encode(["json"])) }
 			}]
 		}
 	}
 
-	// Per-sample analyze log (Log-valued PColumn keyed by sampleId) — carries
-	// progress markers + the run summary for the Progress column and Logs view.
-	logsOutput := {
-		type: "Resource",
+	// Per-step logs (ResourceMap keyed [step]; processColumn prepends sampleId).
+	// `ResourceMap`, not `Resource`+`path`: the per-sample template returns a built
+	// resource map, which a `Resource` target would pass through as one opaque resource.
+	stepLogsOutput := {
+		type: "ResourceMap",
+		name: "stepLogs",
 		spec: {
 			kind: "PColumn",
 			name: "pl7.app/log",
 			domain: runScope,
-			valueType: "Log"
-		},
-		name: "logs",
-		path: ["logs"]
+			valueType: "Log",
+			axesSpec: [{
+				type: "String",
+				name: "pl7.app/repertoire/log/step",
+				annotations: { "pl7.app/label": "Pipeline step" }
+			}]
+		}
 	}
 
 	targetOutputs := [
@@ -281,7 +293,7 @@ wf.body(func(args) {
 		knownNtAbundanceXsv,
 		knownAaAbundanceXsv,
 		aaConvergenceXsv,
-		logsOutput
+		stepLogsOutput
 	]
 	// State matrix, split by position chunk inside the per-sample job: one plain File
 	// output per level per chunk key (see state-matrix-chunks outputName).
@@ -326,7 +338,8 @@ wf.body(func(args) {
 		variantsTsvData: perSampleResults.outputData("variantsTsv"),
 		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
 		ntRegionCols: rc.ntRegionNames,
-		aaRegionCols: rc.aaRegionNames
+		aaRegionCols: rc.aaRegionNames,
+		hasUmi: hasUmi
 	})
 	importProps := func(file, axis, isAa, regionNames) {
 		return xsv.importFile(
@@ -334,7 +347,7 @@ wf.body(func(args) {
 			"tsv",
 			{
 				axes: [axis],
-				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName),
+				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName, hasUmi),
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
@@ -699,7 +712,8 @@ wf.body(func(args) {
 	addStateHeatmap := func(prefix, stateMatrixTsv, propertiesTsv, alphabet, posLabel, trace, parentResidueCols) {
 		hmRun := render.createEphemeral(computeStateHeatmapTpl, {
 			stateMatrixTsv: stateMatrixTsv,
-			propertiesTsv: propertiesTsv
+			propertiesTsv: propertiesTsv,
+			hasUmi: hasUmi
 		})
 		hmCols := xsv.importFile(
 			hmRun.output("stateHeatmap"),
@@ -710,7 +724,7 @@ wf.body(func(args) {
 					columnSpecs.positionAxisSpec(alphabet, posLabel),
 					columnSpecs.stateAxisSpec(alphabet)
 				],
-				columns: columnSpecs.stateHeatmapColumns(alphabet),
+				columns: columnSpecs.stateHeatmapColumns(alphabet, hasUmi),
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
@@ -774,7 +788,8 @@ wf.body(func(args) {
 			// When exporting only matched variants, the distance-to-known columns
 			// (variant-axis keyed, part of the export) are restricted to matched
 			// variants too, so they carry no keys absent from the filtered repertoire.
-			exportOnlyKnown: exportOnlyKnown
+			exportOnlyKnown: exportOnlyKnown,
+			hasUmi: hasUmi
 		})
 		importKnown := func(file, axes, columns) {
 			return xsv.importFile(file, "tsv", {
@@ -831,7 +846,7 @@ wf.body(func(args) {
 			// feeds both the export overlay and the block-local table. The combined
 			// block-local table itself uses knownNtAll (all designed) — built below.
 			// The linker and distance columns are export-only — inside the exportNt gate.
-			knownNtCols := importKnown(knownRun.output("knownNt"), [ntKnownAxis], columnSpecs.knownVariantColumns("nucleotide", true))
+			knownNtCols := importKnown(knownRun.output("knownNt"), [ntKnownAxis], columnSpecs.knownVariantColumns("nucleotide", true, hasUmi))
 			knownNtMetaCols := importKnownMetadata(knownNtFile, knownRun.output("knownNt"), args.knownNtSequenceColumn, args.knownNtMetadata, ntKnownAxis)
 
 			// The nt known-set overlay is exported only when nt export is enabled;
@@ -898,7 +913,7 @@ wf.body(func(args) {
 			knownNtAllCols := importKnown(
 				knownRun.output("knownNtAll"),
 				[ntKnownAxis],
-				columnSpecs.knownVariantColumns("nucleotide", true, true)
+				columnSpecs.knownVariantColumns("nucleotide", true, hasUmi, true)
 			)
 			knownVariantsNtPfBuilder := pframes.pFrameBuilder()
 			for k, v in knownNtAllCols {
@@ -920,7 +935,7 @@ wf.body(func(args) {
 			columnSpecs.linkerColumns("pl7.app/repertoire/knownLink")
 		)
 		aaDistanceCols := importKnown(knownRun.output("aaDistance"), [aaVariantAxis], columnSpecs.knownDistanceColumns(true))
-		knownAaCols := importKnown(knownRun.output("knownAa"), [aaKnownAxis], columnSpecs.knownVariantColumns("aminoacid", true))
+		knownAaCols := importKnown(knownRun.output("knownAa"), [aaKnownAxis], columnSpecs.knownVariantColumns("aminoacid", true, hasUmi))
 		knownAaMetaCols := importKnownMetadata(knownAaFile, knownRun.output("knownAa"), args.knownAaSequenceColumn, args.knownAaMetadata, aaKnownAxis)
 
 		for k, v in knownLinkerAaCols {
@@ -994,7 +1009,7 @@ wf.body(func(args) {
 	qcColumns := xsv.importFile(
 		qcRun.output("qcTable"),
 		"tsv",
-		columnSpecs.qcColumns(inputSpec.axesSpec[0]),
+		columnSpecs.qcColumns(inputSpec.axesSpec[0], hasUmi),
 		{ splitDataAndSpec: true }
 	)
 	qcPfBuilder := pframes.pFrameBuilder()
@@ -1024,10 +1039,9 @@ wf.body(func(args) {
 		// each file a downloadable Blob (getFileHandle/getContentJson need an
 		// exported file, not a raw Blob resource).
 		reports: pframes.exportColumnData(perSampleResults.outputData("reports")),
-		// Return the resource-map DATA under the "logs" key so the model can
-		// resolve("logs") + parseResourceMap it (a plain output() reads back as
-		// an opaque std/map).
-		logs: perSampleResults.outputData("logs")
+		// The resource-map DATA, so the model can resolve() + parseResourceMap it
+		// (a plain output() reads back as an opaque std/map).
+		stepLogs: perSampleResults.outputData("stepLogs")
 	}
 	// Known Variants tables — present only when the matching known set ran.
 	if !is_undefined(knownVariantsNtPf) {
