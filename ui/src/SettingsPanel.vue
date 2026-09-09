@@ -502,10 +502,9 @@ ACGTACGT..."
       Substitutions only
       <PlTooltip class="info" position="top">
         <template #tooltip>
-          Keeps only variants that differ from the parent by substitutions. A read carrying an
-          insertion or deletion is dropped at alignment, so read counts fall. Frame-shift counts
-          drop to near zero too — those reads now appear in the Alignments chart as "Indels
-          present". Off by default.
+          Keeps only variants whose changes are substitutions. Insertions
+          and deletions are discarded as synthesis or sequencing errors. Expect far fewer variants
+          where indels are common. Leave it off if your library contains designed indels.
         </template>
       </PlTooltip>
     </PlCheckbox>
