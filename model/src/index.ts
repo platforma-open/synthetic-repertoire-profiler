@@ -17,6 +17,7 @@ import {
   parseResourceMap,
 } from "@platforma-sdk/model";
 import type {
+  FrameShiftMode,
   ParentInputMode,
   ParentRegionConfig,
   RegionDef,
@@ -32,7 +33,7 @@ export type { LengthRange, PatternHalf, PatternParts, UmiSpec } from "./pattern"
 // The parent-input and region shapes are part of the kind's init-params
 // contract, so the kind declares them. Re-exported here because the UI reads
 // them from the model, and only the model is on its import path.
-export type { ParentInputMode, ParentRegionConfig, RegionDef, RegionScheme };
+export type { FrameShiftMode, ParentInputMode, ParentRegionConfig, RegionDef, RegionScheme };
 
 /** mitool emits progress lines `[==PROGRESS==]<stage>: <pct>%  ETA: <eta>`. */
 export const ProgressPrefix = "[==PROGRESS==]";
@@ -228,6 +229,15 @@ export type BlockData = {
   maxAaMutations?: number; // reject if the aa alignment has more than this many mutations (edit ops)
   maxAaMutationFraction?: number; // reject if aaMutations / aaParentLength exceeds this (0 < f ≤ 1)
 
+  // Frame-shift guard (Advanced). Both mitool modes test the reading frame
+  // first, so a variant whose net indel length divides by three never reaches
+  // the guard — a heavily substituted library member cannot be flagged. TRIPLET
+  // stops there; AA_MISMATCH adds a rescue for a frame-disrupting variant whose
+  // protein stays within `frameShiftAaThreshold` mismatches of the parent.
+  // Empty = mitool defaults (AA_MISMATCH / 10).
+  frameShiftMode?: FrameShiftMode;
+  frameShiftAaThreshold?: number; // AA_MISMATCH only; ignored under TRIPLET
+
   // minBaseQuality → align step (AlignParams.filter): reject a fragment if ANY
   // read base inside the parent-covered span is below this Phred. Bases outside
   // the span (overhang, adapter tails) are ignored.
@@ -297,6 +307,10 @@ export type BlockArgs = {
   // AA mutation-load filter → mitool -Mcall-mutations.maxAaMutations / maxAaMutationFraction.
   maxAaMutations?: number;
   maxAaMutationFraction?: number;
+  // Frame-shift guard → mitool -Mcall-mutations.frameShiftMode / frameShiftAaThreshold.
+  // Absent = mitool defaults (AA_MISMATCH / 10).
+  frameShiftMode?: FrameShiftMode;
+  frameShiftAaThreshold?: number;
   // Quality gates → mitool -Malign.filter.minBaseQuality / -Massemble.minVariantQuality.
   // Absent = mitool defaults (5 / 20), which are ON — not off.
   minBaseQuality?: number;
@@ -400,6 +414,8 @@ const dataModel = new DataModelBuilder({ kind })
     substitutionsOnly: params?.substitutionsOnly,
     maxAaMutations: params?.maxAaMutations,
     maxAaMutationFraction: params?.maxAaMutationFraction,
+    frameShiftMode: params?.frameShiftMode,
+    frameShiftAaThreshold: params?.frameShiftAaThreshold,
     minBaseQuality: params?.minBaseQuality,
     minVariantQuality: params?.minVariantQuality,
     minReadsPerConsensus: params?.minReadsPerConsensus ?? UMI_DEFAULTS.minReadsPerConsensus,
@@ -855,6 +871,26 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     )
       throw new Error("Max amino-acid mutation fraction must be between 0 and 1.");
 
+    // Frame-shift guard (Advanced). Same null → undefined normalization. The
+    // threshold is a count of aa mismatches, so a non-negative integer; 0 is
+    // meaningful (any aa divergence on a frame-disrupting variant is a frame
+    // shift). There is no upper bound — a threshold above the parent's length
+    // simply never fires.
+    const frameShiftMode = data.frameShiftMode ?? undefined;
+    const rawFrameShiftAaThreshold = data.frameShiftAaThreshold ?? undefined;
+    if (
+      rawFrameShiftAaThreshold !== undefined &&
+      (!Number.isInteger(rawFrameShiftAaThreshold) || rawFrameShiftAaThreshold < 0)
+    )
+      throw new Error(
+        "Max AA mismatches on a frame-shifted variant must be a non-negative integer.",
+      );
+    // Canonicalize: the threshold applies in AA_MISMATCH mode only, so drop it
+    // under TRIPLET. Otherwise editing a field mitool would ignore would still
+    // stale the block.
+    const frameShiftAaThreshold =
+      frameShiftMode === "TRIPLET" ? undefined : rawFrameShiftAaThreshold;
+
     // Quality gates (Advanced): same null → undefined normalization as above, but
     // note the different "empty" semantics — these are ON at mitool's defaults
     // (5 / 20) when absent, so empty is not "no filtering". 0 is the way to
@@ -944,6 +980,8 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       maxIndels,
       maxAaMutations,
       maxAaMutationFraction,
+      frameShiftMode,
+      frameShiftAaThreshold,
       minBaseQuality,
       minVariantQuality,
       perProcessMemGB: data.perProcessMemGB,
@@ -978,6 +1016,8 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     substitutionsOnly: data.substitutionsOnly,
     maxAaMutations: data.maxAaMutations,
     maxAaMutationFraction: data.maxAaMutationFraction,
+    frameShiftMode: data.frameShiftMode,
+    frameShiftAaThreshold: data.frameShiftAaThreshold,
     minBaseQuality: data.minBaseQuality,
     minVariantQuality: data.minVariantQuality,
     minReadsPerConsensus: data.minReadsPerConsensus,

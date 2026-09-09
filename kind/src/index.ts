@@ -5,6 +5,13 @@ import { name, version } from "../package.json" with { type: "json" };
  *  carry FASTA — paste a string, or upload a file. */
 export type ParentInputMode = "fastaSequence" | "fastaFile";
 
+/** mitool's frame-shift guard mode (`callMutations.frameShiftMode`). Both modes
+ *  test the reading frame first — a variant whose net indel length divides by
+ *  three is never called a frame shift. `TRIPLET` stops there. `AA_MISMATCH`
+ *  adds a rescue: a frame-disrupting variant is still kept when its translated
+ *  protein stays within `frameShiftAaThreshold` mismatches of the parent. */
+export type FrameShiftMode = "AA_MISMATCH" | "TRIPLET";
+
 /** Per-parent region scheme. `none` = no regions (default); `vdj` = a V-domain
  *  (antibody/TCR), seeded from the FR1→FR4 partition but free to insert, replace or
  *  rename a region for an engineered scaffold; `custom` = arbitrary named regions.
@@ -73,6 +80,8 @@ export type BlockParams = {
   substitutionsOnly?: boolean;
   maxAaMutations?: number;
   maxAaMutationFraction?: number;
+  frameShiftMode?: FrameShiftMode;
+  frameShiftAaThreshold?: number;
   minBaseQuality?: number;
   minVariantQuality?: number;
 
@@ -84,6 +93,7 @@ export type BlockParams = {
 };
 
 const PARENT_INPUT_MODES: readonly ParentInputMode[] = ["fastaSequence", "fastaFile"];
+const FRAME_SHIFT_MODES: readonly FrameShiftMode[] = ["AA_MISMATCH", "TRIPLET"];
 const REGION_SCHEMES: readonly RegionScheme[] = ["none", "vdj", "custom"];
 
 /**
@@ -119,6 +129,8 @@ function parseInitializationParams(value: unknown): BlockParams {
     substitutionsOnly,
     maxAaMutations,
     maxAaMutationFraction,
+    frameShiftMode,
+    frameShiftAaThreshold,
     minBaseQuality,
     minVariantQuality,
     minReadsPerConsensus,
@@ -143,6 +155,8 @@ function parseInitializationParams(value: unknown): BlockParams {
     substitutionsOnly: optionalBoolean(substitutionsOnly, "substitutionsOnly"),
     maxAaMutations: optionalNumber(maxAaMutations, "maxAaMutations"),
     maxAaMutationFraction: optionalNumber(maxAaMutationFraction, "maxAaMutationFraction"),
+    frameShiftMode: optionalEnum(frameShiftMode, FRAME_SHIFT_MODES, "frameShiftMode"),
+    frameShiftAaThreshold: optionalNumber(frameShiftAaThreshold, "frameShiftAaThreshold"),
     minBaseQuality: optionalNumber(minBaseQuality, "minBaseQuality"),
     minVariantQuality: optionalNumber(minVariantQuality, "minVariantQuality"),
 
