@@ -1,9 +1,9 @@
 ---
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.kind': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.model': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.ui': minor
-'@platforma-open/milaboratories.synthetic-repertoire-profiler.block': minor
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.kind': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.model': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.ui': patch
+'@platforma-open/milaboratories.synthetic-repertoire-profiler.block': patch
 ---
 
 New Advanced Setting: **Substitutions only**
@@ -17,3 +17,9 @@ The rejection is visible in two places. The Alignments chart gains an **Indels p
 Two effects to expect when the setting is on. A read whose indel is only a sequencing error is dropped as well, so its variant loses that read support — on noisy data this can be a large share. And the frame-shift counts fall to near zero, because those reads are now removed before variants are built and are counted among the alignment outcomes instead.
 
 Requires mitool 2.3.1-162-main, pinned in this release.
+
+Fix: upgrading a project from block 1.2.8 to 1.2.9 broke the block with `Service or input field not found stepLogs`
+
+1.2.9 renamed the workflow's `logs` output to `stepLogs`. A project computed under 1.2.8 has outputs carrying `logs` and no `stepLogs`, and the model resolved the new name with the throwing form — which failed the whole model render, not just the logs view, leaving the upgraded block unusable.
+
+The two outputs that read that field now tolerate its absence, so an upgraded project opens normally. The Logs and Progress views are empty until the run completes, which the upgrade already requires.
