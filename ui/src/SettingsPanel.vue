@@ -502,12 +502,10 @@ ACGTACGT..."
       Substitutions only
       <PlTooltip class="info" position="top">
         <template #tooltip>
-          Keeps only variants whose differences from the parent are substitutions. A read is dropped
-          if its alignment carries an insertion or a deletion, so those variants never appear at
-          either level. Off by default. Two effects to expect. A read whose indel is just a
-          sequencing error is dropped too, so its variant loses that read support. And the
-          frame-shift counts fall to near zero, because those reads now go earlier — look for them
-          in the Alignments chart as "Indels present".
+          Keeps only variants that differ from the parent by substitutions. A read carrying an
+          insertion or deletion is dropped at alignment, so read counts fall. Frame-shift counts
+          drop to near zero too — those reads now appear in the Alignments chart as "Indels
+          present". Off by default.
         </template>
       </PlTooltip>
     </PlCheckbox>
