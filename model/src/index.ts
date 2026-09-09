@@ -216,6 +216,17 @@ export type BlockData = {
   maxMutations?: number; // reject if the alignment has more than this many mutations (edit ops)
   maxMutationFraction?: number; // reject if mutations / parentLength exceeds this (0 < f ≤ 1)
 
+  // "Substitutions only" (Advanced). Also an align-step filter, but a checkbox
+  // rather than a number: the user's intent is a mode, not a budget. The args
+  // lambda projects it to mitool's -Malign.filter.maxIndels=0, which rejects any
+  // FRAGMENT whose alignment carries an insertion or deletion — so an
+  // indel-bearing variant never forms and neither export level can carry one.
+  // `undefined` = off (mitool's default of -1). Note the rejection is per read,
+  // so reads whose only indel is a basecalling error are dropped too, and the
+  // frame-shift counts fall to near zero because those reads never reach
+  // assembly — they are counted among the alignment outcomes instead.
+  substitutionsOnly?: boolean;
+
   // Optional per-variant amino-acid mutation-load filter (Advanced). Applied by
   // mitool's call-mutations step (CallMutationsParams, via -Mcall-mutations.*):
   // an in-frame variant whose aa-mutation count (aaMutations edit ops vs the
@@ -288,6 +299,8 @@ export type BlockArgs = {
   // Mutation-load filter → mitool -Malign.filter.maxMutations / maxMutationFraction.
   maxMutations?: number;
   maxMutationFraction?: number;
+  // Indel gate → mitool -Malign.filter.maxIndels. 0 = substitutions only; absent = off.
+  maxIndels?: number;
   // AA mutation-load filter → mitool -Mcall-mutations.maxAaMutations / maxAaMutationFraction.
   maxAaMutations?: number;
   maxAaMutationFraction?: number;
@@ -391,6 +404,7 @@ const dataModel = new DataModelBuilder({ kind })
     exportOnlyKnown: params?.exportOnlyKnown,
     maxMutations: params?.maxMutations,
     maxMutationFraction: params?.maxMutationFraction,
+    substitutionsOnly: params?.substitutionsOnly,
     maxAaMutations: params?.maxAaMutations,
     maxAaMutationFraction: params?.maxAaMutationFraction,
     minBaseQuality: params?.minBaseQuality,
@@ -820,6 +834,12 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     if (maxMutationFraction !== undefined && (maxMutationFraction <= 0 || maxMutationFraction > 1))
       throw new Error("Max mutation fraction must be between 0 and 1.");
 
+    // "Substitutions only" is a mode in `data` and a budget in `args`: the checkbox
+    // becomes mitool's maxIndels=0. Projected as undefined when off so an
+    // untouched block sends no mixin at all, leaving mitool's default (-1) —
+    // and so toggling on then off returns the args to their previous bytes.
+    const maxIndels = data.substitutionsOnly === true ? 0 : undefined;
+
     // AA mutation-load filter (Advanced): aa-level analog of the above, applied
     // by mitool's call-mutations step. Same null → undefined normalization and
     // positivity/range gates. maxAaMutations counts aa edit ops (positive
@@ -920,6 +940,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       exportNt: data.exportNt,
       maxMutations,
       maxMutationFraction,
+      maxIndels,
       maxAaMutations,
       maxAaMutationFraction,
       minBaseQuality,
@@ -953,6 +974,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     exportOnlyKnown: data.exportOnlyKnown,
     maxMutations: data.maxMutations,
     maxMutationFraction: data.maxMutationFraction,
+    substitutionsOnly: data.substitutionsOnly,
     maxAaMutations: data.maxAaMutations,
     maxAaMutationFraction: data.maxAaMutationFraction,
     minBaseQuality: data.minBaseQuality,
