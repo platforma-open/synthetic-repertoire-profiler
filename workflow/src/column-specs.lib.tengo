@@ -249,7 +249,7 @@ parentSubdividedRegionsColumns := func(runScope) {
 			valueType: "String",
 			domain: runScope,
 			annotations: tableAnno(74000, "default", {
-				"pl7.app/label": "Regions with sub-regions",
+				"pl7.app/label": "Subdivided regions",
 				"pl7.app/description": "Regions of this parent that are split into sub-regions, comma-separated. A region listed here is not a plain region: it contains a user-defined partition, such as an insert occupying a CDR slot."
 			})
 		}
