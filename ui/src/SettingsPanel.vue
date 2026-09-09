@@ -502,9 +502,9 @@ ACGTACGT..."
       Substitutions only
       <PlTooltip class="info" position="top">
         <template #tooltip>
-          Keeps only variants whose changes are substitutions. Insertions
-          and deletions are discarded as synthesis or sequencing errors. Expect far fewer variants
-          where indels are common. Leave it off if your library contains designed indels.
+          Keeps only variants whose changes are substitutions. Insertions and deletions are
+          discarded as synthesis or sequencing errors. Expect far fewer variants where indels are
+          common. Leave it off if your library contains designed indels.
         </template>
       </PlTooltip>
     </PlCheckbox>

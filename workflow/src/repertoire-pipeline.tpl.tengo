@@ -82,9 +82,7 @@ self.body(func(inputs) {
 	// Per-fragment mutation-load filter (undefined = mitool default, off).
 	maxMutations := params.maxMutations
 	maxMutationFraction := params.maxMutationFraction
-	// "Substitutions only": the align step's per-fragment indel gate. 0 rejects any
-	// fragment whose alignment carries an insertion or deletion, so no indel-bearing
-	// variant ever forms. undefined = mitool default (-1, off).
+	// Align-step indel gate. 0 = substitutions only; undefined = mitool default (off).
 	maxIndels := params.maxIndels
 	// Per-variant aa mutation-load filter (undefined = mitool default, off).
 	maxAaMutations := params.maxAaMutations
@@ -285,11 +283,8 @@ self.body(func(inputs) {
 	if exportNt {
 		analyzeBuilder = analyzeBuilder.arg("--nt-state-matrix")
 	}
-	// The step reports flattened to a one-row TSV, joined into the QC row below.
-	// ptabler cannot read the JSON reports, which is why this file exists at all.
-	// Unconditional: it is one small row, and making it conditional would give the
-	// QC row two shapes. Declared here, with the other options, because the two
-	// positional args follow and a trailing option is needlessly fragile.
+	// The step reports as a TSV, for the QC row below: ptabler cannot read the JSON
+	// ones. Must precede the positional args.
 	analyzeBuilder = analyzeBuilder.arg("--reports-table").arg("out.reports.tsv")
 	analyzeBuilder = analyzeBuilder.
 		arg("input.mic").
@@ -773,20 +768,10 @@ self.body(func(inputs) {
 			molFrac("totalReads").alias("readsPerMolecule")
 		)
 	}
-	// Align-step reads rejected by the indel gate. This one number cannot come from
-	// the variants TSV like every other QC column: the gate acts before assembly, so
-	// a rejected read never becomes a variant. It lives in the align report, which is
-	// JSON and unreadable by ptabler — hence analyze's one-row --reports-table.
-	//
-	// The denominator is the reports table's own `align.totalReads` (fragments
-	// PROCESSED), not the QC row's `totalReads` (reads that reached a surviving
-	// variant). A rejected read never reached one, so dividing by the latter would
-	// push the fraction past 1 on a heavily-filtered run. Computed here, before the
-	// join, so the helper column never leaks into qcRow.parquet.
-	//
-	// Read all-String (inferSchema:false) and cast explicitly. A reason that never
-	// fired leaves the cell empty, which arrives as null, so fillNull(0) is what
-	// turns "the gate is off" into a zero rather than a missing value.
+	// Reads rejected by the indel gate. Not in the variants TSV — the gate acts before
+	// assembly, so a rejected read never becomes a variant. An unfired reason leaves
+	// the cell empty, which reads as null. The fraction divides by align.totalReads
+	// (fragments processed); the QC row's totalReads would put it over 1.
 	rdf := ptWf.frame({
 		file: analyzeCmd.getFile("out.reports.tsv"),
 		xsvType: "tsv"

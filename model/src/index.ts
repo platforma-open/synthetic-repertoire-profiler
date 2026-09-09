@@ -216,15 +216,8 @@ export type BlockData = {
   maxMutations?: number; // reject if the alignment has more than this many mutations (edit ops)
   maxMutationFraction?: number; // reject if mutations / parentLength exceeds this (0 < f ≤ 1)
 
-  // "Substitutions only" (Advanced). Also an align-step filter, but a checkbox
-  // rather than a number: the user's intent is a mode, not a budget. The args
-  // lambda projects it to mitool's -Malign.filter.maxIndels=0, which rejects any
-  // FRAGMENT whose alignment carries an insertion or deletion — so an
-  // indel-bearing variant never forms and neither export level can carry one.
-  // `undefined` = off (mitool's default of -1). Note the rejection is per read,
-  // so reads whose only indel is a basecalling error are dropped too, and the
-  // frame-shift counts fall to near zero because those reads never reach
-  // assembly — they are counted among the alignment outcomes instead.
+  // Rejects any read whose alignment carries an indel (-Malign.filter.maxIndels=0),
+  // so no indel-bearing variant forms and read counts fall accordingly.
   substitutionsOnly?: boolean;
 
   // Optional per-variant amino-acid mutation-load filter (Advanced). Applied by
@@ -644,18 +637,9 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       ?.getFileHandle(),
   )
 
-  // Per-step log handles, keyed [sampleId, step].
-  //
-  // Resolved with allowPermanentAbsence because this field did not exist before block
-  // 1.2.9: the workflow emitted `logs` and 1.2.9 renamed it to `stepLogs`. A project
-  // computed under 1.2.8 therefore has outputs with no `stepLogs` field at all, and the
-  // throwing form of resolve() failed the whole model render — every output, not just
-  // this one — leaving the upgraded block unusable until it was re-run. Absent reads as
-  // undefined instead, so the Logs and Progress views are simply empty until the user
-  // re-runs, which the upgrade already makes them do.
-  //
-  // allowPermanentAbsence is only honoured alongside assertFieldType (see
-  // CommonFieldTraverseOps), hence "Input" here, matching the other tolerant resolves.
+  // Per-step log handles, keyed [sampleId, step]. Absent in projects computed before
+  // 1.2.9, where this output was named `logs`; allowPermanentAbsence is only honoured
+  // alongside assertFieldType.
   .output("stepLogs", (ctx) => {
     const acc = ctx.outputs?.resolve({
       field: "stepLogs",
@@ -667,7 +651,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
 
   // Per-step progress, keyed [sampleId, step]. `WithInfo` adds the `live` flag, which
   // separates a running step from one whose log froze at its last marker.
-  // Same pre-1.2.9 absence as stepLogs above — it reads the same field.
+  // Same pre-1.2.9 absence as stepLogs.
   .output("stepProgress", (ctx) => {
     const acc = ctx.outputs?.resolve({
       field: "stepLogs",
@@ -854,10 +838,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     if (maxMutationFraction !== undefined && (maxMutationFraction <= 0 || maxMutationFraction > 1))
       throw new Error("Max mutation fraction must be between 0 and 1.");
 
-    // "Substitutions only" is a mode in `data` and a budget in `args`: the checkbox
-    // becomes mitool's maxIndels=0. Projected as undefined when off so an
-    // untouched block sends no mixin at all, leaving mitool's default (-1) —
-    // and so toggling on then off returns the args to their previous bytes.
+    // undefined, not -1, so an off block emits no mixin and mitool keeps its default.
     const maxIndels = data.substitutionsOnly === true ? 0 : undefined;
 
     // AA mutation-load filter (Advanced): aa-level analog of the above, applied
