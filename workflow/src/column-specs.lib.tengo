@@ -149,8 +149,43 @@ stateAxisSpec := func(alphabet) {
 // Block-local names: these are in-block plot columns, not exported, and a
 // distinct name keeps them from being confused with the per-variant abundance
 // columns of the same quantity.
-stateHeatmapColumns := func(alphabet) {
-	return [{
+stateHeatmapColumns := func(alphabet, hasUmi) {
+	cols := []
+	if hasUmi {
+		cols = append(cols, {
+			column: "moleculeFrequency",
+			id: "state-umi-frequency",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/repertoire/stateMoleculeFrequency",
+				valueType: "Double",
+				domain: { "pl7.app/alphabet": alphabet },
+				annotations: tableAnno(100500, "default", {
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/aggregated": "true",
+					"pl7.app/abundance/normalized": "true",
+					"pl7.app/label": "Residue frequency (UMIs)",
+					"pl7.app/format": ".2p"
+				})
+			}
+		}, {
+			column: "moleculeCount",
+			id: "state-umi-count",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/repertoire/stateMoleculeCount",
+				valueType: "Long",
+				domain: { "pl7.app/alphabet": alphabet },
+				annotations: tableAnno(90500, "default", {
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/aggregated": "true",
+					"pl7.app/abundance/normalized": "false",
+					"pl7.app/label": "UMI count"
+				})
+			}
+		})
+	}
+	return append(cols, {
 		column: "readCount",
 		id: "state-read-count",
 		allowNA: false,
@@ -185,7 +220,7 @@ stateHeatmapColumns := func(alphabet) {
 				"pl7.app/format": ".2p"
 			})
 		}
-	}]
+	})
 }
 
 // Parent (reference) residue per position, keyed [parentId, position] — the track
@@ -325,8 +360,29 @@ mutationCountAxisSpec := func(alphabet, label) {
 
 // Per-sample mutation-load counts. Summing variantCount across samples does NOT
 // give unique variants — a variant seen in three samples counts three times.
-mutationHistogramColumns := func(alphabet) {
-	return [{
+mutationHistogramColumns := func(alphabet, hasUmi) {
+	cols := []
+	if hasUmi {
+		cols = append(cols, {
+			column: "moleculeCount",
+			id: "bin-umi-count",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/uniqueMoleculeCount",
+				valueType: "Long",
+				domain: { "pl7.app/alphabet": alphabet },
+				annotations: tableAnno(90500, "default", {
+					"pl7.app/min": "1",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "false",
+					"pl7.app/abundance/aggregated": "true",
+					"pl7.app/label": "UMIs"
+				})
+			}
+		})
+	}
+	return append(cols, {
 		column: "variantCount",
 		id: "variant-count",
 		allowNA: false,
@@ -362,7 +418,7 @@ mutationHistogramColumns := func(alphabet) {
 				"pl7.app/label": "Reads"
 			})
 		}
-	}]
+	})
 }
 
 // Known-variant axis: one distinct known (designed) sequence. Hash of the known
@@ -398,7 +454,7 @@ knownVariantKeyAxisSpec := func(runScope, alphabet, label, ...rest) {
 // `naAbundance` (optional, default false): allow the abundance columns to be
 // empty (NA). Used by the combined designed-nt table, where undetected designed
 // entries carry no readCountTotal/sampleCount.
-knownVariantColumns := func(alphabet, withAbundance, ...rest) {
+knownVariantColumns := func(alphabet, withAbundance, hasUmi, ...rest) {
 	naAbundance := len(rest) > 0 && rest[0]
 	cols := [{
 		column: "label",
@@ -435,6 +491,22 @@ knownVariantColumns := func(alphabet, withAbundance, ...rest) {
 		}
 	}]
 	if withAbundance {
+		moleculeCountCol := {
+			column: "moleculeCountTotal",
+			id: "known-umi-count-total",
+			allowNA: naAbundance,
+			spec: {
+				name: "pl7.app/uniqueMoleculeCountTotal",
+				valueType: "Long",
+				annotations: tableAnno(91000, "default", {
+					"pl7.app/min": "1",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "false",
+					"pl7.app/label": "Supporting UMIs"
+				})
+			}
+		}
 		readCountCol := {
 			column: "readCountTotal",
 			id: "known-read-count-total",
@@ -442,7 +514,7 @@ knownVariantColumns := func(alphabet, withAbundance, ...rest) {
 			spec: {
 				name: "pl7.app/readCountTotal",
 				valueType: "Long",
-				annotations: tableAnno(90000, "default", {
+				annotations: tableAnno(90000, hasUmi ? "optional" : "default", {
 					"pl7.app/min": "1",
 					"pl7.app/isAbundance": "true",
 					"pl7.app/abundance/unit": "reads",
@@ -466,8 +538,12 @@ knownVariantColumns := func(alphabet, withAbundance, ...rest) {
 		}
 		// Empty cell → NA for undetected designed entries in the combined table.
 		if naAbundance {
+			moleculeCountCol.naRegex = ""
 			readCountCol.naRegex = ""
 			sampleCountCol.naRegex = ""
+		}
+		if hasUmi {
+			cols = append(cols, moleculeCountCol)
 		}
 		cols = append(cols, readCountCol, sampleCountCol)
 	}
@@ -547,15 +623,56 @@ knownSynCountColumns := func() {
 
 // Known-level per-sample abundance ([sampleId, knownVariantKey]) — read counts
 // summed over the assembled variants assigned to each known variant.
-knownAbundanceColumns := func() {
-	return [{
+knownAbundanceColumns := func(hasUmi) {
+	cols := []
+	if hasUmi {
+		cols = append(cols, {
+			column: "knownVariantMoleculeCount",
+			id: "known-umi-count",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/knownVariantMoleculeCount",
+				valueType: "Long",
+				annotations: tableAnno(91000, "default", {
+					"pl7.app/min": "0",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "false",
+					"pl7.app/abundance/aggregated": "true",
+					"pl7.app/label": "Known UMIs"
+				})
+			}
+		}, {
+			column: "knownVariantMoleculeFraction",
+			id: "known-umi-fraction",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/knownVariantMoleculeFraction",
+				valueType: "Double",
+				annotations: tableAnno(90500, "default", {
+					"pl7.app/min": "0",
+					"pl7.app/max": "1",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "true",
+					"pl7.app/abundance/aggregated": "true",
+					"pl7.app/label": "Known UMI fraction",
+					"pl7.app/format": ".2p"
+				})
+			}
+		})
+	}
+	// Read columns demote on a UMI run, as they do for the per-variant and cross-sample
+	// abundance: the molecule pair above is the primary readout.
+	readVis := hasUmi ? "optional" : "default"
+	return append(cols, {
 		column: "knownVariantReadCount",
 		id: "known-read-count",
 		allowNA: false,
 		spec: {
 			name: "pl7.app/knownVariantReadCount",
 			valueType: "Long",
-			annotations: tableAnno(90000, "default", {
+			annotations: tableAnno(90000, readVis, {
 				"pl7.app/min": "0",
 				"pl7.app/isAbundance": "true",
 				"pl7.app/abundance/unit": "reads",
@@ -571,7 +688,7 @@ knownAbundanceColumns := func() {
 		spec: {
 			name: "pl7.app/knownVariantReadFraction",
 			valueType: "Double",
-			annotations: tableAnno(89000, "default", {
+			annotations: tableAnno(89000, readVis, {
 				"pl7.app/min": "0",
 				"pl7.app/max": "1",
 				"pl7.app/isAbundance": "true",
@@ -582,7 +699,7 @@ knownAbundanceColumns := func() {
 				"pl7.app/format": ".2p"
 			})
 		}
-	}]
+	})
 }
 
 // Synonymous-spread QC ([sampleId, variantKey(aa)]) — disagreement among an aa
@@ -644,23 +761,77 @@ linkerColumns := func(name) {
 // and aa level — the variantKey axis alphabet domain distinguishes them.
 // readCount is the primary abundance + anchor (no UMI in v1) — the column
 // downstream blocks (clonotype-browser etc.) discover as the dataset anchor.
-perSampleAbundanceColumns := func() {
-	return [{
+// With a UMI, molecules are the primary abundance and reads become secondary and
+// default-hidden; without a UMI, reads are primary.
+perSampleAbundanceColumns := func(hasUmi) {
+	cols := []
+	if hasUmi {
+		cols = append(cols, {
+			column: "uniqueMoleculeCount",
+			id: "umi-count",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/uniqueMoleculeCount",
+				valueType: "Long",
+				annotations: tableAnno(91000, "default", {
+					"pl7.app/min": "1",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "false",
+					"pl7.app/abundance/isPrimary": "true",
+					"pl7.app/isAnchor": "true",
+					"pl7.app/label": "Number of UMIs"
+				})
+			}
+		}, {
+			column: "uniqueMoleculeFraction",
+			id: "umi-fraction",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/uniqueMoleculeFraction",
+				valueType: "Double",
+				annotations: tableAnno(90500, "default", {
+					"pl7.app/min": "0",
+					"pl7.app/max": "1",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "true",
+					"pl7.app/abundance/isPrimary": "true",
+					"pl7.app/label": "Fraction of UMIs",
+					"pl7.app/format": ".2p"
+				})
+			}
+		})
+	}
+	readAnno := {
+		"pl7.app/min": "1",
+		"pl7.app/isAbundance": "true",
+		"pl7.app/abundance/unit": "reads",
+		"pl7.app/abundance/normalized": "false",
+		"pl7.app/label": "Number of Reads"
+	}
+	readFracAnno := {
+		"pl7.app/min": "0",
+		"pl7.app/max": "1",
+		"pl7.app/isAbundance": "true",
+		"pl7.app/abundance/unit": "reads",
+		"pl7.app/abundance/normalized": "true",
+		"pl7.app/label": "Fraction of reads",
+		"pl7.app/format": ".2p"
+	}
+	if !hasUmi {
+		readAnno["pl7.app/abundance/isPrimary"] = "true"
+		readAnno["pl7.app/isAnchor"] = "true"
+		readFracAnno["pl7.app/abundance/isPrimary"] = "true"
+	}
+	return append(cols, {
 		column: "readCount",
 		id: "read-count",
 		allowNA: false,
 		spec: {
 			name: "pl7.app/readCount",
 			valueType: "Long",
-			annotations: tableAnno(90000, "default", {
-				"pl7.app/min": "1",
-				"pl7.app/isAbundance": "true",
-				"pl7.app/abundance/unit": "reads",
-				"pl7.app/abundance/normalized": "false",
-				"pl7.app/abundance/isPrimary": "true",
-				"pl7.app/isAnchor": "true",
-				"pl7.app/label": "Number of Reads"
-			})
+			annotations: tableAnno(90000, hasUmi ? "optional" : "default", readAnno)
 		}
 	}, {
 		column: "readFraction",
@@ -669,18 +840,9 @@ perSampleAbundanceColumns := func() {
 		spec: {
 			name: "pl7.app/readFraction",
 			valueType: "Double",
-			annotations: tableAnno(89000, "default", {
-				"pl7.app/min": "0",
-				"pl7.app/max": "1",
-				"pl7.app/isAbundance": "true",
-				"pl7.app/abundance/unit": "reads",
-				"pl7.app/abundance/normalized": "true",
-				"pl7.app/abundance/isPrimary": "true",
-				"pl7.app/label": "Fraction of reads",
-				"pl7.app/format": ".2p"
-			})
+			annotations: tableAnno(89000, hasUmi ? "optional" : "default", readFracAnno)
 		}
-	}]
+	})
 }
 
 // Per-variant region subsequence columns (one per region feature), keyed by
@@ -758,7 +920,7 @@ regionAnnotationColumns := func(withSubRegions) {
 // the synonymous-replicate count (ntVariantCount), which exists only at aa level.
 // `regionNames` adds per-region sequence columns; `completeFeatureName` (when set)
 // relabels the whole-variant sequence feature (e.g. VDJRegion).
-aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
+aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName, hasUmi) {
 	hasCompleteFeature := !is_undefined(completeFeatureName) && completeFeatureName != ""
 	seqSuffix := (alphabet == "aminoacid") ? " aa" : " nt"
 	seqLabel := (hasCompleteFeature ? completeFeatureName : "Sequence") + seqSuffix
@@ -834,7 +996,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
 		spec: {
 			name: "pl7.app/readCountTotal",
 			valueType: "Long",
-			annotations: tableAnno(90000, "default", {
+			annotations: tableAnno(90000, hasUmi ? "optional" : "default", {
 				"pl7.app/min": "1",
 				"pl7.app/isAbundance": "true",
 				"pl7.app/abundance/unit": "reads",
@@ -849,7 +1011,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
 		spec: {
 			name: "pl7.app/readFractionMean",
 			valueType: "Double",
-			annotations: tableAnno(88000, "default", {
+			annotations: tableAnno(88000, hasUmi ? "optional" : "default", {
 				"pl7.app/min": "0",
 				"pl7.app/max": "1",
 				"pl7.app/label": "Mean Fraction of Reads",
@@ -869,6 +1031,38 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
 			})
 		}
 	}]
+	if hasUmi {
+		cols = append(cols, {
+			column: "uniqueMoleculeCountSum",
+			id: "umi-count-total",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/uniqueMoleculeCountTotal",
+				valueType: "Long",
+				annotations: tableAnno(91000, "default", {
+					"pl7.app/min": "1",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "false",
+					"pl7.app/label": "Supporting UMIs"
+				})
+			}
+		}, {
+			column: "uniqueMoleculeFractionMean",
+			id: "umi-fraction-mean",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/uniqueMoleculeFractionMean",
+				valueType: "Double",
+				annotations: tableAnno(89500, "default", {
+					"pl7.app/min": "0",
+					"pl7.app/max": "1",
+					"pl7.app/label": "Mean Fraction of UMIs",
+					"pl7.app/format": ".2p"
+				})
+			}
+		})
+	}
 	if isAa {
 		cols = append(cols, {
 			column: "ntVariantCount",
@@ -895,7 +1089,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName) {
 // frame-shift, and the assignment buckets (populated only when a known set is
 // supplied — otherwise 0). The synonymous-replicate histogram is a distribution,
 // not a per-sample scalar, so it is left for a future chart.
-qcColumns := func(sampleIdAxisSpec) {
+qcColumns := func(sampleIdAxisSpec, hasUmi) {
 	longCol := func(col, id, order, vis, label, desc) {
 		return {
 			column: col,
@@ -932,18 +1126,18 @@ qcColumns := func(sampleIdAxisSpec) {
 			}
 		}
 	}
-	return {
-		axes: [{ column: "sampleId", spec: sampleIdAxisSpec }],
-		columns: [
+	// A UMI run leads with molecules; read-based columns demote to `optional`.
+	readVis := hasUmi ? "optional" : "default"
+	cols := [
 			longCol("ntVariants", "nt-variants", 100000, "default", "NT Variants", "Distinct nucleotide variants assembled."),
 			longCol("aaVariants", "aa-variants", 99000, "default", "AA Variants", "Distinct amino-acid variants."),
-			longCol("totalReads", "total-reads", 98000, "default", "Total Reads", "Reads assigned to variants."),
+			longCol("totalReads", "total-reads", 98000, readVis, "Total Reads", "Reads assigned to variants."),
 			longCol("frameShiftVariants", "frame-shift-variants", 90000, "default", "Frame-Shift Variants", "Variants whose mutations shift the reading frame."),
 			longCol("frameShiftReads", "frame-shift-reads", 89000, "optional", "Frame-Shift Reads", "Reads on frame-shift variants."),
-			fracCol("frameShiftReadFraction", "frame-shift-read-fraction", 88000, "default", "Frame-Shift Reads (%)", "Fraction of total reads on frame-shift variants."),
+			fracCol("frameShiftReadFraction", "frame-shift-read-fraction", 88000, readVis, "Frame-Shift Reads (%)", "Fraction of total reads on frame-shift variants."),
 			longCol("aaMutationsExceededVariants", "aa-mutations-exceeded-variants", 87000, "default", "AA Mutation-Limit Variants", "In-frame variants dropped by mutation filter"),
 			longCol("aaMutationsExceededReads", "aa-mutations-exceeded-reads", 86000, "optional", "AA Mutation-Limit Reads", "Reads on aa mutation-limit variants."),
-			fracCol("aaMutationsExceededReadFraction", "aa-mutations-exceeded-read-fraction", 85000, "default", "AA Mutation-Limit Reads (%)", "Fraction of total reads on aa mutation-limit variants."),
+			fracCol("aaMutationsExceededReadFraction", "aa-mutations-exceeded-read-fraction", 85000, readVis, "AA Mutation-Limit Reads (%)", "Fraction of total reads on aa mutation-limit variants."),
 			longCol("assignedVariants", "assigned-variants", 80000, "optional", "Assigned Variants", "Variants matched to a known-set entry (assignment run only)."),
 			longCol("assignedReads", "assigned-reads", 79000, "optional", "Assigned Reads", "Reads on assigned variants."),
 			fracCol("assignedReadFraction", "assigned-read-fraction", 78000, "optional", "Assigned Reads (%)", "Fraction of total reads on assigned variants."),
@@ -953,7 +1147,42 @@ qcColumns := func(sampleIdAxisSpec) {
 			longCol("ambiguousVariants", "ambiguous-variants", 74000, "optional", "Ambiguous Variants", "Variants matching more than one known-set entry."),
 			longCol("ambiguousReads", "ambiguous-reads", 73000, "optional", "Ambiguous Reads", "Reads on ambiguous variants."),
 			fracCol("ambiguousReadFraction", "ambiguous-read-fraction", 72000, "optional", "Ambiguous Reads (%)", "Fraction of total reads on ambiguous variants.")
-		],
+	]
+	if hasUmi {
+		cols = append(cols,
+			longCol("totalMolecules", "total-molecules", 98500, "default", "Total UMIs", "Distinct molecules (UMIs) behind the variants."),
+			// Reads over molecules: a ratio, so no 0-1 range and no percent format.
+			{
+				column: "readsPerMolecule",
+				id: "reads-per-molecule",
+				allowNA: true,
+				naRegex: "NaN",
+				spec: {
+					name: "pl7.app/repertoire/qc/readsPerMolecule",
+					valueType: "Double",
+					annotations: tableAnno(98400, "default", {
+						"pl7.app/min": "0",
+						"pl7.app/format": ".2f",
+						"pl7.app/label": "Reads per UMI",
+						"pl7.app/description": "Sequencing depth per molecule: total reads divided by distinct UMIs."
+					})
+				}
+			},
+			longCol("frameShiftMolecules", "frame-shift-molecules", 89500, "optional", "Frame-Shift UMIs", "UMIs on frame-shift variants."),
+			fracCol("frameShiftMoleculeFraction", "frame-shift-molecule-fraction", 88500, "default", "Frame-Shift UMIs (%)", "Fraction of total UMIs on frame-shift variants."),
+			longCol("aaMutationsExceededMolecules", "aa-mutations-exceeded-molecules", 86500, "optional", "AA Mutation-Limit UMIs", "UMIs on aa mutation-limit variants."),
+			fracCol("aaMutationsExceededMoleculeFraction", "aa-mutations-exceeded-molecule-fraction", 85500, "default", "AA Mutation-Limit UMIs (%)", "Fraction of total UMIs on aa mutation-limit variants."),
+			longCol("assignedMolecules", "assigned-molecules", 79500, "optional", "Assigned UMIs", "UMIs on assigned variants."),
+			fracCol("assignedMoleculeFraction", "assigned-molecule-fraction", 78500, "optional", "Assigned UMIs (%)", "Fraction of total UMIs on assigned variants."),
+			longCol("unassignedMolecules", "unassigned-molecules", 76500, "optional", "Unassigned UMIs", "UMIs on unassigned (novel) variants."),
+			fracCol("unassignedMoleculeFraction", "unassigned-molecule-fraction", 75500, "optional", "Unassigned UMIs (%)", "Fraction of total UMIs on unassigned variants."),
+			longCol("ambiguousMolecules", "ambiguous-molecules", 73500, "optional", "Ambiguous UMIs", "UMIs on ambiguous variants."),
+			fracCol("ambiguousMoleculeFraction", "ambiguous-molecule-fraction", 72500, "optional", "Ambiguous UMIs (%)", "Fraction of total UMIs on ambiguous variants.")
+		)
+	}
+	return {
+		axes: [{ column: "sampleId", spec: sampleIdAxisSpec }],
+		columns: cols,
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
 	}

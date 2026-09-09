@@ -23,11 +23,11 @@ import type {
   RegionScheme,
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
 import { kind } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
-import type { PatternParts } from "./pattern";
-import { parsePattern, patternHasUmi } from "./pattern";
+import type { PatternParts, UmiSpec } from "./pattern";
+import { parsePattern, patternUmiSpec } from "./pattern";
 
-export { parsePattern, patternHasUmi } from "./pattern";
-export type { LengthRange, PatternHalf, PatternParts } from "./pattern";
+export { parsePattern, patternHasUmi, patternUmiSpec } from "./pattern";
+export type { LengthRange, PatternHalf, PatternParts, UmiSpec } from "./pattern";
 
 // The parent-input and region shapes are part of the kind's init-params
 // contract, so the kind declares them. Re-exported here because the UI reads
@@ -152,8 +152,8 @@ export type BlockData = {
   // Input reads — a fastq dataset from the result pool.
   input?: PlRef;
 
-  // mitool tag pattern: insert capture (R1/R2) + optional UMI. `hasUmi` is
-  // derived by parsing this string (no separate flag).
+  // mitool tag pattern: insert capture (R1/R2) + optional UMI. UMI presence and layout
+  // are derived by parsing this string — see patternUmiSpec.
   tagPattern?: string;
 
   // Parents (alignment references) — FASTA, two modes.
@@ -232,6 +232,10 @@ export type BlockData = {
   // aggregated per-position quality dips below this Phred at ANY position.
   minVariantQuality?: number;
 
+  // UMI consensus settings, used and required only when the tag pattern carries a UMI.
+  minReadsPerConsensus?: number; // consensus -O minRecordsPerConsensus
+  minUmiQuality?: number; // refine-tags -q
+
   // Optional per-sample mitool resource overrides (Advanced). Empty = workflow
   // defaults. Passed to the parse + analyze exec steps.
   perProcessMemGB?: number;
@@ -250,7 +254,10 @@ export type BlockArgs = {
   input: PlRef;
   tagPattern: string;
   patternParts: PatternParts;
-  hasUmi: boolean;
+  // Absent when the pattern has no UMI; its presence switches the UMI chain on.
+  umi?: UmiSpec;
+  minReadsPerConsensus?: number;
+  minUmiQuality?: number;
   parentInputMode: ParentInputMode;
   parentSequence?: string;
   parentFileHandle?: ImportFileHandle;
@@ -300,7 +307,8 @@ type BlockDataV1 = Omit<BlockDataV2, "exportNt"> & { ntStateMatrix: boolean };
 
 type BlockDataV2 = Omit<BlockDataV3, "graphStateMutationHistogram">;
 
-type BlockDataV3 = Omit<BlockData, "graphStateStateHeatmap">;
+type BlockDataV3 = Omit<BlockDataV4, "graphStateStateHeatmap">;
+type BlockDataV4 = Omit<BlockData, "minReadsPerConsensus" | "minUmiQuality">;
 
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -358,9 +366,13 @@ const dataModel = new DataModelBuilder({ kind })
     ...v2,
     graphStateMutationHistogram: { ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE },
   }))
-  .migrate<BlockData>("v4", (v3) => ({
+  .migrate<BlockDataV4>("v4", (v3) => ({
     ...v3,
     graphStateStateHeatmap: { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
+  }))
+  .migrate<BlockData>("v5", (v4) => ({
+    ...v4,
+    ...UMI_DEFAULTS,
   }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
@@ -383,6 +395,8 @@ const dataModel = new DataModelBuilder({ kind })
     maxAaMutationFraction: params?.maxAaMutationFraction,
     minBaseQuality: params?.minBaseQuality,
     minVariantQuality: params?.minVariantQuality,
+    minReadsPerConsensus: params?.minReadsPerConsensus ?? UMI_DEFAULTS.minReadsPerConsensus,
+    minUmiQuality: params?.minUmiQuality ?? UMI_DEFAULTS.minUmiQuality,
     perProcessMemGB: params?.perProcessMemGB,
     perProcessCPUs: params?.perProcessCPUs,
 
@@ -406,6 +420,79 @@ const DEFAULT_BLOCK_LABEL = "Amplicon Profiling";
 /** milib's `SequenceQuality.MAX_QUALITY_VALUE` — the ceiling for both quality
  *  gates. A threshold above it can never be met, so nothing would pass. */
 export const MAX_PHRED_QUALITY = 58;
+
+const UMI_DEFAULTS = { minReadsPerConsensus: 2, minUmiQuality: 20 } as const;
+
+/** Below this a barcode cannot be told apart from a 1-error neighbour of another. */
+const MIN_UMI_LENGTH = 8;
+
+/** The `BlockData` fields [validateUmiSettings] reads. */
+export type UmiSettings = Pick<BlockData, "minReadsPerConsensus" | "minUmiQuality">;
+
+/**
+ * What is wrong with a tag pattern, or undefined. Shown on the tag-pattern field, and
+ * re-checked by `.args(...)` so the field and the run gate cannot disagree.
+ */
+export function tagPatternError(tagPattern: string | undefined): string | undefined {
+  const canonical = (tagPattern ?? "").replace(/\s+/g, "");
+  if (canonical === "") return "Tag pattern is required.";
+
+  const parts = parsePattern(canonical);
+  if (!parts)
+    return (
+      "Tag pattern is invalid. Each read must have the shape " +
+      "^[*][(UMI:N{min[:max]})][leftAnchor](R1:*|N{n}|N{min:max})[rightAnchor][>{trim}]*. " +
+      "UMI captures are optional; the insert (R) capture marks the region aligned to the " +
+      "parent. UMI tags are named UMI, UMI1, …; insert tags R1, R2, …. All defined tag " +
+      "names must be unique."
+    );
+
+  // At least one half must capture an insert — the region aligned to the parent. The
+  // insert may be variable-length (`*`); the alignment bounds it, not a fixed length.
+  if (parts.r1.insertName === undefined && parts.r2?.insertName === undefined)
+    return "Pattern must capture an insert (R1 or R2) to align against the parent.";
+
+  const halves = parts.r2 ? [parts.r1, parts.r2] : [parts.r1];
+  for (const half of halves)
+    for (const anchor of [half.leftAnchor, half.rightAnchor])
+      if (anchor && !DNA_IUPAC_RE.test(anchor))
+        return (
+          "Anchor sequences must use DNA letters or IUPAC codes only " +
+          "(A, C, G, T, M, K, R, Y, W, S, B, D, H, V, N — upper or lower case)."
+        );
+
+  const umi = patternUmiSpec(parts);
+  if (umi?.ranged)
+    return (
+      "UMI captures must have a fixed length (N{n}), not a range (N{min:max}) — " +
+      "a variable-length barcode cannot identify a molecule."
+    );
+  if (umi && umi.totalLength < MIN_UMI_LENGTH)
+    return (
+      `A UMI of ${umi.totalLength} nt is too short to identify molecules; ` +
+      `use at least ${MIN_UMI_LENGTH} nt in total across both reads.`
+    );
+
+  return undefined;
+}
+
+/** Throws when a UMI declaration or its consensus settings cannot produce a molecule count. */
+export function validateUmiSettings(s: UmiSettings): void {
+  const missing: string[] = [];
+  if (s.minReadsPerConsensus === undefined) missing.push("Min reads per UMI");
+  if (s.minUmiQuality === undefined) missing.push("Min UMI quality");
+  if (missing.length > 0)
+    throw new Error(`Set the molecule consensus settings under Barcodes: ${missing.join(", ")}.`);
+
+  if (!Number.isInteger(s.minReadsPerConsensus) || s.minReadsPerConsensus! < 1)
+    throw new Error("Min reads per UMI must be a positive integer.");
+  if (
+    !Number.isInteger(s.minUmiQuality) ||
+    s.minUmiQuality! < 0 ||
+    s.minUmiQuality! > MAX_PHRED_QUALITY
+  )
+    throw new Error(`Min UMI quality must be an integer between 0 and ${MAX_PHRED_QUALITY}.`);
+}
 
 /** Shown as the block subtitle before a dataset is picked. */
 const NO_DATASET_LABEL = "Select dataset";
@@ -543,20 +630,22 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       ?.getFileHandle(),
   )
 
-  // Per-sample analyze log handles (for the Logs view).
-  .output("logs", (ctx) =>
+  // Per-step log handles, keyed [sampleId, step].
+  .output("stepLogs", (ctx) =>
     ctx.outputs !== undefined
-      ? parseResourceMap(ctx.outputs.resolve("logs"), (acc) => acc.getLogHandle(), false)
+      ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
       : undefined,
   )
 
-  // Per-sample progress string scraped from the analyze log markers.
-  .output("progress", (ctx) =>
+  // Per-step progress, keyed [sampleId, step]. `WithInfo` adds the `live` flag, which
+  // separates a running step from one whose log froze at its last marker.
+  .output("stepProgress", (ctx) =>
     ctx.outputs !== undefined
       ? parseResourceMap(
-          ctx.outputs.resolve("logs"),
-          (acc) => acc.getProgressLog(ProgressPrefix),
-          false,
+          ctx.outputs.resolve("stepLogs"),
+          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          // A step that has started but printed no marker yet must still appear.
+          true,
         )
       : undefined,
   )
@@ -678,36 +767,11 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   .args<BlockArgs>((data) => {
     if (!data.input) throw new Error("Input dataset (FASTQ) is required");
 
-    if (!data.tagPattern || data.tagPattern.trim() === "")
-      throw new Error("Tag pattern is required");
-    const tagPattern = data.tagPattern.replace(/\s+/g, ""); // canonicalize
-    const patternParts = parsePattern(tagPattern);
-    if (!patternParts)
-      throw new Error(
-        "Tag pattern is invalid. Each read must have the shape " +
-          "^[*][(UMI:N{min[:max]})][leftAnchor](R1:*|N{n}|N{min:max})[rightAnchor][>{trim}]*. " +
-          "UMI captures are optional; the insert (R) capture marks the region aligned to the parent. " +
-          "UMI tags are named UMI, UMI1, …; insert tags R1, R2, …. All defined tag names must be unique.",
-      );
-
-    // At least one read half must carry an insert (R) capture — the region
-    // aligned to the parent. The insert may be variable-length (`*`); the parent
-    // alignment, not a fixed length/anchor, bounds it.
-    const r1HasInsert = patternParts.r1.insertName !== undefined;
-    const r2HasInsert = patternParts.r2?.insertName !== undefined;
-    if (!r1HasInsert && !r2HasInsert)
-      throw new Error("Pattern must capture an insert (R1 or R2) to align against the parent.");
-
-    // Anchor characters must be DNA letters or IUPAC ambiguity codes.
-    const halves = patternParts.r2 ? [patternParts.r1, patternParts.r2] : [patternParts.r1];
-    for (const half of halves)
-      for (const anchor of [half.leftAnchor, half.rightAnchor])
-        if (anchor && !DNA_IUPAC_RE.test(anchor))
-          throw new Error(
-            "Anchor sequences must use DNA letters or IUPAC codes only " +
-              "(A, C, G, T, M, K, R, Y, W, S, B, D, H, V, N — upper or lower case).",
-          );
-
+    const patternError = tagPatternError(data.tagPattern);
+    if (patternError) throw new Error(patternError);
+    const tagPattern = data.tagPattern!.replace(/\s+/g, ""); // canonicalize
+    const patternParts = parsePattern(tagPattern)!;
+    const umi = patternUmiSpec(patternParts);
     // Pattern-vs-input read-structure mismatch (paired pattern, single-end input)
     // is checked live in the UI (SettingsPanel, via the `inputIsPairedEnd` output)
     // and asserted in the workflow as defence-in-depth. It is NOT gated here: args
@@ -786,6 +850,8 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     checkQuality(minBaseQuality, "Min base quality");
     checkQuality(minVariantQuality, "Min variant quality");
 
+    if (umi) validateUmiSettings(data);
+
     // Resource overrides: positive when set (empty = workflow defaults).
     if (data.perProcessMemGB !== undefined && data.perProcessMemGB < 1)
       throw new Error("Memory per process must be at least 1 GB.");
@@ -811,7 +877,10 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       input: data.input,
       tagPattern,
       patternParts,
-      hasUmi: patternHasUmi(patternParts),
+      umi,
+      // Suppressed without a UMI so the staleness gate ignores them on a non-UMI run.
+      minReadsPerConsensus: umi ? data.minReadsPerConsensus : undefined,
+      minUmiQuality: umi ? data.minUmiQuality : undefined,
       parentInputMode: data.parentInputMode,
       // Suppress the inactive mode's field so the staleness gate ignores it.
       parentSequence: data.parentInputMode === "fastaSequence" ? data.parentSequence : undefined,
@@ -888,6 +957,8 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     maxAaMutationFraction: data.maxAaMutationFraction,
     minBaseQuality: data.minBaseQuality,
     minVariantQuality: data.minVariantQuality,
+    minReadsPerConsensus: data.minReadsPerConsensus,
+    minUmiQuality: data.minUmiQuality,
     perProcessMemGB: data.perProcessMemGB,
     perProcessCPUs: data.perProcessCPUs,
   }))
