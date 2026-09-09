@@ -645,24 +645,44 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   )
 
   // Per-step log handles, keyed [sampleId, step].
-  .output("stepLogs", (ctx) =>
-    ctx.outputs !== undefined
-      ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
-      : undefined,
-  )
+  //
+  // Resolved with allowPermanentAbsence because this field did not exist before block
+  // 1.2.9: the workflow emitted `logs` and 1.2.9 renamed it to `stepLogs`. A project
+  // computed under 1.2.8 therefore has outputs with no `stepLogs` field at all, and the
+  // throwing form of resolve() failed the whole model render — every output, not just
+  // this one — leaving the upgraded block unusable until it was re-run. Absent reads as
+  // undefined instead, so the Logs and Progress views are simply empty until the user
+  // re-runs, which the upgrade already makes them do.
+  //
+  // allowPermanentAbsence is only honoured alongside assertFieldType (see
+  // CommonFieldTraverseOps), hence "Input" here, matching the other tolerant resolves.
+  .output("stepLogs", (ctx) => {
+    const acc = ctx.outputs?.resolve({
+      field: "stepLogs",
+      assertFieldType: "Input",
+      allowPermanentAbsence: true,
+    });
+    return acc !== undefined ? parseResourceMap(acc, (a) => a.getLogHandle(), false) : undefined;
+  })
 
   // Per-step progress, keyed [sampleId, step]. `WithInfo` adds the `live` flag, which
   // separates a running step from one whose log froze at its last marker.
-  .output("stepProgress", (ctx) =>
-    ctx.outputs !== undefined
+  // Same pre-1.2.9 absence as stepLogs above — it reads the same field.
+  .output("stepProgress", (ctx) => {
+    const acc = ctx.outputs?.resolve({
+      field: "stepLogs",
+      assertFieldType: "Input",
+      allowPermanentAbsence: true,
+    });
+    return acc !== undefined
       ? parseResourceMap(
-          ctx.outputs.resolve("stepLogs"),
-          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          acc,
+          (a) => a.getProgressLogWithInfo(ProgressPrefix),
           // A step that has started but printed no marker yet must still appear.
           true,
         )
-      : undefined,
-  )
+      : undefined;
+  })
 
   // Per-sample step reports, keyed [sampleId, step, format] (step ∈ align /
   // assemble / call-mutations / assign; format ∈ json / txt). Feeds the sample
