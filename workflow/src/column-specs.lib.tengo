@@ -1138,6 +1138,8 @@ qcColumns := func(sampleIdAxisSpec, hasUmi) {
 			longCol("aaMutationsExceededVariants", "aa-mutations-exceeded-variants", 87000, "default", "AA Mutation-Limit Variants", "In-frame variants dropped by mutation filter"),
 			longCol("aaMutationsExceededReads", "aa-mutations-exceeded-reads", 86000, "optional", "AA Mutation-Limit Reads", "Reads on aa mutation-limit variants."),
 			fracCol("aaMutationsExceededReadFraction", "aa-mutations-exceeded-read-fraction", 85000, readVis, "AA Mutation-Limit Reads (%)", "Fraction of total reads on aa mutation-limit variants."),
+			longCol("ntIndelReads", "nt-indel-reads", 84000, "default", "NT Indel Reads", "Reads rejected at alignment for carrying an insertion or deletion (substitutions-only filter)."),
+			fracCol("ntIndelReadFraction", "nt-indel-read-fraction", 83000, readVis, "NT Indel Reads (%)", "Fraction of processed reads rejected for carrying an indel."),
 			longCol("assignedVariants", "assigned-variants", 80000, "optional", "Assigned Variants", "Variants matched to a known-set entry (assignment run only)."),
 			longCol("assignedReads", "assigned-reads", 79000, "optional", "Assigned Reads", "Reads on assigned variants."),
 			fracCol("assignedReadFraction", "assigned-read-fraction", 78000, "optional", "Assigned Reads (%)", "Fraction of total reads on assigned variants."),
