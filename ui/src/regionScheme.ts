@@ -18,6 +18,10 @@ export function parseParentFasta(text: string | undefined): ParsedParent[] {
     if (line === "") continue;
     if (line.startsWith(">")) {
       flush();
+      // mitool parses the same FASTA independently and must derive the same id: the region
+      // scheme is keyed by these values and matched against mitool's output, so a mismatch
+      // silently drops the whole scheme. Changing this convention requires the same change
+      // in mitool.
       id = line.slice(1).trim().split(/\s+/)[0] ?? "";
       body = [];
     } else if (id !== undefined) {
