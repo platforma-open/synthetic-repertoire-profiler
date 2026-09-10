@@ -16,6 +16,7 @@ import {
 } from "@platforma-sdk/model";
 import {
   PlAccordionSection,
+  PlAlert,
   PlBtnGroup,
   PlCheckbox,
   PlDropdown,
@@ -199,6 +200,27 @@ const umi = computed(() => {
 // where it was typed. Same function the gate uses, so the two agree — including the
 // unparseable case, which has no `umi` to report against.
 const patternError = computed(() => tagPatternError(app.model.data.tagPattern));
+
+// --- Preview run --------------------------------------------------------------
+const runModeOptions = [
+  { label: "Preview", value: "dry" as const },
+  { label: "Full run", value: "full" as const },
+];
+
+// A cut costs a UMI run twice over: fewer reads AND fewer reads per molecule, so
+// minReadsPerConsensus then drops molecules a full run keeps. The 10x is a guess.
+const PREVIEW_READS = 100_000;
+const PREVIEW_READS_UMI = 1_000_000;
+
+// Not a hairpin: both watched values are `data` (runMode, and tagPattern behind
+// umi), no output feeds it. Replaces only an untouched seed, never a typed number.
+const previewDefault = computed(() => (umi.value ? PREVIEW_READS_UMI : PREVIEW_READS));
+watch([() => app.model.data.runMode, previewDefault], ([mode, seed], old) => {
+  if (mode !== "dry") return;
+  const current = app.model.data.limitInput;
+  const wasSeed = old !== undefined && current === old[1];
+  if (current === undefined || wasSeed) app.model.data.limitInput = seed;
+});
 
 // Both writes happen on the user gesture, never in a watcher on the outputs —
 // that loop would be a hairpin. `.subtitle` is args-only, so it needs the dataset
@@ -437,6 +459,34 @@ ACGTACGT..."
       />
     </template>
   </PlAccordionSection>
+
+  <PlBtnGroup v-model="app.model.data.runMode" :options="runModeOptions" label="Run mode">
+    <template #tooltip>
+      Preview — runs the analysis on a small fraction of reads per sample. Use it to check that
+      settings are correct before launching a full run, which may take much longer.
+    </template>
+  </PlBtnGroup>
+
+  <template v-if="app.model.data.runMode === 'dry'">
+    <PlNumberField
+      v-model="app.model.data.limitInput"
+      label="Reads per sample limit"
+      :min-value="1"
+      :clearable="true"
+      :error-message="
+        app.model.data.limitInput == null ? 'Read limit is required for Preview mode' : undefined
+      "
+    >
+      <template #tooltip>
+        Number of reads to use per sample in the preview run. The first reads of each file are
+        taken. Recommended: 100,000 without a UMI, 1,000,000 with one.
+      </template>
+    </PlNumberField>
+    <PlAlert v-if="umi" type="warn" :icon="true">
+      With a UMI, limiting reads also lowers reads per molecule, so fewer molecules pass the
+      consensus filter. Consider running 1–2 complete samples at full depth instead.
+    </PlAlert>
+  </template>
 
   <PlAccordionSection label="Advanced Settings">
     <PlCheckbox v-model="app.model.data.exportNt">
