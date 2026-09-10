@@ -97,6 +97,7 @@ self.body(func(inputs) {
 	minVariantQuality := params.minVariantQuality
 	minReadsPerConsensus := params.minReadsPerConsensus
 	minUmiQuality := params.minUmiQuality
+	limitInput := params.limitInput
 	mitoolCPUs := inputs.mitoolCPUs
 	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
 
@@ -183,7 +184,12 @@ self.body(func(inputs) {
 		software(mitoolSw).
 		arg("parse").
 		arg("--pattern").arg(pattern).
-		arg("--threads").argWithVar("{system.cpu}").
+		arg("--threads").argWithVar("{system.cpu}")
+	// An option, so it must precede the positional arguments below.
+	if !is_undefined(limitInput) {
+		parseBuilder = parseBuilder.arg("-n").arg(string(int(limitInput)))
+	}
+	parseBuilder = parseBuilder.
 		arg(inputArg).
 		arg("parsed.mic")
 	for f in R1Files { parseBuilder = parseBuilder.addFile(f.name, f.file) }
