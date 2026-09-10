@@ -167,7 +167,9 @@ wf.body(func(args) {
 		// assemble step (-Massemble.minVariantQuality). Unlike the filters above these
 		// are ON by mitool default, so "absent" means 5 / 20, not off.
 		minBaseQuality: args.minBaseQuality,
-		minVariantQuality: args.minVariantQuality
+		minVariantQuality: args.minVariantQuality,
+		// Absent on a full run, so removeUndefs keeps pre-preview cache hits.
+		limitInput: args.limitInput
 	}, { removeUndefs: true })
 
 	// One File-valued PColumn per analyze output, keyed by sampleId.

@@ -255,6 +255,11 @@ export type BlockData = {
   perProcessMemGB?: number;
   perProcessCPUs?: number;
 
+  // Preview run. `full` suppresses limitInput in args, so leaving preview
+  // reproduces the unlimited recipe exactly.
+  runMode: "dry" | "full";
+  limitInput?: number; // reads (pairs, when paired-end) per sample; required in preview
+
   // Per-page table grid state (sort, column visibility, etc.).
   qcTableState: PlDataTableStateV2;
   knownVariantsNtTableState: PlDataTableStateV2;
@@ -317,6 +322,7 @@ export type BlockArgs = {
   minVariantQuality?: number;
   perProcessMemGB?: number;
   perProcessCPUs?: number;
+  limitInput?: number; // → mitool parse -n. Absent = full run.
   defaultBlockLabel: string;
   customBlockLabel: string;
 };
@@ -328,7 +334,8 @@ type BlockDataV1 = Omit<BlockDataV2, "exportNt"> & { ntStateMatrix: boolean };
 type BlockDataV2 = Omit<BlockDataV3, "graphStateMutationHistogram">;
 
 type BlockDataV3 = Omit<BlockDataV4, "graphStateStateHeatmap">;
-type BlockDataV4 = Omit<BlockData, "minReadsPerConsensus" | "minUmiQuality">;
+type BlockDataV4 = Omit<BlockDataV5, "minReadsPerConsensus" | "minUmiQuality">;
+type BlockDataV5 = Omit<BlockData, "runMode" | "limitInput">;
 
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -390,9 +397,14 @@ const dataModel = new DataModelBuilder({ kind })
     ...v3,
     graphStateStateHeatmap: { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
   }))
-  .migrate<BlockData>("v5", (v4) => ({
+  .migrate<BlockDataV5>("v5", (v4) => ({
     ...v4,
     ...UMI_DEFAULTS,
+  }))
+  // Pre-preview projects ran unlimited, so only `full` keeps their args unchanged.
+  .migrate<BlockData>("v6", (v5) => ({
+    ...v5,
+    runMode: "full" as const,
   }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
@@ -425,6 +437,9 @@ const dataModel = new DataModelBuilder({ kind })
 
     // Not init params: uploaded files, what the UI discovers by reading them, and
     // view state. See the kind for why each group stays out of the contract.
+    // Also `runMode`: a template is a recipe for a real run, so a saved preview
+    // would hand every block made from it a partial answer.
+    runMode: "full" as const,
     defaultBlockLabel: "",
     knownNtMetadataColumns: [],
     knownAaMetadataColumns: [],
@@ -915,6 +930,15 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     if (data.perProcessCPUs !== undefined && data.perProcessCPUs < 1)
       throw new Error("CPUs per process must be at least 1.");
 
+    // The cap is required: a preview with no number is a full run mislabelled,
+    // and the more expensive of the two readings.
+    const limitInput = data.runMode === "dry" ? (data.limitInput ?? undefined) : undefined;
+    if (data.runMode === "dry") {
+      if (limitInput === undefined) throw new Error("Read limit is required for Preview mode.");
+      if (!Number.isInteger(limitInput) || limitInput < 1)
+        throw new Error("Read limit must be a positive integer.");
+    }
+
     // Resolve the selected metadata headers to {header, type} descriptors the
     // workflow uses to build the dynamic knownVariantMetadata/* import. An empty
     // selection imports ALL columns except the chosen ID/Sequence.
@@ -986,6 +1010,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       minVariantQuality,
       perProcessMemGB: data.perProcessMemGB,
       perProcessCPUs: data.perProcessCPUs,
+      limitInput,
       // Workflow trace label: the selected dataset's name (snapshotted by the
       // UI), falling back to the constant when not yet resolved.
       defaultBlockLabel: data.defaultBlockLabel || DEFAULT_BLOCK_LABEL,
