@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.ui
 
+## 1.2.11
+
+### Patch Changes
+
+- 2a2381f: Mitool and sdk upgrade
+
 ## 1.2.10
 
 ### Patch Changes
