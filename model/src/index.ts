@@ -209,6 +209,12 @@ export type BlockData = {
   // state matrix — migrated forward below.)
   exportNt: boolean;
 
+  // Emits the per-variant state matrix (one row per variant per parent position)
+  // and the Residue Composition page that reads it. ON by default. The matrix is
+  // dense, so its size is variants x parentLength — turn it off on repertoires
+  // large enough for that product to dominate the run.
+  exportStateMatrix: boolean;
+
   // Optional per-fragment mutation-load filter (Advanced). Applied by mitool's
   // align step (AlignParams.filter, via -Malign.filter.*): a fragment whose
   // alignment to the parent carries more mutations than allowed is rejected as a
@@ -340,7 +346,8 @@ type BlockDataV2 = Omit<BlockDataV3, "graphStateMutationHistogram">;
 
 type BlockDataV3 = Omit<BlockDataV4, "graphStateStateHeatmap">;
 type BlockDataV4 = Omit<BlockDataV5, "minReadsPerConsensus" | "minUmiQuality">;
-type BlockDataV5 = Omit<BlockData, "runMode" | "limitInput">;
+type BlockDataV5 = Omit<BlockDataV6, "runMode" | "limitInput">;
+type BlockDataV6 = Omit<BlockData, "exportStateMatrix">;
 
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -407,9 +414,14 @@ const dataModel = new DataModelBuilder({ kind })
     ...UMI_DEFAULTS,
   }))
   // Pre-preview projects ran unlimited, so only `full` keeps their args unchanged.
-  .migrate<BlockData>("v6", (v5) => ({
+  .migrate<BlockDataV6>("v6", (v5) => ({
     ...v5,
     runMode: "full" as const,
+  }))
+  // Existing projects built the matrix, so they keep it.
+  .migrate<BlockData>("v7", (v6) => ({
+    ...v6,
+    exportStateMatrix: true,
   }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
@@ -426,6 +438,7 @@ const dataModel = new DataModelBuilder({ kind })
     vdjAutoDetect: params?.vdjAutoDetect ?? false,
     exportNt: params?.exportNt ?? false,
     exportOnlyKnown: params?.exportOnlyKnown,
+    exportStateMatrix: params?.exportStateMatrix ?? true,
     maxMutations: params?.maxMutations,
     maxMutationFraction: params?.maxMutationFraction,
     substitutionsOnly: params?.substitutionsOnly,
@@ -1015,6 +1028,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       // shown only when a known set is present). Forced false when no known set.
       exportOnlyKnown: hasKnownSet ? (data.exportOnlyKnown ?? false) : false,
       exportNt: data.exportNt,
+      exportStateMatrix: data.exportStateMatrix,
       maxMutations,
       maxMutationFraction,
       maxIndels,
@@ -1053,6 +1067,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     vdjAutoDetect: data.vdjAutoDetect,
     exportNt: data.exportNt,
     exportOnlyKnown: data.exportOnlyKnown,
+    exportStateMatrix: data.exportStateMatrix,
     maxMutations: data.maxMutations,
     maxMutationFraction: data.maxMutationFraction,
     substitutionsOnly: data.substitutionsOnly,
@@ -1085,8 +1100,10 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       { type: "link", href: "/qc", label: "QC Report" },
       // Always listed: each plot's empty state carries its own call to action.
       { type: "link", href: "/mutation-histogram", label: "Mutation Distribution" },
-      { type: "link", href: "/state-heatmap", label: "Residue Composition" },
     ];
+    // Reads the state matrix, so it has nothing to show without one.
+    if (ctx.data.exportStateMatrix)
+      items.push({ type: "link", href: "/state-heatmap", label: "Residue Composition" });
     // NT known analysis runs only with an nt known set (--known); aa known
     // analysis runs with an aa set (--known-aa) or is derived from the nt set.
     // The NT page shows all designed nt entries (matched + undetected) in one table.

@@ -1,0 +1,64 @@
+// Per-sample `mitool parse` subtemplate.
+//
+// Its own memoization boundary: parse reads only the tag pattern, the read limit
+// and the FASTQ files, so it survives a change to any analyze or export setting.
+// CPU and RAM arrive as meta inputs, which deduplication ignores.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+
+json := import("json")
+times := import("times")
+
+self.defineOutputs("parsedMic", "parseLogStream")
+
+// `memory-from-limits` sizes the JVM heap from the scheduler's RAM limit — see
+// repertoire-pipeline for why the plain `:main` entrypoint is wrong here.
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
+
+progressPrefix := "[==PROGRESS==]"
+
+self.body(func(inputs) {
+	pattern := inputs.pattern
+	inputArg := inputs.inputArg
+	limitInput := inputs.limitInput
+	mitoolCPUs := inputs.mitoolCPUs
+	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
+
+	parseBuilder := exec.builder().
+		printErrStreamToStdout().
+		saveStdoutStream().
+		cpu(mitoolCPUs).
+		mem(mitoolMem).
+		env("MI_PROGRESS_PREFIX", progressPrefix).
+		software(mitoolSw).
+		arg("parse").
+		arg("--pattern").arg(pattern).
+		// availableProcessors() reports the host, not the cpu() grant. The arg is
+		// stored unresolved, so it does not affect deduplication.
+		arg("--threads").argWithVar("{system.cpu}")
+	// An option, so it must precede the positional arguments below.
+	if !is_undefined(limitInput) {
+		parseBuilder = parseBuilder.arg("-n").arg(string(int(limitInput)))
+	}
+	parseBuilder = parseBuilder.
+		arg(inputArg).
+		arg("parsed.mic")
+
+	// ResourceMap keys are JSON-encoded [filename] arrays — decode to recover the
+	// name the reads-file argument above expands to (e.g. "input_L1_R1.fastq.gz").
+	filesMap := inputs.inputFiles.inputs()
+	for encKey in maps.getKeys(filesMap) {
+		parseBuilder = parseBuilder.addFile(json.decode(encKey)[0], filesMap[encKey])
+	}
+
+	// cache() retains the result; without it there is nothing for a rerun to match.
+	parseCmd := parseBuilder.saveFile("parsed.mic").cache(48 * times.hour).run()
+
+	return {
+		parsedMic: parseCmd.getFile("parsed.mic"),
+		parseLogStream: parseCmd.getStdoutStream()
+	}
+})
