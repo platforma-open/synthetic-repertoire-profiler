@@ -74,6 +74,7 @@ export type BlockParams = {
 
   exportNt?: boolean;
   exportOnlyKnown?: boolean;
+  exportStateMatrix?: boolean;
 
   maxMutations?: number;
   maxMutationFraction?: number;
@@ -125,6 +126,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     vdjAutoDetect,
     exportNt,
     exportOnlyKnown,
+    exportStateMatrix,
     maxMutations,
     maxMutationFraction,
     substitutionsOnly,
@@ -151,6 +153,7 @@ function parseInitializationParams(value: unknown): BlockParams {
 
     exportNt: optionalBoolean(exportNt, "exportNt"),
     exportOnlyKnown: optionalBoolean(exportOnlyKnown, "exportOnlyKnown"),
+    exportStateMatrix: optionalBoolean(exportStateMatrix, "exportStateMatrix"),
 
     maxMutations: optionalNumber(maxMutations, "maxMutations"),
     maxMutationFraction: optionalNumber(maxMutationFraction, "maxMutationFraction"),
