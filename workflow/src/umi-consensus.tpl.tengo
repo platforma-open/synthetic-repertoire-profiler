@@ -6,6 +6,8 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 
+times := import("times")
+
 self.defineOutputs(
 	"consensusMic",
 	"refineReportJson", "consensusReportJson",
@@ -34,7 +36,8 @@ self.body(func(inputs) {
 			env("MI_PROGRESS_PREFIX", progressPrefix).
 			software(mitoolSw).
 			cpu(mitoolCPUs).
-			mem(mitoolMem)
+			mem(mitoolMem).
+			cache(48 * times.hour)
 	}
 
 	// --- refine-tags: correct sequencing errors inside the barcodes ---

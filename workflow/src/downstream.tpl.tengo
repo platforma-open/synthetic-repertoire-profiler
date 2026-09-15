@@ -1,0 +1,842 @@
+// Everything after `mitool parse`, for one sample:
+//   repertoire analyze --parents …   .mic -> variant / aa-variant /
+//                                            aa-state-matrix TSVs + qc.json
+// then the per-sample abundance, histogram, state-matrix and QC tables.
+//
+// Keyed on the .mic and the settings only, so it survives reruns. The caller owns
+// parse, the UMI chain and the step-log map.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+render := import("@platforma-sdk/workflow-tengo:render")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+smChunks := import(":state-matrix-chunks")
+
+json := import("json")
+times := import("times")
+
+// The state matrix leaves this template already split by position: one File-valued
+// output per level per chunk key. See state-matrix-chunks.
+outputNames := ["analyzeLogStream", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv"]
+for chunkKey in smChunks.keys() {
+	outputNames = append(outputNames, smChunks.outputName("aa", chunkKey))
+	outputNames = append(outputNames, smChunks.outputName("nt", chunkKey))
+}
+self.defineOutputs(outputNames)
+
+// Progress marker prefix — mitool emits `[==PROGRESS==]<stage>: <pct>% ETA: …`
+// on stderr when MI_PROGRESS_PREFIX is set; the block scrapes it for the
+// per-sample Progress column.
+progressPrefix := "[==PROGRESS==]"
+
+// `memory-from-limits` sizes the JVM heap (-Xmx) from the scheduler's RAM limit
+// (system.ram.mib, set by mem(mitoolMem) below). The `:main` entrypoint instead
+// uses -XX:MaxRAMPercentage of the RAM the JVM sees, which on native/desktop runs
+// is the whole host — ignoring mem(mitoolMem). Match the MiXCR blocks here.
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
+
+self.body(func(inputs) {
+	analyzeMic := inputs.analyzeMic
+	// Stamped onto the per-sample QC row so the cross-sample merge can concat.
+	sampleId := inputs.sampleId
+	params := inputs.params
+	fileExtension := params.fileExtension
+	pattern := params.pattern
+	parts := params.patternParts
+	umi := params.umi
+	hasUmi := !is_undefined(umi)
+	// Opt-in nt export: gates the nt state matrix computation here; main gates the
+	// nt column exports. Defensive default when the param is absent (removeUndefs).
+	exportNt := !is_undefined(params.exportNt) && params.exportNt
+	// Export-only-matched: when true, the per-sample abundance + state-matrix files
+	// that feed the exported `variants` frame are restricted to variants that
+	// matched a known entry (nt: assignStatus == ASSIGNED; aa: has knownAaKey). The
+	// known-overlay / QC computations below read the FULL variant set regardless.
+	exportOnlyKnown := !is_undefined(params.exportOnlyKnown) && params.exportOnlyKnown
+	// Dense matrix — variants x parentLength. Absent means the pre-flag behaviour.
+	exportStateMatrix := is_undefined(params.exportStateMatrix) || params.exportStateMatrix
+	parentFastaStr := params.parentFastaStr
+	parentFile := params.parentFile
+	// Regions overlay for mitool: either a JSON string (manual schemes, written to
+	// file here) or a precomputed file resource (vdjAutoDetect — built once upstream).
+	parentRegionsJson := params.parentRegionsJson
+	parentRegionsFile := params.parentRegionsFile
+	hasParentRegions := !is_undefined(parentRegionsJson) || !is_undefined(parentRegionsFile)
+	emitRegionAnnotation := !is_undefined(params.emitRegionAnnotation) && params.emitRegionAnnotation
+	knownNtFile := params.knownNtFile
+	knownAaFile := params.knownAaFile
+	// User-mapped known-set column names (arbitrary headers) → mitool.
+	knownNtIdColumn := params.knownNtIdColumn
+	knownNtSequenceColumn := params.knownNtSequenceColumn
+	knownAaIdColumn := params.knownAaIdColumn
+	knownAaSequenceColumn := params.knownAaSequenceColumn
+	// Per-fragment mutation-load filter (undefined = mitool default, off).
+	maxMutations := params.maxMutations
+	maxMutationFraction := params.maxMutationFraction
+	// Align-step indel gate. 0 = substitutions only; undefined = mitool default (off).
+	maxIndels := params.maxIndels
+	// Per-variant aa mutation-load filter (undefined = mitool default, off).
+	maxAaMutations := params.maxAaMutations
+	maxAaMutationFraction := params.maxAaMutationFraction
+	// Frame-shift guard (undefined = mitool defaults: AA_MISMATCH, threshold 10).
+	// The model drops the threshold under TRIPLET, where mitool ignores it.
+	frameShiftMode := params.frameShiftMode
+	frameShiftAaThreshold := params.frameShiftAaThreshold
+	// Quality gates (undefined = mitool default, which is ON: 5 for minBaseQuality,
+	// 20 for minVariantQuality). 0 disables — Phred is never negative.
+	minBaseQuality := params.minBaseQuality
+	minVariantQuality := params.minVariantQuality
+	// Read-coverage gate (undefined = mitool default, which is OFF).
+	minVariantReads := params.minVariantReads
+	minReadsPerConsensus := params.minReadsPerConsensus
+	minUmiQuality := params.minUmiQuality
+	limitInput := params.limitInput
+	mitoolCPUs := inputs.mitoolCPUs
+	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
+
+	// --- repertoire analyze: .mic -> variant / aa / state-matrix TSVs + qc.json ---
+	analyzeBuilder := exec.builder().
+		printErrStreamToStdout().
+		saveStdoutStream().
+		cpu(mitoolCPUs).
+		mem(mitoolMem).
+		env("MI_PROGRESS_PREFIX", progressPrefix).
+		software(mitoolSw).
+		arg("repertoire").arg("analyze").
+		arg("--parents").arg("parents.fa").
+		arg("--preset").arg("default").
+		arg("--budget").arg("0").
+		// availableProcessors() reports the host, not the cpu() grant. The arg is
+		// stored unresolved, so it does not affect deduplication.
+		arg("--threads").argWithVar("{system.cpu}")
+	// Mutation-load filter: set the align step's AlignFilterParams via -M mixins.
+	// mitool has no dedicated flags for these — they live in AlignParams.filter.
+	// Attached single-token form (-M<key>=<value>), matching mixcr-amplicon-alignment.
+	if !is_undefined(maxMutations) {
+		analyzeBuilder = analyzeBuilder.arg("-Malign.filter.maxMutations=" + string(int(maxMutations)))
+	}
+	if !is_undefined(maxMutationFraction) {
+		analyzeBuilder = analyzeBuilder.arg("-Malign.filter.maxMutationFraction=" + string(maxMutationFraction))
+	}
+	if !is_undefined(maxIndels) {
+		analyzeBuilder = analyzeBuilder.arg("-Malign.filter.maxIndels=" + string(int(maxIndels)))
+	}
+	// AA mutation-load gate: set the call-mutations step's CallMutationsParams via
+	// -M mixins (applied to in-frame variants after translation). The analyze CLI
+	// step name is kebab-case `call-mutations`; the params have no dedicated flags.
+	if !is_undefined(maxAaMutations) {
+		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.maxAaMutations=" + string(int(maxAaMutations)))
+	}
+	if !is_undefined(maxAaMutationFraction) {
+		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.maxAaMutationFraction=" + string(maxAaMutationFraction))
+	}
+	// Frame-shift guard: same step, same -M mixin route as the aa gate above.
+	if !is_undefined(frameShiftMode) {
+		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.frameShiftMode=" + frameShiftMode)
+	}
+	if !is_undefined(frameShiftAaThreshold) {
+		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.frameShiftAaThreshold=" + string(int(frameShiftAaThreshold)))
+	}
+	// Quality gates. minBaseQuality is an align-step filter param; minVariantQuality
+	// belongs to the assemble step, whose -M prefix mitool only accepts from the
+	// version that added "assemble" to the analyze mixin whitelist — older mitool
+	// rejects `-Massemble.*` outright rather than ignoring it.
+	if !is_undefined(minBaseQuality) {
+		analyzeBuilder = analyzeBuilder.arg("-Malign.filter.minBaseQuality=" + string(int(minBaseQuality)))
+	}
+	if !is_undefined(minVariantQuality) {
+		analyzeBuilder = analyzeBuilder.arg("-Massemble.minVariantQuality=" + string(int(minVariantQuality)))
+	}
+	if !is_undefined(minVariantReads) {
+		analyzeBuilder = analyzeBuilder.arg("-Massemble.minVariantReads=" + string(int(minVariantReads)))
+	}
+	if hasParentRegions {
+		analyzeBuilder = analyzeBuilder.arg("--parent-regions").arg("parents.regions.json")
+	}
+	if !is_undefined(knownNtFile) {
+		analyzeBuilder = analyzeBuilder.arg("--known").arg("known_nt.tsv")
+		if !is_undefined(knownNtSequenceColumn) {
+			analyzeBuilder = analyzeBuilder.arg("--sequence-column").arg(knownNtSequenceColumn)
+		}
+		if !is_undefined(knownNtIdColumn) {
+			analyzeBuilder = analyzeBuilder.arg("--id-column").arg(knownNtIdColumn)
+		}
+	}
+	if !is_undefined(knownAaFile) {
+		analyzeBuilder = analyzeBuilder.arg("--known-aa").arg("known_aa.tsv")
+		if !is_undefined(knownAaSequenceColumn) {
+			analyzeBuilder = analyzeBuilder.arg("--aa-sequence-column").arg(knownAaSequenceColumn)
+		}
+		if !is_undefined(knownAaIdColumn) {
+			analyzeBuilder = analyzeBuilder.arg("--aa-id-column").arg(knownAaIdColumn)
+		}
+	}
+	if exportNt {
+		analyzeBuilder = analyzeBuilder.arg("--nt-state-matrix")
+	}
+	// The step reports as a TSV, for the QC row below: ptabler cannot read the JSON
+	// ones. Must precede the positional args.
+	analyzeBuilder = analyzeBuilder.arg("--reports-table").arg("out.reports.tsv")
+	analyzeBuilder = analyzeBuilder.
+		arg("input.mic").
+		arg("out")
+
+	// Materialize the parent reference: pasted FASTA -> file; uploaded handle -> add.
+	if !is_undefined(parentFastaStr) {
+		analyzeBuilder = analyzeBuilder.writeFile("parents.fa", parentFastaStr)
+	} else {
+		analyzeBuilder = analyzeBuilder.addFile("parents.fa", parentFile)
+	}
+	if !is_undefined(parentRegionsJson) {
+		analyzeBuilder = analyzeBuilder.writeFile("parents.regions.json", parentRegionsJson)
+	} else if !is_undefined(parentRegionsFile) {
+		analyzeBuilder = analyzeBuilder.addFile("parents.regions.json", parentRegionsFile)
+	}
+	if !is_undefined(knownNtFile) {
+		analyzeBuilder = analyzeBuilder.addFile("known_nt.tsv", knownNtFile)
+	}
+	if !is_undefined(knownAaFile) {
+		analyzeBuilder = analyzeBuilder.addFile("known_aa.tsv", knownAaFile)
+	}
+
+	analyzeBuilder = analyzeBuilder.
+		addFile("input.mic", analyzeMic).
+		saveFile("out.variants.tsv").
+		saveFile("out.aa-variants.tsv").
+		saveFile("out.aa-state-matrix.tsv").
+		saveFile("out.qc.json").
+		saveFile("out.params.json").
+		saveFile("out.reports.tsv").
+		// Parent tables. Parent-derived, so identical in every sample — deduped cross-sample in
+		// aggregate-parent-tables.
+		saveFile("out.aa-parent-residues.tsv").
+		saveFile("out.parents.tsv")
+	if exportNt {
+		analyzeBuilder = analyzeBuilder.
+			saveFile("out.nt-state-matrix.tsv").
+			saveFile("out.nt-parent-residues.tsv")
+	}
+	if emitRegionAnnotation {
+		analyzeBuilder = analyzeBuilder.saveFile("out.region-annotation.tsv")
+	}
+
+	// Per-step reports (json + txt). analyze writes one pair per pipeline stage;
+	// `assign` is produced only when a known set is supplied.
+	reportSteps := ["align", "assemble", "call-mutations"]
+	if !is_undefined(knownNtFile) || !is_undefined(knownAaFile) {
+		reportSteps = append(reportSteps, "assign")
+	}
+	for step in reportSteps {
+		analyzeBuilder = analyzeBuilder.saveFile("out." + step + ".report.json")
+	}
+
+	// Designed known-set export (full designed set + nt→aa grouping). Written by
+	// analyze when an nt known set is supplied; the block-side keys are derived by
+	// hashing the sequences. Powers the knownAaToNt linker, declared convergence,
+	// and the unmatched-designed listing.
+	if !is_undefined(knownNtFile) {
+		analyzeBuilder = analyzeBuilder.
+			saveFile("out.known-nt.tsv").
+			saveFile("out.known-aa.tsv")
+	}
+
+	// cache() retains the result; without it there is nothing for a rerun to match.
+	analyzeCmd := analyzeBuilder.cache(48 * times.hour).run()
+
+	// Per-sample reports ResourceMap keyed [step, format]; processColumn prepends
+	// sampleId -> [sampleId, step, format]. Feeds the sample report panel + the
+	// Main-page Alignments cell (align/json).
+	reportsMap := pcolumn.resourceMapBuilder(2)
+	for step in reportSteps {
+		reportsMap.add([step, "json"], analyzeCmd.getFile("out." + step + ".report.json"))
+	}
+	if hasUmi {
+		reportsMap.add(["refine-tags", "json"], inputs.refineReportJson)
+		reportsMap.add(["consensus", "json"], inputs.consensusReportJson)
+	}
+
+	// --- Per-sample tables (ptabler) --------------------------------------
+	// One pt workflow produces the nt/aa per-sample abundance (keyed by mitool's
+	// content-hash variantKey / aaVariantKey) and the per-sample QC row.
+	// Left unsized on purpose: pt sizes CPU/RAM from input volume when neither is
+	// set. Under exportOnlyKnown this workflow also joins the per-sample state
+	// matrices (one row per variant per position), so a fixed budget under-sizes it
+	// on large repertoires. See aggregate-state-matrix for the full rationale.
+	ptWf := pt.workflow()
+
+	// Abundance. variants.tsv is already ~one row per variantKey; group
+	// defensively to fold the rare same-sequence/two-parent duplicate, and sum nt
+	// members into each aa variant. The aa key is aliased to "variantKey" so both
+	// levels share the variant-axis column name.
+	vAbund := ptWf.frame({
+		file: analyzeCmd.getFile("out.variants.tsv"),
+		xsvType: "tsv"
+	}, { id: "variantsAbund" })
+
+	// Content-hash + non-empty helpers, reused by the export-only-matched filter
+	// here and the known-level abundance / convergence computations below.
+	b6SeqHash := func(col) {
+		return pt.col(col).hash("sha256", "base64_alphanumeric", 120)
+	}
+	b6NonEmpty := func(col) {
+		return pt.col(col).cast("String").fillNull("").strLenChars().gt(pt.lit(0))
+	}
+
+	// Export-only-matched: the abundance parquets feed the exported variant
+	// repertoire (per-sample abundance columns + the cross-sample properties
+	// totals). When the filter is on, restrict them per level — nt keeps
+	// assignStatus == ASSIGNED (empty when no nt known set, so the level has no
+	// match signal), aa keeps variants whose aaVariantKey carries a knownAaKey.
+	// readCount/readFraction are unchanged (fraction stays relative to ALL reads);
+	// unmatched rows are simply dropped. Matched aa keys are reused below for the
+	// state matrix filter.
+	hasNtKnown := !is_undefined(knownNtFile)
+	matchedAaKeys := ptWf.frame({
+		file: analyzeCmd.getFile("out.aa-variants.tsv"),
+		xsvType: "tsv"
+	}, { id: "matchedAaKeys" }).
+		filter(b6NonEmpty("knownAaKey")).
+		groupBy("aaVariantKey").agg(pt.col("aaVariantKey").count().alias("_n")).
+		select(pt.col("aaVariantKey"))
+
+	// mitool's TSV column is `moleculeCount`; the PColumn is `uniqueMoleculeCount`.
+	//
+	// The molecule fraction is taken against the sample's whole repertoire, matching
+	// mitool's `readFraction`. The total is broadcast onto every row here, BEFORE the
+	// export filter and before the aa-level scope narrows: dividing by a window sum
+	// after either would normalise against the surviving subset and inflate the
+	// fractions, leaving them on a different denominator from `readFraction` and the QC
+	// molecule fractions.
+	vAbundF := vAbund
+	if hasUmi {
+		vAbundF = vAbund.withColumns(
+			pt.col("moleculeCount").cast("Long").sum().alias("_repertoireMolecules")
+		)
+	}
+	abundAggs := func() {
+		aggs := [
+			pt.col("readCount").cast("Long").sum().alias("readCount"),
+			pt.col("readFraction").cast("Double").sum().alias("readFraction")
+		]
+		if hasUmi {
+			aggs = append(aggs,
+				pt.col("moleculeCount").cast("Long").sum().alias("uniqueMoleculeCount"),
+				pt.col("_repertoireMolecules").first().alias("_repertoireMolecules")
+			)
+		}
+		return aggs
+	}
+	withMoleculeFraction := func(df) {
+		if !hasUmi {
+			return df
+		}
+		return df.withColumns(
+			pt.col("uniqueMoleculeCount").cast("Double").truediv(
+				pt.col("_repertoireMolecules").cast("Double")
+			).alias("uniqueMoleculeFraction")
+		)
+	}
+
+	knownAbundAggs := func() {
+		aggs := [
+			pt.col("readCount").cast("Long").sum().alias("knownVariantReadCount"),
+			pt.col("readFraction").cast("Double").sum().alias("knownVariantReadFraction")
+		]
+		if hasUmi {
+			aggs = append(aggs,
+				pt.col("moleculeCount").cast("Long").sum().alias("knownVariantMoleculeCount"),
+				pt.col("_repertoireMolecules").first().alias("_repertoireMolecules")
+			)
+		}
+		return aggs
+	}
+	// The fraction is derived after the group-by, never inside it: an aggregate result
+	// accepts `alias` only, so casting or dividing one is not expressible.
+	withKnownMoleculeFraction := func(df) {
+		if !hasUmi {
+			return df
+		}
+		return df.withColumns(
+			pt.col("knownVariantMoleculeCount").cast("Double").truediv(
+				pt.col("_repertoireMolecules").cast("Double")
+			).alias("knownVariantMoleculeFraction")
+		).select(
+			pt.col("knownKey"),
+			pt.col("knownVariantReadCount"),
+			pt.col("knownVariantReadFraction"),
+			pt.col("knownVariantMoleculeCount"),
+			pt.col("knownVariantMoleculeFraction")
+		)
+	}
+
+	ntAbundSrc := vAbundF
+	if exportOnlyKnown {
+		ntAbundSrc = hasNtKnown ? vAbundF.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")) : vAbundF.filter(pt.lit(false))
+	}
+	ntAbundSelect := [
+		pt.col("variantKey"),
+		pt.col("readCount"),
+		pt.col("readFraction")
+	]
+	if hasUmi {
+		ntAbundSelect = append(ntAbundSelect, pt.col("uniqueMoleculeCount"), pt.col("uniqueMoleculeFraction"))
+	}
+	withMoleculeFraction(
+		ntAbundSrc.groupBy("variantKey").agg(abundAggs()...)
+	).
+		select(ntAbundSelect...).
+		sort(["variantKey"]).
+		save("ntAbundance.parquet")
+
+	aaAbundSrc := vAbundF.filter(b6NonEmpty("aaVariantKey"))
+	if exportOnlyKnown {
+		aaAbundSrc = aaAbundSrc.join(matchedAaKeys, { how: "inner", on: ["aaVariantKey"] })
+	}
+	aaAbundSelect := [
+		pt.col("aaVariantKey").alias("variantKey"),
+		pt.col("readCount"),
+		pt.col("readFraction")
+	]
+	if hasUmi {
+		aaAbundSelect = append(aaAbundSelect, pt.col("uniqueMoleculeCount"), pt.col("uniqueMoleculeFraction"))
+	}
+	withMoleculeFraction(
+		aaAbundSrc.groupBy("aaVariantKey").agg(abundAggs()...)
+	).
+		select(aaAbundSelect...).
+		sort(["variantKey"]).
+		save("aaAbundance.parquet")
+
+	// --- known-level abundance + synonymous spread (per sample) -------------
+	// Always emitted (empty when nothing is assigned); main exposes them only
+	// when a known set was supplied. knownVariantKey = hash(matched sequence).
+	// (b6SeqHash / b6NonEmpty are defined above, reused by the export filter.)
+
+	// nt known × this sample: reads summed over assigned nt variants per known nt seq.
+	withKnownMoleculeFraction(
+		vAbundF.
+			filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
+			withColumns(b6SeqHash("ntSequence").alias("knownKey")).
+			groupBy("knownKey").agg(knownAbundAggs()...)
+	).sort(["knownKey"]).save("knownNtAbundance.parquet")
+
+	// aa known × this sample: reads of the nt members of each assigned aa variant,
+	// keyed by hash(aa known seq).
+	aaForKnown := ptWf.frame({
+		file: analyzeCmd.getFile("out.aa-variants.tsv"),
+		xsvType: "tsv"
+	}, { id: "aaForKnown" })
+	aaKnownSeq := aaForKnown.
+		filter(b6NonEmpty("knownAaKey")).
+		groupBy("aaVariantKey").agg(pt.col("aaSequence").first().alias("aaSequence"))
+	withKnownMoleculeFraction(
+		vAbundF.
+			filter(b6NonEmpty("aaVariantKey")).
+			join(aaKnownSeq, { how: "inner", on: ["aaVariantKey"] }).
+			withColumns(b6SeqHash("aaSequence").alias("knownKey")).
+			groupBy("knownKey").agg(knownAbundAggs()...)
+	).sort(["knownKey"]).save("knownAaAbundance.parquet")
+
+	// declared-member synonymous spread: per known-aa entity, the
+	// SD + CV of its DESIGNED nt members' per-sample fractions, seeding members
+	// with zero reads this sample at fraction 0 (the whole point of "declared" vs
+	// "observed"). Keyed by knownVariantKey(aa) = hash(designed aaSequence). Only
+	// meaningful with an nt known set; empty (right schema) otherwise.
+	if !is_undefined(knownNtFile) {
+		// This sample's designed members: each designed nt → its aa group, re-keyed
+		// with the block hash so it joins the rest of the known overlay.
+		convNt := ptWf.frame({ file: analyzeCmd.getFile("out.known-nt.tsv"), xsvType: "tsv" }, { id: "convNt" }).
+			select(pt.col("ntSequence"), pt.col("knownAaKey"))
+		convAa := ptWf.frame({ file: analyzeCmd.getFile("out.known-aa.tsv"), xsvType: "tsv" }, { id: "convAa" }).
+			select(pt.col("knownAaId").alias("knownAaKey"), pt.col("aaSequence"))
+		convMembers := convNt.
+			join(convAa, { how: "inner", on: ["knownAaKey"] }).
+			withColumns(
+				b6SeqHash("ntSequence").alias("knownKeyNt"),
+				b6SeqHash("aaSequence").alias("knownKeyAa")
+			).
+			groupBy("knownKeyAa", "knownKeyNt").
+			agg(pt.col("knownKeyAa").count().alias("_n")).
+			select(pt.col("knownKeyAa"), pt.col("knownKeyNt"))
+		// This sample's per-known-nt fraction (assigned only; unobserved → 0 via the join).
+		convFrac := vAbund.
+			filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
+			withColumns(b6SeqHash("ntSequence").alias("knownKeyNt")).
+			groupBy("knownKeyNt").
+			agg(pt.col("readFraction").cast("Double").sum().alias("memberFrac"))
+		convMembers.
+			join(convFrac, { how: "left", on: ["knownKeyNt"] }).
+			withColumns(pt.col("memberFrac").fillNull(0.0).alias("memberFrac")).
+			groupBy("knownKeyAa").agg(
+				pt.col("memberFrac").std().alias("stdDev"),
+				pt.col("memberFrac").mean().alias("meanFrac")
+			).
+			withColumns(
+				pt.when(pt.col("meanFrac").gt(pt.lit(0.0))).
+					then(pt.col("stdDev").fillNull(0.0).truediv(pt.col("meanFrac"))).
+					otherwise(pt.lit(0.0)).alias("cv")
+			).
+			select(
+				pt.col("knownKeyAa").alias("knownKey"),
+				pt.col("stdDev").fillNull(0.0).alias("stdDev"),
+				pt.col("cv")
+			).
+			sort(["knownKey"]).save("aaConvergence.parquet")
+	} else {
+		vAbund.filter(pt.lit(false)).select(
+			b6SeqHash("ntSequence").alias("knownKey"),
+			pt.col("readFraction").cast("Double").alias("stdDev"),
+			pt.col("readFraction").cast("Double").alias("cv")
+		).save("aaConvergence.parquet")
+	}
+
+	// Empty placeholders for the designed-export outputs when no nt known set was
+	// supplied. They must carry the SAME headers as the real mitool exports (TSV,
+	// 0 rows) because aggregate-known runs for ANY known set (incl. aa-only) and
+	// reads them — a schemaless/parquet placeholder would break the TSV read.
+	vAbund.filter(pt.lit(false)).select(
+		pt.col("variantKey").cast("String").alias("knownNtId"),
+		pt.col("ntSequence").cast("String").alias("ntSequence"),
+		pt.col("variantKey").cast("String").alias("knownAaKey")
+	).save("emptyKnownDesignedNt.tsv", { xsvType: "tsv" })
+	vAbund.filter(pt.lit(false)).select(
+		pt.col("variantKey").cast("String").alias("knownAaId"),
+		pt.col("variantKey").cast("String").alias("aaSequence")
+	).save("emptyKnownDesignedAa.tsv", { xsvType: "tsv" })
+
+	// nt parent-residue placeholder (right header, 0 rows): mitool writes that table only
+	// alongside the nt matrix, but the output must always be present.
+	if !exportNt {
+		vAbund.filter(pt.lit(false)).select(
+			pt.col("variantKey").cast("String").alias("parentId"),
+			pt.col("variantKey").cast("String").alias("position"),
+			pt.col("variantKey").cast("String").alias("residue")
+		).save("emptyNtParentResidues.tsv", { xsvType: "tsv" })
+	}
+
+	// Region-annotation placeholder (right header, 0 rows) for runs without
+	// regions, so the per-sample output is always present.
+	if !emitRegionAnnotation {
+		vAbund.filter(pt.lit(false)).select(
+			pt.col("variantKey").cast("String").alias("parentId"),
+			pt.col("variantKey").cast("String").alias("position"),
+			pt.col("variantKey").cast("String").alias("region")
+		).save("emptyRegionAnnotation.tsv", { xsvType: "tsv" })
+	}
+
+	// --- Per-sample QC row -------------------------------------------------
+	// Recomputes the scalar fields of RepertoireQc.Report from the raw analyze
+	// TSVs (qc.json itself is nested JSON, not directly importable). ptabler
+	// infers column types from the TSV (e.g. frameShift -> bool), so every
+	// column touched here is cast explicitly before comparison/aggregation.
+	vdf := ptWf.frame({
+		file: analyzeCmd.getFile("out.variants.tsv"),
+		xsvType: "tsv"
+	}, { id: "variantsRaw" })
+	adf := ptWf.frame({
+		file: analyzeCmd.getFile("out.aa-variants.tsv"),
+		xsvType: "tsv"
+	}, { id: "aaVariantsRaw" })
+
+	fs := pt.col("frameShift").cast("String").strToUpper().eq("TRUE")
+	aae := pt.col("aaMutationsExceeded").cast("String").strToUpper().eq("TRUE")
+	isAssigned := pt.col("assignStatus").cast("String").eq("ASSIGNED")
+	isUnassigned := pt.col("assignStatus").cast("String").eq("UNASSIGNED")
+	isAmbiguous := pt.col("assignStatus").cast("String").eq("AMBIGUOUS")
+	reads := pt.col("readCount").cast("Long")
+	mols := pt.col("moleculeCount").cast("Long")
+	countWhen := func(cond) {
+		return pt.when(cond).then(pt.lit(1)).otherwise(pt.lit(0)).sum()
+	}
+	readsWhen := func(cond) {
+		return pt.when(cond).then(reads).otherwise(pt.lit(0)).sum()
+	}
+	molsWhen := func(cond) {
+		return pt.when(cond).then(mols).otherwise(pt.lit(0)).sum()
+	}
+
+	vSelect := [
+		pt.lit(sampleId).alias("sampleId"),
+		pt.col("variantKey").count().alias("ntVariants"),
+		reads.sum().alias("totalReads"),
+		countWhen(fs).alias("frameShiftVariants"),
+		readsWhen(fs).alias("frameShiftReads"),
+		countWhen(aae).alias("aaMutationsExceededVariants"),
+		readsWhen(aae).alias("aaMutationsExceededReads"),
+		countWhen(isAssigned).alias("assignedVariants"),
+		readsWhen(isAssigned).alias("assignedReads"),
+		countWhen(isUnassigned).alias("unassignedVariants"),
+		readsWhen(isUnassigned).alias("unassignedReads"),
+		countWhen(isAmbiguous).alias("ambiguousVariants"),
+		readsWhen(isAmbiguous).alias("ambiguousReads")
+	]
+	// Gated on hasUmi, like the abundance columns above.
+	if hasUmi {
+		vSelect = append(vSelect,
+			mols.sum().alias("totalMolecules"),
+			molsWhen(fs).alias("frameShiftMolecules"),
+			molsWhen(aae).alias("aaMutationsExceededMolecules"),
+			molsWhen(isAssigned).alias("assignedMolecules"),
+			molsWhen(isUnassigned).alias("unassignedMolecules"),
+			molsWhen(isAmbiguous).alias("ambiguousMolecules")
+		)
+	}
+	vStats := vdf.select(vSelect...)
+	aaStats := adf.select(
+		pt.lit(sampleId).alias("sampleId"),
+		pt.col("aaVariantKey").count().alias("aaVariants")
+	)
+
+	// Per-sample mutation-load histogram
+	histogram := func(df, keyCol) {
+		perVariant := [
+			pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
+			pt.col("readCount").cast("Long").sum().alias("readCount")
+		]
+		perBin := [
+			pt.col(keyCol).count().alias("variantCount"),
+			pt.col("readCount").cast("Long").sum().alias("readCount")
+		]
+		outCols := [pt.col("mutationCount"), pt.col("variantCount"), pt.col("readCount")]
+		if hasUmi {
+			perVariant = append(perVariant,
+				pt.col("moleculeCount").cast("Long").sum().alias("moleculeCount"))
+			perBin = append(perBin,
+				pt.col("moleculeCount").cast("Long").sum().alias("moleculeCount"))
+			outCols = append(outCols, pt.col("moleculeCount"))
+		}
+		return df.
+			groupBy(keyCol).agg(perVariant...).
+			groupBy("mutationCount").agg(perBin...).
+			select(outCols...).
+			sort(["mutationCount"])
+	}
+	histogram(vdf, "variantKey").save("ntMutationHistogram.parquet")
+
+	// The aa mutation count lives in aa-variants.tsv; the reads come from its nt
+	// members in variants.tsv.
+	aaMutations := adf.
+		groupBy("aaVariantKey").
+		agg(pt.col("mutationCount").cast("Int").first().alias("mutationCount"))
+	// Every abundance column histogram() reads must survive this roll-up.
+	aaMembers := [pt.col("readCount").cast("Long").sum().alias("readCount")]
+	if hasUmi {
+		aaMembers = append(aaMembers,
+			pt.col("moleculeCount").cast("Long").sum().alias("moleculeCount"))
+	}
+	histogram(
+		vdf.
+			filter(b6NonEmpty("aaVariantKey")).
+			groupBy("aaVariantKey").agg(aaMembers...).
+			join(aaMutations, { how: "inner", on: ["aaVariantKey"] }),
+		"aaVariantKey"
+	).save("aaMutationHistogram.parquet")
+
+	fracOf := func(denomCol) {
+		return func(numCol) {
+			return pt.when(pt.col(denomCol).gt(pt.lit(0))).then(
+				pt.col(numCol).cast("Double").truediv(pt.col(denomCol).cast("Double"))
+			).otherwise(pt.lit(0.0))
+		}
+	}
+	frac := fracOf("totalReads")
+	molFrac := fracOf("totalMolecules")
+
+	qcCols := [
+		frac("frameShiftReads").alias("frameShiftReadFraction"),
+		frac("aaMutationsExceededReads").alias("aaMutationsExceededReadFraction"),
+		frac("assignedReads").alias("assignedReadFraction"),
+		frac("unassignedReads").alias("unassignedReadFraction"),
+		frac("ambiguousReads").alias("ambiguousReadFraction")
+	]
+	if hasUmi {
+		qcCols = append(qcCols,
+			molFrac("frameShiftMolecules").alias("frameShiftMoleculeFraction"),
+			molFrac("aaMutationsExceededMolecules").alias("aaMutationsExceededMoleculeFraction"),
+			molFrac("assignedMolecules").alias("assignedMoleculeFraction"),
+			molFrac("unassignedMolecules").alias("unassignedMoleculeFraction"),
+			molFrac("ambiguousMolecules").alias("ambiguousMoleculeFraction"),
+			// Reads over molecules: a ratio, not a fraction.
+			molFrac("totalReads").alias("readsPerMolecule")
+		)
+	}
+	// Metrics whose losses never reach the variants TSV, because the gate that removed them
+	// acts before the variant is written. Both come from the reports table.
+	//
+	//  - the indel gate, at alignment: a rejected read never becomes a variant at all.
+	//  - the min-variant-reads gate, at assembly: the variant is assembled, then discarded,
+	//    taking its reads with it. Without these columns a run that drops two thirds of its
+	//    reads here looks identical to one that drops none — every other QC number is
+	//    computed over the variants that survived.
+	//
+	// An unfired reason leaves the cell empty, which reads as null. Each fraction needs a
+	// PRE-gate denominator; the QC row's own totalReads is post-gate and would put both over 1.
+	// The indel fraction divides by align.totalReads (fragments processed). The low-coverage
+	// fraction divides by the reads the gate itself ruled on, readsInVariants + lowCoverageReads,
+	// which is the only pre-gate read count the reports table carries in weighted units —
+	// align.aligned counts fragments, so it is wrong on a UMI run where one fragment carries
+	// many reads. When minVariantQuality also fires it takes reads out of that denominator,
+	// which mitool does not report, so the fraction reads very slightly high there.
+	rdf := ptWf.frame({
+		file: analyzeCmd.getFile("out.reports.tsv"),
+		xsvType: "tsv"
+	}, { id: "reportsTable", inferSchema: false }).
+		select(
+			pt.lit(sampleId).alias("sampleId"),
+			pt.col("align.notAligned.TooManyIndels").cast("Long").fillNull(pt.lit(0)).alias("ntIndelReads"),
+			pt.col("align.totalReads").cast("Long").alias("_alignTotalReads"),
+			pt.col("assemble.lowCoverageVariants").cast("Long").fillNull(pt.lit(0)).alias("lowCoverageVariants"),
+			pt.col("assemble.lowCoverageReads").cast("Long").fillNull(pt.lit(0)).alias("lowCoverageReads"),
+			pt.col("assemble.readsInVariants").cast("Long").fillNull(pt.lit(0)).alias("_readsInVariants")
+		).
+		withColumns(
+			pt.when(pt.col("_alignTotalReads").gt(pt.lit(0))).then(
+				pt.col("ntIndelReads").cast("Double").truediv(pt.col("_alignTotalReads").cast("Double"))
+			).otherwise(pt.lit(0.0)).alias("ntIndelReadFraction"),
+			pt.col("_readsInVariants").plus(pt.col("lowCoverageReads")).alias("_assembleReads")
+		).
+		withColumns(
+			pt.when(pt.col("_assembleReads").gt(pt.lit(0))).then(
+				pt.col("lowCoverageReads").cast("Double").truediv(pt.col("_assembleReads").cast("Double"))
+			).otherwise(pt.lit(0.0)).alias("lowCoverageReadFraction")
+		).
+		select(
+			pt.col("sampleId"), pt.col("ntIndelReads"), pt.col("ntIndelReadFraction"),
+			pt.col("lowCoverageVariants"), pt.col("lowCoverageReads"), pt.col("lowCoverageReadFraction")
+		)
+
+	vStats.join(aaStats, { how: "left", on: ["sampleId"] }).
+		join(rdf, { how: "left", on: ["sampleId"] }).
+		withColumns(qcCols...).
+		save("qcRow.parquet")
+
+	// --- Per-sample state-matrix chunking (its own pt workflow) -------------
+	// Separate from the table workflow above: the matrix is dense — one row per
+	// variant per parent position — so on a large repertoire it dwarfs every other
+	// table and would size the whole process. Its own workflow also lets it be
+	// skipped outright. Chunks slice the position axis so the cross-sample dedup
+	// runs as that many independent jobs. See state-matrix-chunks.
+	smWf := pt.workflow()
+
+	// analyze always writes the aa matrix, so this frame is the source of the 0-row
+	// placeholders too: every chunk output must exist whether or not a matrix ran.
+	aaSmSrc := smWf.frame({
+		file: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
+		xsvType: "tsv"
+	}, { id: "aaSm", inferSchema: false })
+
+	smCols := func(f) {
+		return f.select(pt.col("variantKey"), pt.col("parentId"), pt.col("position"), pt.col("state"))
+	}
+	emptySm := smCols(aaSmSrc).filter(pt.lit(false))
+
+	// The chunk key is materialized once, then each sink selects its own value.
+	// `filter` is non-mutating, so every sink reads the same projected frame.
+	chunkStateMatrix := func(df, prefix) {
+		projected := smCols(df).withColumns(
+			smChunks.chunkKeyExpr("position").alias("__chunk")
+		)
+		chunkKeys := smChunks.keys()
+		for idx, key in chunkKeys {
+			projected.filter(smChunks.keyPredicates("__chunk", idx)...).
+				withoutColumns("__chunk").
+				save(smChunks.fileName(prefix, key), { xsvType: "tsv" })
+		}
+	}
+
+	if exportStateMatrix {
+		// Export-only-matched: the matrix is variant-keyed, so it is restricted to
+		// matched variants too. aa keeps variantKeys (== aaVariantKey) with a
+		// knownAaKey. Recomputed here rather than shared — a frame belongs to one
+		// workflow.
+		aaSmDf := aaSmSrc
+		if exportOnlyKnown {
+			smMatchedAa := smWf.frame({
+				file: analyzeCmd.getFile("out.aa-variants.tsv"),
+				xsvType: "tsv"
+			}, { id: "smMatchedAa" }).
+				filter(b6NonEmpty("knownAaKey")).
+				groupBy("aaVariantKey").agg(pt.col("aaVariantKey").count().alias("_n")).
+				select(pt.col("aaVariantKey").alias("variantKey"))
+			aaSmDf = aaSmDf.join(smMatchedAa, { how: "inner", on: ["variantKey"] })
+		}
+		chunkStateMatrix(aaSmDf, "aa")
+	} else {
+		chunkStateMatrix(emptySm, "aa")
+	}
+
+	// nt: real matrix only when both the nt level and the matrix are exported.
+	if exportStateMatrix && exportNt {
+		ntSmDf := smWf.frame({
+			file: analyzeCmd.getFile("out.nt-state-matrix.tsv"),
+			xsvType: "tsv"
+		}, { id: "ntSm", inferSchema: false })
+		if exportOnlyKnown {
+			ntMatchKeys := emptySm.select(pt.col("variantKey"))
+			if hasNtKnown {
+				ntMatchKeys = smWf.frame({
+					file: analyzeCmd.getFile("out.variants.tsv"),
+					xsvType: "tsv"
+				}, { id: "smNtVars" }).
+					filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
+					groupBy("variantKey").agg(pt.col("variantKey").count().alias("_n")).
+					select(pt.col("variantKey"))
+			}
+			ntSmDf = ntSmDf.join(ntMatchKeys, { how: "inner", on: ["variantKey"] })
+		}
+		chunkStateMatrix(ntSmDf, "nt")
+	} else {
+		chunkStateMatrix(emptySm, "nt")
+	}
+
+	smResult := smWf.run()
+
+	ptResult := ptWf.run()
+
+
+
+
+	result := {
+		// The caller assembles the per-step log map; this is just the analyze half.
+		analyzeLogStream: analyzeCmd.getStdoutStream(),
+		variantsTsv: analyzeCmd.getFile("out.variants.tsv"),
+		aaVariantsTsv: analyzeCmd.getFile("out.aa-variants.tsv"),
+		regionAnnotationTsv: emitRegionAnnotation ? analyzeCmd.getFile("out.region-annotation.tsv") : ptResult.getFile("emptyRegionAnnotation.tsv"),
+		qcJson: analyzeCmd.getFile("out.qc.json"),
+		reports: reportsMap.build(),
+		paramsJson: analyzeCmd.getFile("out.params.json"),
+		ntAbundance: ptResult.getFile("ntAbundance.parquet"),
+		aaAbundance: ptResult.getFile("aaAbundance.parquet"),
+		knownNtAbundance: ptResult.getFile("knownNtAbundance.parquet"),
+		knownAaAbundance: ptResult.getFile("knownAaAbundance.parquet"),
+		aaConvergence: ptResult.getFile("aaConvergence.parquet"),
+		// Designed known-set export (raw mitool TSVs) when an nt known set ran; an
+		// empty 0-row placeholder (matching headers) otherwise. The placeholder IS
+		// read by aggregate-known in the aa-only case (aggregate-known runs for any
+		// known set); it is genuinely unused only when no known set is supplied at
+		// all — which is exactly why it must carry the real headers (see the
+		// placeholder section above).
+		knownDesignedNt: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-nt.tsv") : ptResult.getFile("emptyKnownDesignedNt.tsv"),
+		knownDesignedAa: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-aa.tsv") : ptResult.getFile("emptyKnownDesignedAa.tsv"),
+		aaParentResiduesTsv: analyzeCmd.getFile("out.aa-parent-residues.tsv"),
+		ntParentResiduesTsv: exportNt ? analyzeCmd.getFile("out.nt-parent-residues.tsv") : ptResult.getFile("emptyNtParentResidues.tsv"),
+		parentsTsv: analyzeCmd.getFile("out.parents.tsv"),
+		qcRow: ptResult.getFile("qcRow.parquet"),
+		// No sampleId column — processColumn supplies the sample key from the partition.
+		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),
+		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet")
+	}
+
+	// One File output per level per chunk key, so each dedup job gets its own slice.
+	for chunkKey in smChunks.keys() {
+		result[smChunks.outputName("aa", chunkKey)] = smResult.getFile(smChunks.fileName("aa", chunkKey))
+		result[smChunks.outputName("nt", chunkKey)] = smResult.getFile(smChunks.fileName("nt", chunkKey))
+	}
+
+	return result
+})

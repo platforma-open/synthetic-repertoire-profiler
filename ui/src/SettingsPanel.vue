@@ -502,6 +502,21 @@ ACGTACGT..."
       </PlTooltip>
     </PlCheckbox>
 
+    <PlCheckbox v-model="app.model.data.exportStateMatrix">
+      Export state matrix
+      <PlTooltip class="info" position="top">
+        <template #tooltip>
+          On by default. Records which residue each variant carries at every position of the parent
+          sequence. This is what the Residue Composition page draws — use it to find positions where
+          a residue is over- or under-represented, for example a synthesis artifact or a site under
+          selection. It holds one entry per variant per position, so it grows quickly with library
+          size: on very large libraries it becomes the slowest part of the run and can stop it
+          finishing. Turning it off also removes the Residue Composition page. Variant tables,
+          abundances and known-variant results are unaffected.
+        </template>
+      </PlTooltip>
+    </PlCheckbox>
+
     <PlSectionSeparator>Quality Filter</PlSectionSeparator>
     <PlRow>
       <PlNumberField
