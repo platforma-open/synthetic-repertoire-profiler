@@ -723,17 +723,30 @@ self.body(func(inputs) {
 	// runs as that many independent jobs. See state-matrix-chunks.
 	smWf := pt.workflow()
 
-	// analyze always writes the aa matrix, so this frame is the source of the 0-row
-	// placeholders too: every chunk output must exist whether or not a matrix ran.
-	aaSmSrc := smWf.frame({
-		file: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
-		xsvType: "tsv"
-	}, { id: "aaSm", inferSchema: false })
-
 	smCols := func(f) {
 		return f.select(pt.col("variantKey"), pt.col("parentId"), pt.col("position"), pt.col("state"))
 	}
-	emptySm := smCols(aaSmSrc).filter(pt.lit(false))
+
+	// Every chunk output must exist whether or not a matrix ran, so the skipped ones
+	// get a 0-row frame. It is built from the tiny parents table, never from the
+	// matrix: a pt frame stages its file into the workdir, so sourcing the
+	// placeholders from the matrix would copy it even when nothing reads it. Built on
+	// demand, so a run that needs no placeholder does not stage anything extra.
+	emptySm := undefined
+	emptySmFrame := func() {
+		if is_undefined(emptySm) {
+			emptySm = smWf.frame({
+				file: analyzeCmd.getFile("out.parents.tsv"),
+				xsvType: "tsv"
+			}, { id: "smEmpty" }).filter(pt.lit(false)).select(
+				pt.col("parentId").cast("String").alias("variantKey"),
+				pt.col("parentId").cast("String").alias("parentId"),
+				pt.col("parentId").cast("String").alias("position"),
+				pt.col("parentId").cast("String").alias("state")
+			)
+		}
+		return emptySm
+	}
 
 	// The chunk key is materialized once, then each sink selects its own value.
 	// `filter` is non-mutating, so every sink reads the same projected frame.
@@ -754,7 +767,10 @@ self.body(func(inputs) {
 		// matched variants too. aa keeps variantKeys (== aaVariantKey) with a
 		// knownAaKey. Recomputed here rather than shared — a frame belongs to one
 		// workflow.
-		aaSmDf := aaSmSrc
+		aaSmDf := smWf.frame({
+			file: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
+			xsvType: "tsv"
+		}, { id: "aaSm", inferSchema: false })
 		if exportOnlyKnown {
 			smMatchedAa := smWf.frame({
 				file: analyzeCmd.getFile("out.aa-variants.tsv"),
@@ -767,7 +783,7 @@ self.body(func(inputs) {
 		}
 		chunkStateMatrix(aaSmDf, "aa")
 	} else {
-		chunkStateMatrix(emptySm, "aa")
+		chunkStateMatrix(emptySmFrame(), "aa")
 	}
 
 	// nt: real matrix only when both the nt level and the matrix are exported.
@@ -777,7 +793,7 @@ self.body(func(inputs) {
 			xsvType: "tsv"
 		}, { id: "ntSm", inferSchema: false })
 		if exportOnlyKnown {
-			ntMatchKeys := emptySm.select(pt.col("variantKey"))
+			ntMatchKeys := emptySmFrame().select(pt.col("variantKey"))
 			if hasNtKnown {
 				ntMatchKeys = smWf.frame({
 					file: analyzeCmd.getFile("out.variants.tsv"),
@@ -791,7 +807,7 @@ self.body(func(inputs) {
 		}
 		chunkStateMatrix(ntSmDf, "nt")
 	} else {
-		chunkStateMatrix(emptySm, "nt")
+		chunkStateMatrix(emptySmFrame(), "nt")
 	}
 
 	smResult := smWf.run()
