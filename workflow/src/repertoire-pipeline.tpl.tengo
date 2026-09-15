@@ -95,6 +95,8 @@ self.body(func(inputs) {
 	// 20 for minVariantQuality). 0 disables — Phred is never negative.
 	minBaseQuality := params.minBaseQuality
 	minVariantQuality := params.minVariantQuality
+	// Read-coverage gate (undefined = mitool default, which is OFF).
+	minVariantReads := params.minVariantReads
 	minReadsPerConsensus := params.minReadsPerConsensus
 	minUmiQuality := params.minUmiQuality
 	limitInput := params.limitInput
@@ -275,6 +277,9 @@ self.body(func(inputs) {
 	}
 	if !is_undefined(minVariantQuality) {
 		analyzeBuilder = analyzeBuilder.arg("-Massemble.minVariantQuality=" + string(int(minVariantQuality)))
+	}
+	if !is_undefined(minVariantReads) {
+		analyzeBuilder = analyzeBuilder.arg("-Massemble.minVariantReads=" + string(int(minVariantReads)))
 	}
 	if hasParentRegions {
 		analyzeBuilder = analyzeBuilder.arg("--parent-regions").arg("parents.regions.json")
@@ -785,10 +790,23 @@ self.body(func(inputs) {
 			molFrac("totalReads").alias("readsPerMolecule")
 		)
 	}
-	// Reads rejected by the indel gate. Not in the variants TSV — the gate acts before
-	// assembly, so a rejected read never becomes a variant. An unfired reason leaves
-	// the cell empty, which reads as null. The fraction divides by align.totalReads
-	// (fragments processed); the QC row's totalReads would put it over 1.
+	// Metrics whose losses never reach the variants TSV, because the gate that removed them
+	// acts before the variant is written. Both come from the reports table.
+	//
+	//  - the indel gate, at alignment: a rejected read never becomes a variant at all.
+	//  - the min-variant-reads gate, at assembly: the variant is assembled, then discarded,
+	//    taking its reads with it. Without these columns a run that drops two thirds of its
+	//    reads here looks identical to one that drops none — every other QC number is
+	//    computed over the variants that survived.
+	//
+	// An unfired reason leaves the cell empty, which reads as null. Each fraction needs a
+	// PRE-gate denominator; the QC row's own totalReads is post-gate and would put both over 1.
+	// The indel fraction divides by align.totalReads (fragments processed). The low-coverage
+	// fraction divides by the reads the gate itself ruled on, readsInVariants + lowCoverageReads,
+	// which is the only pre-gate read count the reports table carries in weighted units —
+	// align.aligned counts fragments, so it is wrong on a UMI run where one fragment carries
+	// many reads. When minVariantQuality also fires it takes reads out of that denominator,
+	// which mitool does not report, so the fraction reads very slightly high there.
 	rdf := ptWf.frame({
 		file: analyzeCmd.getFile("out.reports.tsv"),
 		xsvType: "tsv"
@@ -796,14 +814,26 @@ self.body(func(inputs) {
 		select(
 			pt.lit(sampleId).alias("sampleId"),
 			pt.col("align.notAligned.TooManyIndels").cast("Long").fillNull(pt.lit(0)).alias("ntIndelReads"),
-			pt.col("align.totalReads").cast("Long").alias("_alignTotalReads")
+			pt.col("align.totalReads").cast("Long").alias("_alignTotalReads"),
+			pt.col("assemble.lowCoverageVariants").cast("Long").fillNull(pt.lit(0)).alias("lowCoverageVariants"),
+			pt.col("assemble.lowCoverageReads").cast("Long").fillNull(pt.lit(0)).alias("lowCoverageReads"),
+			pt.col("assemble.readsInVariants").cast("Long").fillNull(pt.lit(0)).alias("_readsInVariants")
 		).
 		withColumns(
 			pt.when(pt.col("_alignTotalReads").gt(pt.lit(0))).then(
 				pt.col("ntIndelReads").cast("Double").truediv(pt.col("_alignTotalReads").cast("Double"))
-			).otherwise(pt.lit(0.0)).alias("ntIndelReadFraction")
+			).otherwise(pt.lit(0.0)).alias("ntIndelReadFraction"),
+			pt.col("_readsInVariants").plus(pt.col("lowCoverageReads")).alias("_assembleReads")
 		).
-		select(pt.col("sampleId"), pt.col("ntIndelReads"), pt.col("ntIndelReadFraction"))
+		withColumns(
+			pt.when(pt.col("_assembleReads").gt(pt.lit(0))).then(
+				pt.col("lowCoverageReads").cast("Double").truediv(pt.col("_assembleReads").cast("Double"))
+			).otherwise(pt.lit(0.0)).alias("lowCoverageReadFraction")
+		).
+		select(
+			pt.col("sampleId"), pt.col("ntIndelReads"), pt.col("ntIndelReadFraction"),
+			pt.col("lowCoverageVariants"), pt.col("lowCoverageReads"), pt.col("lowCoverageReadFraction")
+		)
 
 	vStats.join(aaStats, { how: "left", on: ["sampleId"] }).
 		join(rdf, { how: "left", on: ["sampleId"] }).

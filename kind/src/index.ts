@@ -84,6 +84,7 @@ export type BlockParams = {
   frameShiftAaThreshold?: number;
   minBaseQuality?: number;
   minVariantQuality?: number;
+  minVariantReads?: number;
 
   minReadsPerConsensus?: number;
   minUmiQuality?: number;
@@ -133,6 +134,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     frameShiftAaThreshold,
     minBaseQuality,
     minVariantQuality,
+    minVariantReads,
     minReadsPerConsensus,
     minUmiQuality,
     perProcessMemGB,
@@ -159,6 +161,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     frameShiftAaThreshold: optionalNumber(frameShiftAaThreshold, "frameShiftAaThreshold"),
     minBaseQuality: optionalNumber(minBaseQuality, "minBaseQuality"),
     minVariantQuality: optionalNumber(minVariantQuality, "minVariantQuality"),
+    minVariantReads: optionalNumber(minVariantReads, "minVariantReads"),
 
     minReadsPerConsensus: optionalNumber(minReadsPerConsensus, "minReadsPerConsensus"),
     minUmiQuality: optionalNumber(minUmiQuality, "minUmiQuality"),

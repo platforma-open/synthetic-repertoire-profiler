@@ -540,10 +540,25 @@ ACGTACGT..."
       </PlNumberField>
     </PlRow>
 
+    <PlNumberField
+      v-model="app.model.data.minVariantReads"
+      label="Min variant reads"
+      :min-value="1"
+      :step="1"
+      :clearable="true"
+    >
+      <template #tooltip>
+        Discard a variant supported by fewer than this many reads. This is the direct way to remove
+        the low-count tail of sequencing and PCR errors, where "Min variant quality" reaches it only
+        indirectly. The right value depends on how deeply the sample was sequenced, so check the
+        depth before setting it. Leave empty to keep variants at any read count (default).
+      </template>
+    </PlNumberField>
+
     <PlSectionSeparator>Mutation Filter</PlSectionSeparator>
     <PlNumberField
       v-model="app.model.data.maxMutations"
-      label="Max NT mut count"
+      label="Max NT mutation count"
       :min-value="1"
       :step="1"
       :clearable="true"
@@ -628,3 +643,15 @@ ACGTACGT..."
     </PlNumberField>
   </PlAccordionSection>
 </template>
+
+<style scoped>
+/* PlRow is a bare flexbox and sets no flex on its children, so each field keeps
+   its natural width and a two-field row stops short of the panel edge — out of
+   line with the full-width fields above and below it. Two equal columns fill the
+   row and line every input up on the same right edge. PlRow's own 12px gap is
+   kept; PlGrid would apply 24px. */
+.pl-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+</style>

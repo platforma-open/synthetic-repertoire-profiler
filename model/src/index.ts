@@ -245,6 +245,9 @@ export type BlockData = {
   // minVariantQuality → assemble step (AssembleParams): drop a variant whose
   // aggregated per-position quality dips below this Phred at ANY position.
   minVariantQuality?: number;
+  // minVariantReads → assemble step (AssembleParams): drop a variant supported by
+  // fewer than this many reads. Absent = off, unlike the two gates above.
+  minVariantReads?: number;
 
   // UMI consensus settings, used and required only when the tag pattern carries a UMI.
   minReadsPerConsensus?: number; // consensus -O minRecordsPerConsensus
@@ -320,6 +323,8 @@ export type BlockArgs = {
   // Absent = mitool defaults (5 / 20), which are ON — not off.
   minBaseQuality?: number;
   minVariantQuality?: number;
+  // Read-coverage gate → mitool -Massemble.minVariantReads. Absent = off.
+  minVariantReads?: number;
   perProcessMemGB?: number;
   perProcessCPUs?: number;
   limitInput?: number; // → mitool parse -n. Absent = full run.
@@ -430,6 +435,7 @@ const dataModel = new DataModelBuilder({ kind })
     frameShiftAaThreshold: params?.frameShiftAaThreshold,
     minBaseQuality: params?.minBaseQuality,
     minVariantQuality: params?.minVariantQuality,
+    minVariantReads: params?.minVariantReads,
     minReadsPerConsensus: params?.minReadsPerConsensus ?? UMI_DEFAULTS.minReadsPerConsensus,
     minUmiQuality: params?.minUmiQuality ?? UMI_DEFAULTS.minUmiQuality,
     perProcessMemGB: params?.perProcessMemGB,
@@ -922,6 +928,16 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     checkQuality(minBaseQuality, "Min base quality");
     checkQuality(minVariantQuality, "Min variant quality");
 
+    // Read-coverage gate (Advanced). A count of reads, so a positive integer, and
+    // unlike the two quality gates it is OFF when absent — there is no mitool
+    // default to fall back on. 1 is a no-op rather than a disable.
+    const minVariantReads = data.minVariantReads ?? undefined;
+    if (
+      minVariantReads !== undefined &&
+      (!Number.isInteger(minVariantReads) || minVariantReads < 1)
+    )
+      throw new Error("Min variant reads must be a positive integer.");
+
     if (umi) validateUmiSettings(data);
 
     // Resource overrides: positive when set (empty = workflow defaults).
@@ -1008,6 +1024,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       frameShiftAaThreshold,
       minBaseQuality,
       minVariantQuality,
+      minVariantReads,
       perProcessMemGB: data.perProcessMemGB,
       perProcessCPUs: data.perProcessCPUs,
       limitInput,
@@ -1045,6 +1062,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     frameShiftAaThreshold: data.frameShiftAaThreshold,
     minBaseQuality: data.minBaseQuality,
     minVariantQuality: data.minVariantQuality,
+    minVariantReads: data.minVariantReads,
     minReadsPerConsensus: data.minReadsPerConsensus,
     minUmiQuality: data.minUmiQuality,
     perProcessMemGB: data.perProcessMemGB,
