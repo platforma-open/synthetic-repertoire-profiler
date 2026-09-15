@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.block
 
+## 1.3.1
+
+### Patch Changes
+
+- 5f17180: Performance improvements: Deduplication, threads support, allow to disable state matrix export.
+
 ## 1.3.0
 
 ### Minor Changes

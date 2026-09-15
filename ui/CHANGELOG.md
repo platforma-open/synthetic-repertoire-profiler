@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.ui
 
+## 1.2.13
+
+### Patch Changes
+
+- 5f17180: Performance improvements: Deduplication, threads support, allow to disable state matrix export.
+- Updated dependencies [5f17180]
+  - @platforma-open/milaboratories.synthetic-repertoire-profiler.model@1.2.10
+
 ## 1.2.12
 
 ### Patch Changes
