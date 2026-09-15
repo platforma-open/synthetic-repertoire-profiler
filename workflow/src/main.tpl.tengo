@@ -168,6 +168,9 @@ wf.body(func(args) {
 		// are ON by mitool default, so "absent" means 5 / 20, not off.
 		minBaseQuality: args.minBaseQuality,
 		minVariantQuality: args.minVariantQuality,
+		// Read-coverage gate → the same assemble step (-Massemble.minVariantReads).
+		// This one is off by mitool default, like the mutation filters above.
+		minVariantReads: args.minVariantReads,
 		// Absent on a full run, so removeUndefs keeps pre-preview cache hits.
 		limitInput: args.limitInput
 	}, { removeUndefs: true })
