@@ -16,6 +16,7 @@ columnSpecs := import(":column-specs")
 regionConfig := import(":region-config")
 smChunks := import(":state-matrix-chunks")
 json := import("json")
+times := import("times")
 text := import("text")
 
 prerunTpl := assets.importTemplate(":prerun")
@@ -70,6 +71,9 @@ wf.body(func(args) {
 	// nt keeps assignStatus == ASSIGNED, aa keeps variants carrying a knownAaKey.
 	// A level with no match signal (nt with only an aa set) exports empty.
 	exportOnlyKnown := !is_undefined(args.exportOnlyKnown) && args.exportOnlyKnown
+	// Dense matrix — variants x parentLength. Off skips the per-sample chunking, the
+	// cross-sample dedup, the exported state columns and the Residue Composition page.
+	exportStateMatrix := is_undefined(args.exportStateMatrix) || args.exportStateMatrix
 	// nt has a match signal only when an nt known set was supplied.
 	hasNtKnown := !is_undefined(args.knownNtFileHandle)
 
@@ -141,6 +145,7 @@ wf.body(func(args) {
 		minUmiQuality: args.minUmiQuality,
 		exportNt: exportNt,
 		exportOnlyKnown: exportOnlyKnown,
+		exportStateMatrix: exportStateMatrix,
 		parentFastaStr: parentFastaStr,
 		parentFile: parentFile,
 		parentRegionsJson: parentRegionsJson,
@@ -277,9 +282,7 @@ wf.body(func(args) {
 	}
 
 	targetOutputs := [
-		// Parse output — surfaced for deduplication. mitool parse writes the .mic
-		// in non-deterministic record order, so it must be retained by content
-		// hash to survive reruns without a CID conflict (see repertoire-pipeline).
+		// Parse output. No consumer in the model or UI — removal candidate.
 		fileOutput("parsedMic"),
 		fileOutput("variantsTsv"),
 		fileOutput("aaVariantsTsv"),
@@ -325,6 +328,8 @@ wf.body(func(args) {
 			// Residual group key (== sampleId) flows to the per-sample template so
 			// it can stamp the QC row.
 			passKey: true,
+			// Retains each per-sample iteration so a rerun can recover it.
+			stepCache: 30 * times.minute,
 			traceSteps: [{
 				type: "milaboratories.synthetic-repertoire-profiler",
 				id: blockId,
@@ -413,11 +418,15 @@ wf.body(func(args) {
 			)
 		}
 	}
-	aaStateMatrix := importStateMatrix("aa", aaVariantAxis, "aminoacid", "Position aa")
-	aaStateMatrixCols := aaStateMatrix.cols
+	aaStateMatrix := undefined
+	aaStateMatrixCols := undefined
+	if exportStateMatrix {
+		aaStateMatrix = importStateMatrix("aa", aaVariantAxis, "aminoacid", "Position aa")
+		aaStateMatrixCols = aaStateMatrix.cols
+	}
 	ntStateMatrix := undefined
 	ntStateMatrixCols := undefined
-	if exportNt {
+	if exportStateMatrix && exportNt {
 		ntStateMatrix = importStateMatrix("nt", ntVariantAxis, "nucleotide", "Position nt")
 		ntStateMatrixCols = ntStateMatrix.cols
 	}
@@ -638,11 +647,13 @@ wf.body(func(args) {
 	}
 	// aa state matrix — exported in the variants frame for the companion heat-map
 	// block. No in-block view by design; visualization is the companion block's job.
-	for k, v in aaStateMatrixCols {
-		variantsPfBuilder.add("stateMatrixAa/" + k, aaTrace.inject(v.spec), v.data)
+	if exportStateMatrix {
+		for k, v in aaStateMatrixCols {
+			variantsPfBuilder.add("stateMatrixAa/" + k, aaTrace.inject(v.spec), v.data)
+		}
 	}
 	// nt state matrix — same, only when nt export is enabled.
-	if exportNt {
+	if exportStateMatrix && exportNt {
 		for k, v in ntStateMatrixCols {
 			variantsPfBuilder.add("stateMatrixNt/" + k, ntTrace.inject(v.spec), v.data)
 		}
@@ -748,9 +759,11 @@ wf.body(func(args) {
 			stateHeatmapPfBuilder.add(prefix + "parent/" + k, trace.inject(v.spec), v.data)
 		}
 	}
-	// aa always; nt only when nt export is on (same gating as the rest of the block).
-	addStateHeatmap("aa/", aaStateMatrix.tsv, aaPropsTsv, "aminoacid", "Position aa", aaTrace, aaParentResidueCols)
-	if exportNt {
+	// Reads the aggregated matrix, so it only runs when one was built.
+	if exportStateMatrix {
+		addStateHeatmap("aa/", aaStateMatrix.tsv, aaPropsTsv, "aminoacid", "Position aa", aaTrace, aaParentResidueCols)
+	}
+	if exportStateMatrix && exportNt {
 		addStateHeatmap("nt/", ntStateMatrix.tsv, ntPropsTsv, "nucleotide", "Position nt", ntTrace, ntParentResidueCols)
 	}
 	// Region membership as a second [parentId, position] track. The cross-sample
@@ -1029,8 +1042,7 @@ wf.body(func(args) {
 	qcPf := qcPfBuilder.build()
 
 	outputs := {
-		// Kept reachable so the parsed .mic is persisted by content hash (dedup)
-		// and recovered on rerun rather than recomputed (non-deterministic bytes).
+		// See fileOutput("parsedMic") above.
 		parsedMic: perSampleResults.outputData("parsedMic"),
 		variantsTsv: perSampleResults.output("variantsTsv"),
 		aaVariantsTsv: perSampleResults.output("aaVariantsTsv"),
