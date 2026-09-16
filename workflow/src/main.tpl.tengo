@@ -15,6 +15,7 @@ strings := import("@platforma-sdk/workflow-tengo:strings")
 columnSpecs := import(":column-specs")
 regionConfig := import(":region-config")
 smChunks := import(":state-matrix-chunks")
+units := import("@platforma-sdk/workflow-tengo:units")
 json := import("json")
 times := import("times")
 text := import("text")
@@ -74,6 +75,12 @@ wf.body(func(args) {
 	// Dense matrix — variants x parentLength. Off skips the per-sample chunking, the
 	// cross-sample dedup, the exported state columns and the Residue Composition page.
 	exportStateMatrix := is_undefined(args.exportStateMatrix) || args.exportStateMatrix
+	// Cross-sample aggregation and the parquet imports that follow it are
+	// variant-keyed, so they grow with the repertoire. Unsized they fall back to the
+	// pt formula, which caps at 64 GiB; an explicit mem() does not. Carried on
+	// its own setting, separate from the per-sample mitool budget. Absent = today's
+	// formula.
+	aggMemGB := args.aggregationMemGB
 	// nt has a match signal only when an nt known set was supplied.
 	hasNtKnown := !is_undefined(args.knownNtFileHandle)
 
@@ -348,6 +355,7 @@ wf.body(func(args) {
 	// per-sample abundance parquets (totals) + raw variant TSVs (sample-independent
 	// metadata) and emits per-variant property tables.
 	aggVarsRun := render.createEphemeral(aggregateVariantsTpl, {
+		aggMemGB: aggMemGB,
 		ntAbundanceData: perSampleResults.outputData("ntAbundance"),
 		aaAbundanceData: perSampleResults.outputData("aaAbundance"),
 		variantsTsvData: perSampleResults.outputData("variantsTsv"),
@@ -366,7 +374,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			{ splitDataAndSpec: true }
+			{ splitDataAndSpec: true, mem: is_undefined(aggMemGB) ? undefined : aggMemGB * units.GiB }
 		)
 	}
 	// The properties TSVs are also read by the composition heat map below (for the
@@ -543,6 +551,7 @@ wf.body(func(args) {
 
 	// Linkers (nt→aa, parent→nt, parent→aa). One-side leads in the axes.
 	linkersRun := render.createEphemeral(aggregateLinkersTpl, {
+		aggMemGB: aggMemGB,
 		variantsTsvData: perSampleResults.outputData("variantsTsv"),
 		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
 		// Export-only-matched filter: nt linkers keep assignStatus == ASSIGNED
@@ -803,6 +812,7 @@ wf.body(func(args) {
 	knownVariantsAaPf := undefined
 	if !is_undefined(knownNtFile) || !is_undefined(knownAaFile) {
 		knownRun := render.createEphemeral(aggregateKnownTpl, {
+			aggMemGB: aggMemGB,
 			variantsTsvData: perSampleResults.outputData("variantsTsv"),
 			aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
 			knownDesignedNtData: perSampleResults.outputData("knownDesignedNt"),
