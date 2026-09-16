@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.workflow
 
+## 1.2.17
+
+### Patch Changes
+
+- 7667cbd: Allow to set memory for heavy ptabler steps
+
 ## 1.2.16
 
 ### Patch Changes
