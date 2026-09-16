@@ -81,6 +81,10 @@ wf.body(func(args) {
 	// its own setting, separate from the per-sample mitool budget. Absent = today's
 	// formula.
 	aggMemGB := args.aggregationMemGB
+	// Passed to every variant-keyed xsv import below. Undefined leaves the SDK's
+	// input-size formula in charge, which is right for the parent-keyed imports but
+	// under-reads anything whose row count follows the variant count.
+	aggMem := is_undefined(aggMemGB) ? undefined : aggMemGB * units.GiB
 	// nt has a match signal only when an nt known set was supplied.
 	hasNtKnown := !is_undefined(args.knownNtFileHandle)
 
@@ -374,7 +378,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			{ splitDataAndSpec: true, mem: is_undefined(aggMemGB) ? undefined : aggMemGB * units.GiB }
+			{ splitDataAndSpec: true, mem: aggMem }
 		)
 	}
 	// The properties TSVs are also read by the composition heat map below (for the
@@ -422,7 +426,7 @@ wf.body(func(args) {
 					storageFormat: "Parquet",
 					partitionKeyLength: 0
 				},
-				{ splitDataAndSpec: true }
+				{ splitDataAndSpec: true, mem: aggMem }
 			)
 		}
 	}
@@ -569,7 +573,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			{ splitDataAndSpec: true }
+			{ splitDataAndSpec: true, mem: aggMem }
 		)
 	}
 	// nt→aa and parent→nt linkers reference the nt variant axis, so they are
@@ -830,7 +834,7 @@ wf.body(func(args) {
 				columns: columns,
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
-			}, { splitDataAndSpec: true })
+			}, { splitDataAndSpec: true, mem: aggMem })
 		}
 
 		// Dynamic import-column specs for the mapped metadata fields. The column
