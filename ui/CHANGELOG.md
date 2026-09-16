@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.ui
 
+## 1.2.14
+
+### Patch Changes
+
+- 7667cbd: Allow to set memory for heavy ptabler steps
+- Updated dependencies [7667cbd]
+  - @platforma-open/milaboratories.synthetic-repertoire-profiler.model@1.2.11
+
 ## 1.2.13
 
 ### Patch Changes
