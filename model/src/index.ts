@@ -262,6 +262,11 @@ export type BlockData = {
   // Optional per-sample mitool resource overrides (Advanced). Empty = workflow
   // defaults. Passed to the parse + analyze exec steps.
   perProcessMemGB?: number;
+  // Memory for the cross-sample aggregation and the parquet imports that follow
+  // it. Separate from perProcessMemGB: those steps are variant-keyed, so they grow
+  // with the repertoire rather than with one sample. Empty = the SDK's input-size
+  // formula, which caps at 64 GiB.
+  aggregationMemGB?: number;
   perProcessCPUs?: number;
 
   // Preview run. `full` suppresses limitInput in args, so leaving preview
@@ -332,6 +337,7 @@ export type BlockArgs = {
   // Read-coverage gate → mitool -Massemble.minVariantReads. Absent = off.
   minVariantReads?: number;
   perProcessMemGB?: number;
+  aggregationMemGB?: number;
   perProcessCPUs?: number;
   limitInput?: number; // → mitool parse -n. Absent = full run.
   defaultBlockLabel: string;
@@ -452,6 +458,7 @@ const dataModel = new DataModelBuilder({ kind })
     minReadsPerConsensus: params?.minReadsPerConsensus ?? UMI_DEFAULTS.minReadsPerConsensus,
     minUmiQuality: params?.minUmiQuality ?? UMI_DEFAULTS.minUmiQuality,
     perProcessMemGB: params?.perProcessMemGB,
+    aggregationMemGB: params?.aggregationMemGB,
     perProcessCPUs: params?.perProcessCPUs,
 
     // Not init params: uploaded files, what the UI discovers by reading them, and
@@ -956,6 +963,8 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     // Resource overrides: positive when set (empty = workflow defaults).
     if (data.perProcessMemGB !== undefined && data.perProcessMemGB < 1)
       throw new Error("Memory per process must be at least 1 GB.");
+    if (data.aggregationMemGB !== undefined && data.aggregationMemGB < 1)
+      throw new Error("Aggregation memory must be at least 1 GB.");
     if (data.perProcessCPUs !== undefined && data.perProcessCPUs < 1)
       throw new Error("CPUs per process must be at least 1.");
 
@@ -1040,6 +1049,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       minVariantQuality,
       minVariantReads,
       perProcessMemGB: data.perProcessMemGB,
+      aggregationMemGB: data.aggregationMemGB,
       perProcessCPUs: data.perProcessCPUs,
       limitInput,
       // Workflow trace label: the selected dataset's name (snapshotted by the
@@ -1081,6 +1091,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     minReadsPerConsensus: data.minReadsPerConsensus,
     minUmiQuality: data.minUmiQuality,
     perProcessMemGB: data.perProcessMemGB,
+    aggregationMemGB: data.aggregationMemGB,
     perProcessCPUs: data.perProcessCPUs,
   }))
 
