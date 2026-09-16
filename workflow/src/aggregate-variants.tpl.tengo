@@ -17,6 +17,7 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
+units := import("@platforma-sdk/workflow-tengo:units")
 
 variantLabel := import(":variant-label")
 
@@ -33,6 +34,16 @@ self.body(func(inputs) {
 	// set. See aggregate-state-matrix for the full rationale.
 	wf := pt.workflow().
 		inMediumQueue()
+	// Variant-keyed aggregation over every sample: a groupBy and a sort that both
+	// materialize, and the work scales with the number of distinct variants, which
+	// the input-size formula cannot see. So it gets a 64 GiB floor — where that
+	// formula's own clamp ends — and the setting raises it, never lowers it. Same
+	// shape as mixcr-clonotyping's cross-sample step.
+	aggMemGB := 64
+	if !is_undefined(inputs.aggMemGB) && inputs.aggMemGB > aggMemGB {
+		aggMemGB = inputs.aggMemGB
+	}
+	wf.mem(aggMemGB * units.GiB)
 
 	// TSV reads disable per-file type inference (`inferSchema: false` → every
 	// column read as String). Per-sample TSVs vary: an empty one (header only)

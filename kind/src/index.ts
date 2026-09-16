@@ -91,6 +91,7 @@ export type BlockParams = {
   minUmiQuality?: number;
 
   perProcessMemGB?: number;
+  aggregationMemGB?: number;
   perProcessCPUs?: number;
 };
 
@@ -140,6 +141,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     minReadsPerConsensus,
     minUmiQuality,
     perProcessMemGB,
+    aggregationMemGB,
     perProcessCPUs,
   } = value;
 
@@ -170,6 +172,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     minUmiQuality: optionalNumber(minUmiQuality, "minUmiQuality"),
 
     perProcessMemGB: optionalNumber(perProcessMemGB, "perProcessMemGB"),
+    aggregationMemGB: optionalNumber(aggregationMemGB, "aggregationMemGB"),
     perProcessCPUs: optionalNumber(perProcessCPUs, "perProcessCPUs"),
   };
 }

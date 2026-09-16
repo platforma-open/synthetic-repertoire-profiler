@@ -656,6 +656,20 @@ ACGTACGT..."
         Override the CPUs given to each per-sample mitool run. Leave empty for the default.
       </template>
     </PlNumberField>
+
+    <PlNumberField
+      v-model="app.model.data.aggregationMemGB"
+      label="Memory for aggregation (GB)"
+      :min-value="1"
+      :clearable="true"
+    >
+      <template #tooltip>
+        Memory for the step that merges all samples into the final variant tables. It works on every
+        distinct variant at once, so a run with many variants can need more here even when the
+        per-sample steps finish fine. Leave empty for the automatic setting, which can be too low on
+        very large runs.
+      </template>
+    </PlNumberField>
   </PlAccordionSection>
 </template>
 
