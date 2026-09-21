@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import type { PredefinedGraphOption } from "@milaboratories/graph-maker";
 import { GraphMaker } from "@milaboratories/graph-maker";
-import type { PColumnSpec, PObjectId } from "@platforma-sdk/model";
-import { getUniqueSourceValuesWithLabels } from "@platforma-sdk/model";
-import { PlDropdown } from "@platforma-sdk/ui-vue";
-import { computed, ref, watch } from "vue";
+import type { PColumnSpec } from "@platforma-sdk/model";
+import { computed } from "vue";
 import { useApp } from "./app";
 
 const app = useApp();
@@ -37,53 +35,6 @@ const valueColumn = computed(() => {
   return pCols.find((c) => c.spec.name === FREQUENCY_COLUMN && alphabetOf(c.spec) === level.value);
 });
 
-// One plot per parent, selected here. States from different parents sit on
-// unrelated position coordinates, so they are read one parent at a time.
-//
-// The parent list is enumerated off the value column's parentId axis and kept in
-// LOCAL refs — never written to `app.model.data`. That is deliberate: the parent
-// identities live in the user's FASTA and reach the UI only through an output, so
-// persisting them would be an output -> data write (the hairpin), with the
-// multi-client race that carries. Watching an output into a local ref is the
-// sanctioned form. It also means no data migration and no workflow output are
-// needed for this view.
-const parentOptions = ref<{ value: string; label: string }[]>([]);
-const selectedParent = ref<string | undefined>(undefined);
-
-watch(
-  () => {
-    // `stateHeatmapPf` is a with-status output (GraphMaker's :p-frame takes the
-    // wrapper); the enumeration needs the bare handle.
-    const status = app.model.outputs.stateHeatmapPf;
-    return {
-      pframe: status?.ok ? status.value : undefined,
-      columnId: valueColumn.value?.columnId,
-    };
-  },
-  async ({ pframe, columnId }) => {
-    if (!pframe || !columnId) {
-      parentOptions.value = [];
-      return;
-    }
-    try {
-      const res = await getUniqueSourceValuesWithLabels(pframe, {
-        columnId: columnId as PObjectId,
-        axisIdx: 0,
-      });
-      parentOptions.value = res.values.map((v) => ({ value: v.value, label: v.label }));
-      // Default to the first parent, and re-default when the current choice is gone
-      // (a rerun with a different FASTA). Both writes target a local ref.
-      const current = selectedParent.value;
-      if (!current || !parentOptions.value.some((o) => o.value === current)) {
-        selectedParent.value = parentOptions.value[0]?.value;
-      }
-    } catch {
-      parentOptions.value = [];
-    }
-  },
-  { immediate: true },
-);
-
 const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | undefined => {
   const pCols = app.model.outputs.stateHeatmapPCols;
   const valueCol = valueColumn.value;
@@ -105,26 +56,21 @@ const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | undefin
     // maps to x or xGroupBy, and a selected source absent from its component's
     // option list is reported inconsistent (pf-plots ComponentController
     // checkStateConsistency), which puts the whole chart into the 'inconsistent'
-    // status. tabBy sits outside that set, so parent-as-tabs plus these tracks is a
-    // rejected combination however well the tab filter would have scoped the data.
+    // status. So parentId stays here even though the tabs below also carry it.
     { inputName: "xGroupBy", selectedSource: parentAxis },
+    // One plot per parent: states from different parents sit on unrelated position
+    // coordinates, so they are read one parent at a time. The same axis goes into
+    // two baskets on purpose — tabBy draws the tab bar and scopes the data, while
+    // xGroupBy keeps the annotation tracks valid (see above). With the tab applied
+    // the xGroupBy band is a single section carrying the parent's name.
+    //
+    // No selectedFilterValues: graph-maker picks the first parent itself and keeps
+    // the choice in the saved graph state, so the page needs no parent picker of
+    // its own. Enumerating parents here would mean reading an output into local
+    // state; letting graph-maker own the tab avoids that.
+    { inputName: "tabBy", selectedSource: parentAxis },
     { inputName: "tooltipContent", selectedSource: stateAxis },
   ];
-
-  // Scope the plot to the chosen parent. A filter (rather than tabs) is what keeps
-  // parentId in the annotation-friendly set above while still showing one parent at
-  // a time; with the filter applied the xGroupBy band is a single section carrying
-  // the parent's name. Absent a selection (before the first run, or if enumeration
-  // failed) no filter is preset and every parent is shown grouped — the plot stays
-  // usable rather than empty.
-  if (selectedParent.value !== undefined) {
-    options.push({
-      inputName: "filters",
-      selectedSource: parentAxis,
-      filterType: "equals",
-      selectedFilterValues: [selectedParent.value],
-    });
-  }
 
   // Region bands under the position axis, so region boundaries read off the map.
   // Emitted only when the run defines regions, and aa-positioned — so it rides the
@@ -177,19 +123,5 @@ const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | undefin
     :status-text="{
       noPframe: { title: 'Run the block on the Main tab to see the plot.' },
     }"
-  >
-    <template #settingsSlot>
-      <PlDropdown
-        :model-value="selectedParent"
-        :options="parentOptions"
-        label="Parent"
-        @update:model-value="(v?: string) => (selectedParent = v ?? undefined)"
-      >
-        <template #tooltip>
-          Which parent (alignment reference) to plot. Positions are numbered against the parent, so
-          each parent is a separate map.
-        </template>
-      </PlDropdown>
-    </template>
-  </GraphMaker>
+  />
 </template>
