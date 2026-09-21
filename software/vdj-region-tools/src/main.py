@@ -150,14 +150,26 @@ def cmd_assemble(args):
     def placed(anchors, keys):
         return anchors is not None and all(k in anchors and int(anchors[k]) >= 0 for k in keys)
 
+    def missing(anchors, keys):
+        if anchors is None:
+            return list(keys)
+        return [k for k in keys if k not in anchors or int(anchors[k]) < 0]
+
     parents = {}
     for pid, split in splits.items():
         offset = int(split["vLen"])
         v = v_anchors.get(pid)
         j = j_anchors.get(pid)
         if not placed(v, V_REQUIRED) or not placed(j, J_REQUIRED):
-            die(f"parent '{pid}': germline inference did not place all VDJ anchors "
-                f"(engineered scaffold?). Turn off VDJ auto-detect and annotate manually.")
+            # Name the anchors, so the cause is readable. A missing V anchor usually means the
+            # parent really is an engineered scaffold. A missing J anchor more often means the
+            # J half scored below the inferPoints threshold, which is easy to retune and does
+            # not need the user to give up on auto-detect.
+            gaps = ([f"V:{k}" for k in missing(v, V_REQUIRED)]
+                    + [f"J:{k}" for k in missing(j, J_REQUIRED)])
+            die(f"parent '{pid}': germline inference did not place {', '.join(gaps)} "
+                f"(engineered scaffold, or the half scored below the inferPoints threshold). "
+                f"Turn off VDJ auto-detect and annotate manually.")
         # V anchors are already in parent coordinates (the V-half starts at 0);
         # J anchors shift by the split offset. CDR3 spans CDR3Begin (V) -> FR4Begin (J).
         cdr3_end = offset + int(j["FR4Begin"])
