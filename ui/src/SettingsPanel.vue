@@ -494,25 +494,38 @@ ACGTACGT..."
       <PlTooltip class="info" position="top">
         <template #tooltip>
           Off by default: only amino-acid-level results are exported. Enable this to also export
-          every nucleotide-level column — nt variants and sequences, per-sample nt abundance, the nt
-          state matrix, parent→nt and nt↔aa linkers, and the nt known-set overlay. The nt state
-          matrix is useful for detecting synthesis artifacts (bad triplets / hairpins) via
-          under-represented variants.
+          every nucleotide-level column — nt variants and sequences, per-sample nt abundance,
+          parent→nt and nt↔aa linkers, and the nt known-set overlay. The nt state matrix has its own
+          checkbox below, so you can take these tables without paying for it.
         </template>
       </PlTooltip>
     </PlCheckbox>
 
     <PlCheckbox v-model="app.model.data.exportStateMatrix">
-      Export state matrix
+      Export AA state matrix
       <PlTooltip class="info" position="top">
         <template #tooltip>
-          On by default. Records which residue each variant carries at every position of the parent
-          sequence. This is what the Residue Composition page draws — use it to find positions where
-          a residue is over- or under-represented, for example a synthesis artifact or a site under
-          selection. It holds one entry per variant per position, so it grows quickly with library
-          size: on very large libraries it becomes the slowest part of the run and can stop it
-          finishing. Turning it off also removes the Residue Composition page. Variant tables,
-          abundances and known-variant results are unaffected.
+          On by default. Records which amino acid each variant carries at every position of the
+          parent sequence. This is what the Residue Composition page draws — use it to find
+          positions where a residue is over- or under-represented, for example a synthesis artifact
+          or a site under selection. It holds one entry per variant per position, so it grows
+          quickly with library size: on very large libraries it becomes the slowest part of the run
+          and can stop it finishing. Turning it off also removes the Residue Composition page.
+          Variant tables, abundances and known-variant results are unaffected.
+        </template>
+      </PlTooltip>
+    </PlCheckbox>
+
+    <PlCheckbox v-model="app.model.data.exportNtStateMatrix">
+      Export NT state matrix
+      <PlTooltip class="info" position="top">
+        <template #tooltip>
+          Off by default. The same table at the nucleotide level, so it has three times the
+          positions of the amino-acid one and is the most expensive output the block produces. Use
+          it to spot synthesis artifacts — bad triplets or hairpins — that show up as
+          under-represented variants but leave no trace in the amino-acid view. Independent of the
+          other two checkboxes: you can take this matrix without the nt tables, or the nt tables
+          without it.
         </template>
       </PlTooltip>
     </PlCheckbox>
