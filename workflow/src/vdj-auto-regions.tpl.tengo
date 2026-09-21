@@ -5,7 +5,7 @@
 //
 //   split (python)   parents.fa            -> vGenes.fasta / jGenes.fasta + splits.json
 //                                             (each parent cut at mid-CDR3)
-//   repseqio         fromFasta V / J -> merge -> inferPoints V(150) / J(30) -> compile
+//   repseqio         fromFasta V / J -> merge -> inferPoints V(150) / J(20) -> compile
 //                                          -> referenceLibrary.json (with anchor points)
 //   assemble (python) library + splits    -> parents.regions.json (FR1..FR4, VDJRegion)
 //
@@ -101,11 +101,16 @@ self.body(func(inputs) {
 		addFile("vGenes.fasta", vGenesFasta).
 		cpu(1).mem("4GiB").run()
 
+	// The J half runs from mid-CDR3 to the end of the parent, so it is short -- around 14
+	// residues. Its alignment score scales with that length, and 30 sat right on top of the
+	// real values: a kappa VL scored 29 and was rejected, leaving FR4Begin unplaced and the
+	// whole parent unannotatable. 20 keeps the V step's ratio (150 over a ~95-residue V is
+	// about 1.6 per residue; 20 over 14 is about 1.4) instead of demanding 2.1 per residue.
 	inferJRes := exec.builder().
 		software(repseqioSw).
 		arg("inferPoints").
 		arg("--gene-feature").arg("JRegion").
-		arg("--min-score").arg("30").
+		arg("--min-score").arg("20").
 		arg("--force").
 		addFile("library.json", inferVRes.getFile("library.v.json")).
 		arg("library.json").
