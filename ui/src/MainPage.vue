@@ -120,7 +120,10 @@ const columnDefs: ColDef<SampleRow>[] = [
       const row = cellData.data;
       if (!row || row.progress === "Queued") return { status: "not_started", text: "Queued" };
       if (!row.running) return { status: "done", text: row.progress };
-      return { status: "running", percent: row.progressPercent, text: row.progress };
+      // Empty suffix: the default would repeat the percentage already in `text`, and show a
+      // misleading "0%" on the steps that report no percentage at all. `percent` stays, because
+      // it fills the bar.
+      return { status: "running", percent: row.progressPercent, text: row.progress, suffix: "" };
     },
   }),
   createAgGridColDef<SampleRow, string>({
