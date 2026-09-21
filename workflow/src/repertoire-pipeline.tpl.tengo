@@ -49,9 +49,6 @@ self.body(func(inputs) {
 	parts := params.patternParts
 	umi := params.umi
 	hasUmi := !is_undefined(umi)
-	// Opt-in nt export: gates the nt state matrix computation here; main gates the
-	// nt column exports. Defensive default when the param is absent (removeUndefs).
-	exportNt := !is_undefined(params.exportNt) && params.exportNt
 	// Export-only-matched: when true, the per-sample abundance + state-matrix files
 	// that feed the exported `variants` frame are restricted to variants that
 	// matched a known entry (nt: assignStatus == ASSIGNED; aa: has knownAaKey). The
