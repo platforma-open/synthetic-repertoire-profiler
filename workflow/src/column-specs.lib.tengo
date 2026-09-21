@@ -1073,7 +1073,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName, hasU
 				valueType: "Int",
 				annotations: tableAnno(84000, "default", {
 					"pl7.app/min": "1",
-					"pl7.app/label": "Synonymous nt variants"
+					"pl7.app/label": "Synonymous NT variants"
 				})
 			}
 		})

@@ -134,8 +134,8 @@ self.body(func(inputs) {
 		ntAggs = append(ntAggs, pt.col("nSeq" + rn).cast("String").first().alias("nSeq" + rn))
 		ntSelect = append(ntSelect, pt.col("nSeq" + rn))
 	}
-	ntMeta := concatF(loadFrames(inputs.variantsTsvData, "ntv", "tsv")).
-		groupBy("variantKey").agg(ntAggs...)
+	ntVariants := concatF(loadFrames(inputs.variantsTsvData, "ntv", "tsv"))
+	ntMeta := ntVariants.groupBy("variantKey").agg(ntAggs...)
 	withLabel(
 		totals(loadFrames(inputs.ntAbundanceData, "ntab", "parquet")).
 			join(ntMeta, { how: "left", on: ["variantKey"] })
@@ -145,8 +145,7 @@ self.body(func(inputs) {
 	aaAggs := [
 		pt.col("aaSequence").first().alias("sequence"),
 		pt.col("mutations").cast("String").first().alias("mutations"),
-		pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
-		pt.col("ntVariantCount").cast("Int").first().alias("ntVariantCount")
+		pt.col("mutationCount").cast("Int").first().alias("mutationCount")
 	]
 	aaMetaSelect := [
 		pt.col("aaVariantKey").alias("variantKey"),
@@ -174,8 +173,19 @@ self.body(func(inputs) {
 		aaMetaSelect = append(aaMetaSelect, pt.col("aaSeq" + rn))
 		aaSelect = append(aaSelect, pt.col("aaSeq" + rn))
 	}
+	// Synonymous-replicate count: distinct nt variants encoding this aa variant, over
+	// the whole dataset. Recounted here — the TSV's own ntVariantCount is mitool's
+	// per-sample count, and no cross-sample aggregation of it is right (first() takes
+	// one sample's subset, sum() double-counts a shared variant, max() misses variants
+	// only other samples carry). Same set as the ntToAa linker in aggregate-linkers,
+	// frame-shifted nt variants excluded the same way (they carry no aa key).
+	ntPerAa := ntVariants.
+		filter(pt.col("aaVariantKey").cast("String").fillNull("").strLenChars().gt(pt.lit(0))).
+		groupBy("aaVariantKey").
+		agg(pt.col("variantKey").nUnique().alias("ntVariantCount"))
 	aaMeta := concatF(loadFrames(inputs.aaVariantsTsvData, "aav", "tsv")).
 		groupBy("aaVariantKey").agg(aaAggs...).
+		join(ntPerAa, { how: "left", on: ["aaVariantKey"] }).
 		select(aaMetaSelect...)
 	withLabel(
 		totals(loadFrames(inputs.aaAbundanceData, "aaab", "parquet")).
