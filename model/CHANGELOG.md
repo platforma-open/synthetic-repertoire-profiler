@@ -1,5 +1,16 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.model
 
+## 1.2.13
+
+### Patch Changes
+
+- b1bedd5: - Variants over the amino-acid mutation limit are now removed from the results, not kept unlinked. Read and UMI fractions renormalise over what is left.
+  - Separate checkboxes for the AA and NT state matrices. "Export nucleotide-level results" no longer controls the NT matrix.
+  - Fixed VDJ auto-detect rejecting valid light-chain parents: the J half scored just below the inference threshold.
+  - Removed the repeated percentage from the right of the Progress column.
+- Updated dependencies [b1bedd5]
+  - @platforma-open/milaboratories.synthetic-repertoire-profiler.kind@1.0.10
+
 ## 1.2.12
 
 ### Patch Changes
