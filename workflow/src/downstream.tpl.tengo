@@ -7,17 +7,12 @@
 // parse, the UMI chain and the step-log map.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
-pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
-ll := import("@platforma-sdk/workflow-tengo:ll")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
-render := import("@platforma-sdk/workflow-tengo:render")
-maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 smChunks := import(":state-matrix-chunks")
 
-json := import("json")
 times := import("times")
 
 // The state matrix leaves this template already split by position: one File-valued
@@ -50,15 +45,20 @@ self.body(func(inputs) {
 	parts := params.patternParts
 	umi := params.umi
 	hasUmi := !is_undefined(umi)
-	// Opt-in nt export: gates the nt state matrix computation here; main gates the
-	// nt column exports. Defensive default when the param is absent (removeUndefs).
+	// Opt-in nt export: main gates the nt column exports. Defensive default when the
+	// param is absent (removeUndefs).
 	exportNt := !is_undefined(params.exportNt) && params.exportNt
+	// The nt state matrix is its own opt-in, independent of exportNt: it is the most
+	// expensive output, so the nt tables and the nt matrix are chosen separately.
+	// It also brings the nt parent-residue track, which mitool writes only with it.
+	exportNtStateMatrix := !is_undefined(params.exportNtStateMatrix) && params.exportNtStateMatrix
 	// Export-only-matched: when true, the per-sample abundance + state-matrix files
 	// that feed the exported `variants` frame are restricted to variants that
 	// matched a known entry (nt: assignStatus == ASSIGNED; aa: has knownAaKey). The
 	// known-overlay / QC computations below read the FULL variant set regardless.
 	exportOnlyKnown := !is_undefined(params.exportOnlyKnown) && params.exportOnlyKnown
-	// Dense matrix — variants x parentLength. Absent means the pre-flag behaviour.
+	// Dense matrix — variants x parentLength. aa level only; the nt one is above.
+	// Absent means the pre-flag behaviour.
 	exportStateMatrix := is_undefined(params.exportStateMatrix) || params.exportStateMatrix
 	parentFastaStr := params.parentFastaStr
 	parentFile := params.parentFile
@@ -135,6 +135,13 @@ self.body(func(inputs) {
 	if !is_undefined(maxAaMutationFraction) {
 		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.maxAaMutationFraction=" + string(maxAaMutationFraction))
 	}
+	// Setting an aa limit means asking for those variants to go, so drop them rather than
+	// leave them in the tables as unlinked nt rows. Read fractions renormalise over what is
+	// left, exactly as they already do for the align and assemble gates. The QC counts then
+	// come from the reports table, not from the rows -- see the aa-gate columns below.
+	if !is_undefined(maxAaMutations) || !is_undefined(maxAaMutationFraction) {
+		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.dropAaMutationsExceeded=true")
+	}
 	// Frame-shift guard: same step, same -M mixin route as the aa gate above.
 	if !is_undefined(frameShiftMode) {
 		analyzeBuilder = analyzeBuilder.arg("-Mcall-mutations.frameShiftMode=" + frameShiftMode)
@@ -176,7 +183,7 @@ self.body(func(inputs) {
 			analyzeBuilder = analyzeBuilder.arg("--aa-id-column").arg(knownAaIdColumn)
 		}
 	}
-	if exportNt {
+	if exportNtStateMatrix {
 		analyzeBuilder = analyzeBuilder.arg("--nt-state-matrix")
 	}
 	// The step reports as a TSV, for the QC row below: ptabler cannot read the JSON
@@ -216,7 +223,7 @@ self.body(func(inputs) {
 		// aggregate-parent-tables.
 		saveFile("out.aa-parent-residues.tsv").
 		saveFile("out.parents.tsv")
-	if exportNt {
+	if exportNtStateMatrix {
 		analyzeBuilder = analyzeBuilder.
 			saveFile("out.nt-state-matrix.tsv").
 			saveFile("out.nt-parent-residues.tsv")
@@ -511,7 +518,7 @@ self.body(func(inputs) {
 
 	// nt parent-residue placeholder (right header, 0 rows): mitool writes that table only
 	// alongside the nt matrix, but the output must always be present.
-	if !exportNt {
+	if !exportNtStateMatrix {
 		vAbund.filter(pt.lit(false)).select(
 			pt.col("variantKey").cast("String").alias("parentId"),
 			pt.col("variantKey").cast("String").alias("position"),
@@ -544,7 +551,6 @@ self.body(func(inputs) {
 	}, { id: "aaVariantsRaw" })
 
 	fs := pt.col("frameShift").cast("String").strToUpper().eq("TRUE")
-	aae := pt.col("aaMutationsExceeded").cast("String").strToUpper().eq("TRUE")
 	isAssigned := pt.col("assignStatus").cast("String").eq("ASSIGNED")
 	isUnassigned := pt.col("assignStatus").cast("String").eq("UNASSIGNED")
 	isAmbiguous := pt.col("assignStatus").cast("String").eq("AMBIGUOUS")
@@ -566,8 +572,6 @@ self.body(func(inputs) {
 		reads.sum().alias("totalReads"),
 		countWhen(fs).alias("frameShiftVariants"),
 		readsWhen(fs).alias("frameShiftReads"),
-		countWhen(aae).alias("aaMutationsExceededVariants"),
-		readsWhen(aae).alias("aaMutationsExceededReads"),
 		countWhen(isAssigned).alias("assignedVariants"),
 		readsWhen(isAssigned).alias("assignedReads"),
 		countWhen(isUnassigned).alias("unassignedVariants"),
@@ -580,7 +584,6 @@ self.body(func(inputs) {
 		vSelect = append(vSelect,
 			mols.sum().alias("totalMolecules"),
 			molsWhen(fs).alias("frameShiftMolecules"),
-			molsWhen(aae).alias("aaMutationsExceededMolecules"),
 			molsWhen(isAssigned).alias("assignedMolecules"),
 			molsWhen(isUnassigned).alias("unassignedMolecules"),
 			molsWhen(isAmbiguous).alias("ambiguousMolecules")
@@ -646,10 +649,22 @@ self.body(func(inputs) {
 	}
 	frac := fracOf("totalReads")
 	molFrac := fracOf("totalMolecules")
+	// The aa gate drops its variants (see the -M flag above), so totalReads and totalMolecules —
+	// summed from the rows that survived — no longer contain them. Their own fractions need them
+	// back, because they ARE the numerator. Adding the counter to the total reconstructs the
+	// pre-gate denominator, so the number reads the same as it did before the gate started
+	// dropping. Every other fraction stays on the post-gate total, matching `readFraction` in
+	// the variants table.
+	aaGateFrac := func(numCol, totalCol) {
+		denom := pt.col(totalCol).cast("Long").plus(pt.col(numCol).cast("Long"))
+		return pt.when(denom.gt(pt.lit(0))).then(
+			pt.col(numCol).cast("Double").truediv(denom.cast("Double"))
+		).otherwise(pt.lit(0.0))
+	}
 
 	qcCols := [
 		frac("frameShiftReads").alias("frameShiftReadFraction"),
-		frac("aaMutationsExceededReads").alias("aaMutationsExceededReadFraction"),
+		aaGateFrac("aaMutationsExceededReads", "totalReads").alias("aaMutationsExceededReadFraction"),
 		frac("assignedReads").alias("assignedReadFraction"),
 		frac("unassignedReads").alias("unassignedReadFraction"),
 		frac("ambiguousReads").alias("ambiguousReadFraction")
@@ -657,7 +672,7 @@ self.body(func(inputs) {
 	if hasUmi {
 		qcCols = append(qcCols,
 			molFrac("frameShiftMolecules").alias("frameShiftMoleculeFraction"),
-			molFrac("aaMutationsExceededMolecules").alias("aaMutationsExceededMoleculeFraction"),
+			aaGateFrac("aaMutationsExceededMolecules", "totalMolecules").alias("aaMutationsExceededMoleculeFraction"),
 			molFrac("assignedMolecules").alias("assignedMoleculeFraction"),
 			molFrac("unassignedMolecules").alias("unassignedMoleculeFraction"),
 			molFrac("ambiguousMolecules").alias("ambiguousMoleculeFraction"),
@@ -666,13 +681,17 @@ self.body(func(inputs) {
 		)
 	}
 	// Metrics whose losses never reach the variants TSV, because the gate that removed them
-	// acts before the variant is written. Both come from the reports table.
+	// acts before the variant is written. All three come from the reports table.
 	//
 	//  - the indel gate, at alignment: a rejected read never becomes a variant at all.
 	//  - the min-variant-reads gate, at assembly: the variant is assembled, then discarded,
 	//    taking its reads with it. Without these columns a run that drops two thirds of its
 	//    reads here looks identical to one that drops none — every other QC number is
 	//    computed over the variants that survived.
+	//  - the aa mutation-load gate, at call-mutations: same shape. It used to leave its
+	//    variants in the table under an `aaMutationsExceeded` flag, which the QC row counted.
+	//    They are dropped now, so counting the flag would report zero on every run. mitool
+	//    carries the counts in its call-mutations report instead.
 	//
 	// An unfired reason leaves the cell empty, which reads as null. Each fraction needs a
 	// PRE-gate denominator; the QC row's own totalReads is post-gate and would put both over 1.
@@ -682,18 +701,32 @@ self.body(func(inputs) {
 	// align.aligned counts fragments, so it is wrong on a UMI run where one fragment carries
 	// many reads. When minVariantQuality also fires it takes reads out of that denominator,
 	// which mitool does not report, so the fraction reads very slightly high there.
+	// Molecule counters exist only on a UMI run, here as everywhere else in this QC row.
+	rdfSelect := [
+		pt.lit(sampleId).alias("sampleId"),
+		pt.col("align.notAligned.TooManyIndels").cast("Long").fillNull(pt.lit(0)).alias("ntIndelReads"),
+		pt.col("align.totalReads").cast("Long").alias("_alignTotalReads"),
+		pt.col("assemble.lowCoverageVariants").cast("Long").fillNull(pt.lit(0)).alias("lowCoverageVariants"),
+		pt.col("assemble.lowCoverageReads").cast("Long").fillNull(pt.lit(0)).alias("lowCoverageReads"),
+		pt.col("assemble.readsInVariants").cast("Long").fillNull(pt.lit(0)).alias("_readsInVariants"),
+		pt.col("callMutations.aaMutationsExceeded").cast("Long").fillNull(pt.lit(0)).alias("aaMutationsExceededVariants"),
+		pt.col("callMutations.aaMutationsExceededReads").cast("Long").fillNull(pt.lit(0)).alias("aaMutationsExceededReads")
+	]
+	rdfOut := [
+		pt.col("sampleId"), pt.col("ntIndelReads"), pt.col("ntIndelReadFraction"),
+		pt.col("lowCoverageVariants"), pt.col("lowCoverageReads"), pt.col("lowCoverageReadFraction"),
+		pt.col("aaMutationsExceededVariants"), pt.col("aaMutationsExceededReads")
+	]
+	if hasUmi {
+		rdfSelect = append(rdfSelect,
+			pt.col("callMutations.aaMutationsExceededMolecules").cast("Long").fillNull(pt.lit(0)).alias("aaMutationsExceededMolecules"))
+		rdfOut = append(rdfOut, pt.col("aaMutationsExceededMolecules"))
+	}
 	rdf := ptWf.frame({
 		file: analyzeCmd.getFile("out.reports.tsv"),
 		xsvType: "tsv"
 	}, { id: "reportsTable", inferSchema: false }).
-		select(
-			pt.lit(sampleId).alias("sampleId"),
-			pt.col("align.notAligned.TooManyIndels").cast("Long").fillNull(pt.lit(0)).alias("ntIndelReads"),
-			pt.col("align.totalReads").cast("Long").alias("_alignTotalReads"),
-			pt.col("assemble.lowCoverageVariants").cast("Long").fillNull(pt.lit(0)).alias("lowCoverageVariants"),
-			pt.col("assemble.lowCoverageReads").cast("Long").fillNull(pt.lit(0)).alias("lowCoverageReads"),
-			pt.col("assemble.readsInVariants").cast("Long").fillNull(pt.lit(0)).alias("_readsInVariants")
-		).
+		select(rdfSelect...).
 		withColumns(
 			pt.when(pt.col("_alignTotalReads").gt(pt.lit(0))).then(
 				pt.col("ntIndelReads").cast("Double").truediv(pt.col("_alignTotalReads").cast("Double"))
@@ -705,10 +738,7 @@ self.body(func(inputs) {
 				pt.col("lowCoverageReads").cast("Double").truediv(pt.col("_assembleReads").cast("Double"))
 			).otherwise(pt.lit(0.0)).alias("lowCoverageReadFraction")
 		).
-		select(
-			pt.col("sampleId"), pt.col("ntIndelReads"), pt.col("ntIndelReadFraction"),
-			pt.col("lowCoverageVariants"), pt.col("lowCoverageReads"), pt.col("lowCoverageReadFraction")
-		)
+		select(rdfOut...)
 
 	vStats.join(aaStats, { how: "left", on: ["sampleId"] }).
 		join(rdf, { how: "left", on: ["sampleId"] }).
@@ -786,8 +816,8 @@ self.body(func(inputs) {
 		chunkStateMatrix(emptySmFrame(), "aa")
 	}
 
-	// nt: real matrix only when both the nt level and the matrix are exported.
-	if exportStateMatrix && exportNt {
+	// nt: its own flag, so the aa matrix and the nt tables do not decide it.
+	if exportNtStateMatrix {
 		ntSmDf := smWf.frame({
 			file: analyzeCmd.getFile("out.nt-state-matrix.tsv"),
 			xsvType: "tsv"
@@ -840,7 +870,7 @@ self.body(func(inputs) {
 		knownDesignedNt: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-nt.tsv") : ptResult.getFile("emptyKnownDesignedNt.tsv"),
 		knownDesignedAa: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-aa.tsv") : ptResult.getFile("emptyKnownDesignedAa.tsv"),
 		aaParentResiduesTsv: analyzeCmd.getFile("out.aa-parent-residues.tsv"),
-		ntParentResiduesTsv: exportNt ? analyzeCmd.getFile("out.nt-parent-residues.tsv") : ptResult.getFile("emptyNtParentResidues.tsv"),
+		ntParentResiduesTsv: exportNtStateMatrix ? analyzeCmd.getFile("out.nt-parent-residues.tsv") : ptResult.getFile("emptyNtParentResidues.tsv"),
 		parentsTsv: analyzeCmd.getFile("out.parents.tsv"),
 		qcRow: ptResult.getFile("qcRow.parquet"),
 		// No sampleId column — processColumn supplies the sample key from the partition.

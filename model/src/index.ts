@@ -201,19 +201,27 @@ export type BlockData = {
   // exports empty.
   exportOnlyKnown?: boolean;
 
-  // Opt-in nucleotide-level export; OFF by default. When on, the workflow emits
-  // the nt state matrix and exports every nt-related column (nt variants,
-  // per-sample nt abundance, nt sequences, parent→nt + nt↔aa linkers, and the nt
-  // known-set overlay) into the downstream `variants` frame. When off, only the
-  // amino-acid level is exported. (Was `ntStateMatrix`, which only toggled the nt
+  // Opt-in nucleotide-level export; OFF by default. When on, the workflow exports
+  // every nt-related column (nt variants, per-sample nt abundance, nt sequences,
+  // parent→nt + nt↔aa linkers, and the nt known-set overlay) into the downstream
+  // `variants` frame. When off, only the amino-acid level is exported. The nt
+  // state matrix has its own flag — the two are independent, because the matrix
+  // is the expensive part and a user may want the tables without it, or the
+  // matrix without the tables. (Was `ntStateMatrix`, which only toggled the nt
   // state matrix — migrated forward below.)
   exportNt: boolean;
 
-  // Emits the per-variant state matrix (one row per variant per parent position)
-  // and the Residue Composition page that reads it. ON by default. The matrix is
-  // dense, so its size is variants x parentLength — turn it off on repertoires
-  // large enough for that product to dominate the run.
+  // Emits the AMINO-ACID per-variant state matrix (one row per variant per parent
+  // position) and the Residue Composition page that reads it. ON by default. The
+  // matrix is dense, so its size is variants x parentLength — turn it off on
+  // repertoires large enough for that product to dominate the run.
   exportStateMatrix: boolean;
+
+  // The same for the NUCLEOTIDE state matrix; OFF by default. Three times the
+  // positions of the aa one, so it is the most expensive thing the block emits.
+  // It also carries the nt parent-residue track, which mitool writes only
+  // alongside this matrix.
+  exportNtStateMatrix: boolean;
 
   // Optional per-fragment mutation-load filter (Advanced). Applied by mitool's
   // align step (AlignParams.filter, via -Malign.filter.*): a fragment whose
@@ -318,6 +326,7 @@ export type BlockArgs = {
   // False when no known set is supplied (nothing to match against).
   exportOnlyKnown: boolean;
   exportNt: boolean;
+  exportNtStateMatrix: boolean;
   // Mutation-load filter → mitool -Malign.filter.maxMutations / maxMutationFraction.
   maxMutations?: number;
   maxMutationFraction?: number;
@@ -353,7 +362,8 @@ type BlockDataV2 = Omit<BlockDataV3, "graphStateMutationHistogram">;
 type BlockDataV3 = Omit<BlockDataV4, "graphStateStateHeatmap">;
 type BlockDataV4 = Omit<BlockDataV5, "minReadsPerConsensus" | "minUmiQuality">;
 type BlockDataV5 = Omit<BlockDataV6, "runMode" | "limitInput">;
-type BlockDataV6 = Omit<BlockData, "exportStateMatrix">;
+type BlockDataV6 = Omit<BlockDataV7, "exportStateMatrix">;
+type BlockDataV7 = Omit<BlockData, "exportNtStateMatrix">;
 
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -425,9 +435,16 @@ const dataModel = new DataModelBuilder({ kind })
     runMode: "full" as const,
   }))
   // Existing projects built the matrix, so they keep it.
-  .migrate<BlockData>("v7", (v6) => ({
+  .migrate<BlockDataV7>("v7", (v6) => ({
     ...v6,
     exportStateMatrix: true,
+  }))
+  // The nt matrix used to ride on both older flags together, so reproduce that
+  // exact condition rather than the new default. A project that was emitting it
+  // keeps emitting it; one that was not stays unchanged.
+  .migrate<BlockData>("v8", (v7) => ({
+    ...v7,
+    exportNtStateMatrix: v7.exportStateMatrix && v7.exportNt,
   }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
@@ -445,6 +462,7 @@ const dataModel = new DataModelBuilder({ kind })
     exportNt: params?.exportNt ?? false,
     exportOnlyKnown: params?.exportOnlyKnown,
     exportStateMatrix: params?.exportStateMatrix ?? true,
+    exportNtStateMatrix: params?.exportNtStateMatrix ?? false,
     maxMutations: params?.maxMutations,
     maxMutationFraction: params?.maxMutationFraction,
     substitutionsOnly: params?.substitutionsOnly,
@@ -1038,6 +1056,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       exportOnlyKnown: hasKnownSet ? (data.exportOnlyKnown ?? false) : false,
       exportNt: data.exportNt,
       exportStateMatrix: data.exportStateMatrix,
+      exportNtStateMatrix: data.exportNtStateMatrix,
       maxMutations,
       maxMutationFraction,
       maxIndels,
@@ -1078,6 +1097,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     exportNt: data.exportNt,
     exportOnlyKnown: data.exportOnlyKnown,
     exportStateMatrix: data.exportStateMatrix,
+    exportNtStateMatrix: data.exportNtStateMatrix,
     maxMutations: data.maxMutations,
     maxMutationFraction: data.maxMutationFraction,
     substitutionsOnly: data.substitutionsOnly,

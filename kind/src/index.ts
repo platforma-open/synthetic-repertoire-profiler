@@ -75,6 +75,7 @@ export type BlockParams = {
   exportNt?: boolean;
   exportOnlyKnown?: boolean;
   exportStateMatrix?: boolean;
+  exportNtStateMatrix?: boolean;
 
   maxMutations?: number;
   maxMutationFraction?: number;
@@ -128,6 +129,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     exportNt,
     exportOnlyKnown,
     exportStateMatrix,
+    exportNtStateMatrix,
     maxMutations,
     maxMutationFraction,
     substitutionsOnly,
@@ -156,6 +158,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     exportNt: optionalBoolean(exportNt, "exportNt"),
     exportOnlyKnown: optionalBoolean(exportOnlyKnown, "exportOnlyKnown"),
     exportStateMatrix: optionalBoolean(exportStateMatrix, "exportStateMatrix"),
+    exportNtStateMatrix: optionalBoolean(exportNtStateMatrix, "exportNtStateMatrix"),
 
     maxMutations: optionalNumber(maxMutations, "maxMutations"),
     maxMutationFraction: optionalNumber(maxMutationFraction, "maxMutationFraction"),
