@@ -75,6 +75,10 @@ wf.body(func(args) {
 	// Dense matrix — variants x parentLength. Off skips the per-sample chunking, the
 	// cross-sample dedup, the exported state columns and the Residue Composition page.
 	exportStateMatrix := is_undefined(args.exportStateMatrix) || args.exportStateMatrix
+	// Independent of exportNt: the nt matrix is the block's most expensive output, so it
+	// is chosen on its own. It also carries the nt parent-residue track, which mitool
+	// writes only alongside the matrix.
+	exportNtStateMatrix := !is_undefined(args.exportNtStateMatrix) && args.exportNtStateMatrix
 	// Cross-sample aggregation and the parquet imports that follow it are
 	// variant-keyed, so they grow with the repertoire. Unsized they fall back to the
 	// pt formula, which caps at 64 GiB; an explicit mem() does not. Carried on
@@ -157,6 +161,7 @@ wf.body(func(args) {
 		exportNt: exportNt,
 		exportOnlyKnown: exportOnlyKnown,
 		exportStateMatrix: exportStateMatrix,
+		exportNtStateMatrix: exportNtStateMatrix,
 		parentFastaStr: parentFastaStr,
 		parentFile: parentFile,
 		parentRegionsJson: parentRegionsJson,
@@ -438,7 +443,7 @@ wf.body(func(args) {
 	}
 	ntStateMatrix := undefined
 	ntStateMatrixCols := undefined
-	if exportStateMatrix && exportNt {
+	if exportNtStateMatrix {
 		ntStateMatrix = importStateMatrix("nt", ntVariantAxis, "nucleotide", "Position nt")
 		ntStateMatrixCols = ntStateMatrix.cols
 	}
@@ -496,7 +501,7 @@ wf.body(func(args) {
 	}
 	aaParentResidueCols := importParentResidues("aaParentResiduesTsv", "aminoacid", "Position aa")
 	ntParentResidueCols := undefined
-	if exportNt {
+	if exportNtStateMatrix {
 		ntParentResidueCols = importParentResidues("ntParentResiduesTsv", "nucleotide", "Position nt")
 	}
 
@@ -665,8 +670,8 @@ wf.body(func(args) {
 			variantsPfBuilder.add("stateMatrixAa/" + k, aaTrace.inject(v.spec), v.data)
 		}
 	}
-	// nt state matrix — same, only when nt export is enabled.
-	if exportStateMatrix && exportNt {
+	// nt state matrix — same, on its own flag.
+	if exportNtStateMatrix {
 		for k, v in ntStateMatrixCols {
 			variantsPfBuilder.add("stateMatrixNt/" + k, ntTrace.inject(v.spec), v.data)
 		}
@@ -679,10 +684,14 @@ wf.body(func(args) {
 	for k, v in aaParentSeqCols {
 		variantsPfBuilder.add("parentSequenceAa/" + k, aaTrace.inject(v.spec), v.data)
 	}
-	if exportNt {
+	// The residue track is the matrix's position axis, so it follows the matrix flag.
+	// The whole parent nt sequence is an ordinary nt column and follows exportNt.
+	if exportNtStateMatrix {
 		for k, v in ntParentResidueCols {
 			variantsPfBuilder.add("parentResidueNt/" + k, ntTrace.inject(v.spec), v.data)
 		}
+	}
+	if exportNt {
 		for k, v in ntParentSeqCols {
 			variantsPfBuilder.add("parentSequenceNt/" + k, ntTrace.inject(v.spec), v.data)
 		}
@@ -776,7 +785,7 @@ wf.body(func(args) {
 	if exportStateMatrix {
 		addStateHeatmap("aa/", aaStateMatrix.tsv, aaPropsTsv, "aminoacid", "Position aa", aaTrace, aaParentResidueCols)
 	}
-	if exportStateMatrix && exportNt {
+	if exportNtStateMatrix {
 		addStateHeatmap("nt/", ntStateMatrix.tsv, ntPropsTsv, "nucleotide", "Position nt", ntTrace, ntParentResidueCols)
 	}
 	// Region membership as a second [parentId, position] track. The cross-sample

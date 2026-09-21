@@ -7,17 +7,12 @@
 // parse, the UMI chain and the step-log map.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
-pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
-ll := import("@platforma-sdk/workflow-tengo:ll")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
-render := import("@platforma-sdk/workflow-tengo:render")
-maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 smChunks := import(":state-matrix-chunks")
 
-json := import("json")
 times := import("times")
 
 // The state matrix leaves this template already split by position: one File-valued
@@ -50,15 +45,20 @@ self.body(func(inputs) {
 	parts := params.patternParts
 	umi := params.umi
 	hasUmi := !is_undefined(umi)
-	// Opt-in nt export: gates the nt state matrix computation here; main gates the
-	// nt column exports. Defensive default when the param is absent (removeUndefs).
+	// Opt-in nt export: main gates the nt column exports. Defensive default when the
+	// param is absent (removeUndefs).
 	exportNt := !is_undefined(params.exportNt) && params.exportNt
+	// The nt state matrix is its own opt-in, independent of exportNt: it is the most
+	// expensive output, so the nt tables and the nt matrix are chosen separately.
+	// It also brings the nt parent-residue track, which mitool writes only with it.
+	exportNtStateMatrix := !is_undefined(params.exportNtStateMatrix) && params.exportNtStateMatrix
 	// Export-only-matched: when true, the per-sample abundance + state-matrix files
 	// that feed the exported `variants` frame are restricted to variants that
 	// matched a known entry (nt: assignStatus == ASSIGNED; aa: has knownAaKey). The
 	// known-overlay / QC computations below read the FULL variant set regardless.
 	exportOnlyKnown := !is_undefined(params.exportOnlyKnown) && params.exportOnlyKnown
-	// Dense matrix — variants x parentLength. Absent means the pre-flag behaviour.
+	// Dense matrix — variants x parentLength. aa level only; the nt one is above.
+	// Absent means the pre-flag behaviour.
 	exportStateMatrix := is_undefined(params.exportStateMatrix) || params.exportStateMatrix
 	parentFastaStr := params.parentFastaStr
 	parentFile := params.parentFile
@@ -183,7 +183,7 @@ self.body(func(inputs) {
 			analyzeBuilder = analyzeBuilder.arg("--aa-id-column").arg(knownAaIdColumn)
 		}
 	}
-	if exportNt {
+	if exportNtStateMatrix {
 		analyzeBuilder = analyzeBuilder.arg("--nt-state-matrix")
 	}
 	// The step reports as a TSV, for the QC row below: ptabler cannot read the JSON
@@ -223,7 +223,7 @@ self.body(func(inputs) {
 		// aggregate-parent-tables.
 		saveFile("out.aa-parent-residues.tsv").
 		saveFile("out.parents.tsv")
-	if exportNt {
+	if exportNtStateMatrix {
 		analyzeBuilder = analyzeBuilder.
 			saveFile("out.nt-state-matrix.tsv").
 			saveFile("out.nt-parent-residues.tsv")
@@ -518,7 +518,7 @@ self.body(func(inputs) {
 
 	// nt parent-residue placeholder (right header, 0 rows): mitool writes that table only
 	// alongside the nt matrix, but the output must always be present.
-	if !exportNt {
+	if !exportNtStateMatrix {
 		vAbund.filter(pt.lit(false)).select(
 			pt.col("variantKey").cast("String").alias("parentId"),
 			pt.col("variantKey").cast("String").alias("position"),
@@ -816,8 +816,8 @@ self.body(func(inputs) {
 		chunkStateMatrix(emptySmFrame(), "aa")
 	}
 
-	// nt: real matrix only when both the nt level and the matrix are exported.
-	if exportStateMatrix && exportNt {
+	// nt: its own flag, so the aa matrix and the nt tables do not decide it.
+	if exportNtStateMatrix {
 		ntSmDf := smWf.frame({
 			file: analyzeCmd.getFile("out.nt-state-matrix.tsv"),
 			xsvType: "tsv"
@@ -870,7 +870,7 @@ self.body(func(inputs) {
 		knownDesignedNt: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-nt.tsv") : ptResult.getFile("emptyKnownDesignedNt.tsv"),
 		knownDesignedAa: !is_undefined(knownNtFile) ? analyzeCmd.getFile("out.known-aa.tsv") : ptResult.getFile("emptyKnownDesignedAa.tsv"),
 		aaParentResiduesTsv: analyzeCmd.getFile("out.aa-parent-residues.tsv"),
-		ntParentResiduesTsv: exportNt ? analyzeCmd.getFile("out.nt-parent-residues.tsv") : ptResult.getFile("emptyNtParentResidues.tsv"),
+		ntParentResiduesTsv: exportNtStateMatrix ? analyzeCmd.getFile("out.nt-parent-residues.tsv") : ptResult.getFile("emptyNtParentResidues.tsv"),
 		parentsTsv: analyzeCmd.getFile("out.parents.tsv"),
 		qcRow: ptResult.getFile("qcRow.parquet"),
 		// No sampleId column — processColumn supplies the sample key from the partition.
