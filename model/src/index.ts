@@ -363,7 +363,9 @@ type BlockDataV3 = Omit<BlockDataV4, "graphStateStateHeatmap">;
 type BlockDataV4 = Omit<BlockDataV5, "minReadsPerConsensus" | "minUmiQuality">;
 type BlockDataV5 = Omit<BlockDataV6, "runMode" | "limitInput">;
 type BlockDataV6 = Omit<BlockDataV7, "exportStateMatrix">;
-type BlockDataV7 = Omit<BlockData, "exportNtStateMatrix">;
+type BlockDataV7 = Omit<BlockDataV8, "exportNtStateMatrix">;
+/** v9 changes no field, only resets `graphStateStateHeatmap`. */
+type BlockDataV8 = BlockData;
 
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -442,9 +444,19 @@ const dataModel = new DataModelBuilder({ kind })
   // The nt matrix used to ride on both older flags together, so reproduce that
   // exact condition rather than the new default. A project that was emitting it
   // keeps emitting it; one that was not stays unchanged.
-  .migrate<BlockData>("v8", (v7) => ({
+  .migrate<BlockDataV8>("v8", (v7) => ({
     ...v7,
     exportNtStateMatrix: v7.exportStateMatrix && v7.exportNt,
+  }))
+  // The Residue Composition page moved the parent picker from graph-maker's
+  // "Filter" basket to "Tab by". A saved graph state keeps whatever sits in a
+  // basket the new defaults no longer name, so an old project would carry a
+  // parent filter that fights the new tab — pick another parent in the tab bar
+  // and the filter empties the plot. Reset the whole graph state rather than
+  // patch one basket; the page's own defaults rebuild it on the next render.
+  .migrate<BlockData>("v9", (v8) => ({
+    ...v8,
+    graphStateStateHeatmap: { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
   }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
