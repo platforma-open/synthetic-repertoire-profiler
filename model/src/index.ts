@@ -35,6 +35,9 @@ export type { LengthRange, PatternHalf, PatternParts, UmiSpec } from "./pattern"
 // them from the model, and only the model is on its import path.
 export type { FrameShiftMode, ParentInputMode, ParentRegionConfig, RegionDef, RegionScheme };
 
+// Same reason: the settings panel parses an imported region-annotation file.
+export { parseRegionAnnotation } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
+
 /** mitool emits progress lines `[==PROGRESS==]<stage>: <pct>%  ETA: <eta>`. */
 export const ProgressPrefix = "[==PROGRESS==]";
 export const ProgressPattern =
@@ -130,6 +133,10 @@ export function buildParentRegionsJson(
     const names = regions.flatMap((r) => [r.name, ...(r.children?.map((ch) => ch.name) ?? [])]);
     if (new Set(names).size !== names.length)
       throw new Error(`Region names must be unique within parent ${c.parentId}.`);
+
+    // Second line, for state that reached `data` before the parser grew the check above.
+    if (parents[c.parentId] !== undefined)
+      throw new Error(`More than one region scheme for parent ${c.parentId}.`);
 
     parents[c.parentId] = {
       scheme: c.scheme,

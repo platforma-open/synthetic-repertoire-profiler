@@ -220,10 +220,30 @@ function optionalEnum<T extends string>(
   return value as T;
 }
 
+/** The `parentRegions` list read on its own, as a file — the same checks the settings
+ *  panel's import runs, so both accept the same file. `at` names the root in errors. */
+export function parseRegionAnnotation(
+  value: unknown,
+  at = "region annotation",
+): ParentRegionConfig[] {
+  if (!Array.isArray(value)) throw new Error(`'${at}' must be a list.`);
+  const configs = value.map((entry, index) => parseParentRegionConfig(entry, `${at}[${index}]`));
+
+  // `parentId` is the key of this list, not a field of an entry. The editor reads the
+  // first match and the overlay keeps the last, so a duplicate would run a scheme other
+  // than the one on screen. No editor state reaches here, so refusing it breaks nothing.
+  const seen = new Set<string>();
+  for (const c of configs) {
+    if (seen.has(c.parentId))
+      throw new Error(`'${at}' has more than one entry for parent '${c.parentId}'.`);
+    seen.add(c.parentId);
+  }
+  return configs;
+}
+
 function optionalParentRegions(value: unknown): ParentRegionConfig[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new Error("'parentRegions' must be a list.");
-  return value.map((entry, index) => parseParentRegionConfig(entry, `parentRegions[${index}]`));
+  return parseRegionAnnotation(value, "parentRegions");
 }
 
 function parseParentRegionConfig(value: unknown, at: string): ParentRegionConfig {
