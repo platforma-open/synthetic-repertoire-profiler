@@ -35,6 +35,9 @@ export type { LengthRange, PatternHalf, PatternParts, UmiSpec } from "./pattern"
 // them from the model, and only the model is on its import path.
 export type { FrameShiftMode, ParentInputMode, ParentRegionConfig, RegionDef, RegionScheme };
 
+// Same reason: the settings panel parses an imported region-annotation file.
+export { parseRegionAnnotation } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
+
 /** mitool emits progress lines `[==PROGRESS==]<stage>: <pct>%  ETA: <eta>`. */
 export const ProgressPrefix = "[==PROGRESS==]";
 export const ProgressPattern =
