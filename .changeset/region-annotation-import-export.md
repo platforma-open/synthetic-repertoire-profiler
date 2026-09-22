@@ -16,6 +16,10 @@ The file is the same list the kind already carries as the `parentRegions`
 init-param, and it is read by the same parser, so an annotation exported here
 can be pasted straight into a block template.
 
+A file with two entries for the same parent is now refused, by the import and by a
+block template alike. Before, the editor showed the first entry and the run used the
+last, with nothing saying they differed.
+
 The editor also warns when a configured parent id matches no sequence in the
 current parent FASTA. Those regions still reach the run, but no editor row shows
 them — which happens after importing an annotation written for different parent

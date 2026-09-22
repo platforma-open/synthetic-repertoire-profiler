@@ -134,6 +134,10 @@ export function buildParentRegionsJson(
     if (new Set(names).size !== names.length)
       throw new Error(`Region names must be unique within parent ${c.parentId}.`);
 
+    // Second line, for state that reached `data` before the parser grew the check above.
+    if (parents[c.parentId] !== undefined)
+      throw new Error(`More than one region scheme for parent ${c.parentId}.`);
+
     parents[c.parentId] = {
       scheme: c.scheme,
       completeFeatureName: af,

@@ -314,6 +314,11 @@ const importHandle = ref<ImportFileHandle | undefined>();
 const importError = ref<string | undefined>();
 const importNote = ref<string | undefined>();
 
+// Each pick supersedes the one before it. A read that lands after a newer pick started
+// must not write: the file it read is no longer the selected one. Not a ref — nothing
+// renders it.
+let importSeq = 0;
+
 function exportRegionAnnotation() {
   const text = JSON.stringify(app.model.data.parentRegions ?? [], null, 2);
   const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
@@ -327,6 +332,7 @@ function exportRegionAnnotation() {
 /** Read here, on the user's gesture, rather than through a prerun output: a watcher on
  *  an output that writes back to `data` is the hairpin. Only a local file can be read. */
 async function onImportFile(file: ImportFileHandle | undefined) {
+  const seq = ++importSeq;
   importError.value = undefined;
   importNote.value = undefined;
   if (!file) return;
@@ -341,12 +347,15 @@ async function onImportFile(file: ImportFileHandle | undefined) {
     const bytes = await getRawPlatformaInstance().lsDriver.getLocalFileContent(
       file as LocalImportFileHandle,
     );
+    if (seq !== importSeq) return;
+
     const configs = parseRegionAnnotation(JSON.parse(new TextDecoder().decode(bytes)));
     app.model.data.parentRegions = configs;
     // Assigning the prop does not make PlFileInput emit, so this does not re-enter.
     importHandle.value = undefined;
     importNote.value = `Imported ${configs.length} parent${configs.length === 1 ? "" : "s"}.`;
   } catch (e) {
+    if (seq !== importSeq) return;
     importError.value = e instanceof Error ? e.message : "Could not read the file.";
   }
 }
