@@ -220,10 +220,19 @@ function optionalEnum<T extends string>(
   return value as T;
 }
 
+/** The `parentRegions` list read on its own, as a file — the same checks the settings
+ *  panel's import runs, so both accept the same file. `at` names the root in errors. */
+export function parseRegionAnnotation(
+  value: unknown,
+  at = "region annotation",
+): ParentRegionConfig[] {
+  if (!Array.isArray(value)) throw new Error(`'${at}' must be a list.`);
+  return value.map((entry, index) => parseParentRegionConfig(entry, `${at}[${index}]`));
+}
+
 function optionalParentRegions(value: unknown): ParentRegionConfig[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new Error("'parentRegions' must be a list.");
-  return value.map((entry, index) => parseParentRegionConfig(entry, `parentRegions[${index}]`));
+  return parseRegionAnnotation(value, "parentRegions");
 }
 
 function parseParentRegionConfig(value: unknown, at: string): ParentRegionConfig {
