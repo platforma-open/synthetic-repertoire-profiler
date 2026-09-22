@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import {
+  parseRegionAnnotation,
   VDJ_REGION_NAMES,
   type ParentRegionConfig,
   type RegionDef,
   type RegionScheme,
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
+import type { ImportFileHandle, LocalImportFileHandle } from "@platforma-sdk/model";
+import { getRawPlatformaInstance, isImportFileHandleUpload } from "@platforma-sdk/model";
 import {
   PlAlert,
   PlBtnGhost,
   PlDropdown,
   PlElementList,
+  PlFileInput,
   PlNumberField,
   PlTextField,
   ReactiveFileContent,
@@ -304,9 +308,65 @@ const previewByParent = computed(() => {
   for (const p of parents.value) byId[p.id] = previews(p);
   return byId;
 });
+
+// One import gesture, not the user's configuration — so all three stay out of `data`.
+const importHandle = ref<ImportFileHandle | undefined>();
+const importError = ref<string | undefined>();
+const importNote = ref<string | undefined>();
+
+function exportRegionAnnotation() {
+  const text = JSON.stringify(app.model.data.parentRegions ?? [], null, 2);
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "region-annotation.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Read here, on the user's gesture, rather than through a prerun output: a watcher on
+ *  an output that writes back to `data` is the hairpin. Only a local file can be read. */
+async function onImportFile(file: ImportFileHandle | undefined) {
+  importError.value = undefined;
+  importNote.value = undefined;
+  if (!file) return;
+
+  if (!isImportFileHandleUpload(file)) {
+    importError.value =
+      "Pick the file from this computer — a file in remote storage cannot be read here.";
+    return;
+  }
+
+  try {
+    const bytes = await getRawPlatformaInstance().lsDriver.getLocalFileContent(
+      file as LocalImportFileHandle,
+    );
+    const configs = parseRegionAnnotation(JSON.parse(new TextDecoder().decode(bytes)));
+    app.model.data.parentRegions = configs;
+    // Assigning the prop does not make PlFileInput emit, so this does not re-enter.
+    importHandle.value = undefined;
+    importNote.value = `Imported ${configs.length} parent${configs.length === 1 ? "" : "s"}.`;
+  } catch (e) {
+    importError.value = e instanceof Error ? e.message : "Could not read the file.";
+  }
+}
+
+/** Configured parents with no matching sequence in the current FASTA. They still reach
+ *  the run, but no editor row shows them. */
+const strandedParentIds = computed(() => {
+  const present = new Set(parents.value.map((p) => p.id));
+  return (app.model.data.parentRegions ?? [])
+    .map((c) => c.parentId)
+    .filter((id) => !present.has(id));
+});
 </script>
 
 <template>
+  <PlAlert v-if="strandedParentIds.length > 0" type="warn" :icon="true">
+    No parent sequence matches {{ strandedParentIds.join(", ") }}. Those regions are kept and still
+    reach the run, but nothing below edits them — check that the parent FASTA uses the same ids.
+  </PlAlert>
+
   <div v-if="parents.length === 0" class="region-hint">
     Supply parent sequences above to define regions.
   </div>
@@ -460,9 +520,48 @@ const previewByParent = computed(() => {
       </PlAlert>
     </template>
   </div>
+
+  <!-- Left usable with no parents loaded: importing first and uploading the FASTA
+       after is a normal order to work in. -->
+  <div class="region-io">
+    <!-- PlFileInput has several root nodes, so a class on it is dropped. Width goes here. -->
+    <div class="region-io__file">
+      <PlFileInput
+        v-model="importHandle"
+        label="Import region annotation (JSON)"
+        :extensions="['json']"
+        :error="importError"
+        clearable
+        @update:model-value="onImportFile"
+      >
+        <template #tooltip>
+          Loads a region annotation saved earlier with Export, and replaces everything set above.
+          The parent names in the file must match your parent sequences.
+        </template>
+      </PlFileInput>
+    </div>
+
+    <PlBtnGhost icon="export" @click.prevent="exportRegionAnnotation"> Export </PlBtnGhost>
+  </div>
+
+  <div v-if="importNote" class="region-hint">{{ importNote }}</div>
 </template>
 
 <style scoped>
+/* The negative margin cancels the last parent's 16px of bottom padding, so the divider
+   sits at the 24px the accordion already puts between its children. */
+.region-io {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: -16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color-div-grey, #e0e0e0);
+}
+.region-io__file {
+  flex: 1 1 0;
+  min-width: 0;
+}
 .region-hint {
   color: var(--txt-03);
   font-size: 12px;
