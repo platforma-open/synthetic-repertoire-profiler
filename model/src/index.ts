@@ -76,7 +76,7 @@ export function buildParentRegionsJson(
       completeFeatureName?: string;
       regions: Span[];
     }
-  > = {};
+  > = Object.create(null); // parent ids are user text: `toString`/`__proto__` must be plain keys
   for (const c of configs ?? []) {
     const af = c.completeFeatureName?.trim() || undefined;
     if (c.scheme === "none" && !af) continue; // nothing to carry for this parent
