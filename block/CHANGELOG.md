@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.block
 
+## 1.4.1
+
+### Patch Changes
+
+- 4c23fdb: Update SDK: PlAgDataTable no longer recreates its grid in an endless loop
+
 ## 1.4.0
 
 ### Minor Changes
