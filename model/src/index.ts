@@ -7,11 +7,13 @@ import type {
   PlDataTableStateV2,
   PObjectSpec,
   PlRef,
+  TreeNodeAccessor,
 } from "@platforma-sdk/model";
 import {
   BlockModelV3,
+  ColumnsCollection,
   createPlDataTableStateV2,
-  createPlDataTableV2,
+  createPlDataTableV3,
   DataModelBuilder,
   isPColumnSpec,
   parseResourceMap,
@@ -645,6 +647,19 @@ function isFastqInput(v: PObjectSpec): boolean {
   );
 }
 
+/** Splits one of the block's own table outputs into its primary column and the
+ *  rest. The table has a row for each value of the primary, so it must be the
+ *  column present on every row. Exactly one primary: the label columns (e.g.
+ *  sample names) are looked up once per primary, so several would repeat them. */
+function splitOwnTableColumns(accessor: TreeNodeAccessor, primaryName: string) {
+  const columns = ColumnsCollection([accessor]);
+  const primary = { name: [{ type: "exact" as const, value: primaryName }] };
+  return {
+    primaryColumns: columns.filter({ include: primary }).getColumns(),
+    columns: columns.filter({ exclude: primary }).getColumns(),
+  };
+}
+
 export const platforma = BlockModelV3.create({ dataModel, kind })
 
   // FASTQ datasets keyed by sampleId — the dataset picker.
@@ -787,28 +802,37 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   // is exported to the result pool for downstream blocks, not shown in this
   // block's UI.
 
-  // QC report table (per-sample metrics + assignment buckets). Plain metrics
-  // table keyed by sampleId, no abundance/anchor column — so V2 (no anchor
-  // discovery).
+  // QC report table (per-sample metrics + assignment buckets), keyed by sampleId.
+  // Every sample has an nt variant count, so that column carries the rows.
   .outputWithStatus("qcTable", (ctx) => {
-    const pCols = ctx.outputs
-      ?.resolve({ field: "qc", assertFieldType: "Input", allowPermanentAbsence: true })
-      ?.getPColumns();
-    if (pCols === undefined) return undefined;
-    return createPlDataTableV2(ctx, pCols, ctx.data.qcTableState);
+    const qc = ctx.outputs?.resolve({
+      field: "qc",
+      assertFieldType: "Input",
+      allowPermanentAbsence: true,
+    });
+    if (qc === undefined) return undefined;
+    return createPlDataTableV3(ctx, {
+      ...splitOwnTableColumns(qc, "pl7.app/repertoire/qc/ntVariants"),
+      tableState: ctx.data.qcTableState,
+    });
   })
 
-  // Known-variant tables (only when the matching known set ran). Plain tables
-  // keyed [knownVariantKey], no anchor → V2. The NT table lists EVERY designed nt
-  // entry (id + sequence + metadata), with matched abundance where detected and
-  // blank abundance for undetected designed entries — matched and unmatched in
-  // one view.
+  // Known-variant tables (only when the matching known set ran), keyed
+  // [knownVariantKey]. The key is a hash of the known sequence, so the sequence
+  // column carries the rows. The NT table lists EVERY designed nt entry (id +
+  // sequence + metadata), with matched abundance where detected and blank
+  // abundance for undetected designed entries — matched and unmatched in one view.
   .outputWithStatus("knownVariantsNtTable", (ctx) => {
-    const pCols = ctx.outputs
-      ?.resolve({ field: "knownVariantsNt", assertFieldType: "Input", allowPermanentAbsence: true })
-      ?.getPColumns();
-    if (pCols === undefined) return undefined;
-    return createPlDataTableV2(ctx, pCols, ctx.data.knownVariantsNtTableState);
+    const knownNt = ctx.outputs?.resolve({
+      field: "knownVariantsNt",
+      assertFieldType: "Input",
+      allowPermanentAbsence: true,
+    });
+    if (knownNt === undefined) return undefined;
+    return createPlDataTableV3(ctx, {
+      ...splitOwnTableColumns(knownNt, "pl7.app/sequence"),
+      tableState: ctx.data.knownVariantsNtTableState,
+    });
   })
 
   // Upstream single-axis sample metadata is added so the plot can facet by sample
@@ -869,11 +893,16 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   )
 
   .outputWithStatus("knownVariantsAaTable", (ctx) => {
-    const pCols = ctx.outputs
-      ?.resolve({ field: "knownVariantsAa", assertFieldType: "Input", allowPermanentAbsence: true })
-      ?.getPColumns();
-    if (pCols === undefined) return undefined;
-    return createPlDataTableV2(ctx, pCols, ctx.data.knownVariantsAaTableState);
+    const knownAa = ctx.outputs?.resolve({
+      field: "knownVariantsAa",
+      assertFieldType: "Input",
+      allowPermanentAbsence: true,
+    });
+    if (knownAa === undefined) return undefined;
+    return createPlDataTableV3(ctx, {
+      ...splitOwnTableColumns(knownAa, "pl7.app/sequence"),
+      tableState: ctx.data.knownVariantsAaTableState,
+    });
   })
 
   .args<BlockArgs>((data) => {
