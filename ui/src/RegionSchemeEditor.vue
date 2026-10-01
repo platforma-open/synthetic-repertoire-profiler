@@ -252,24 +252,27 @@ const rowKey = (row: { id: number }) => row.id;
 const confirmReset = useConfirm({
   title: "Reset to FR1–FR4?",
   message:
-    "Regions with other names and all sub-regions of this parent will be deleted. " +
-    "Lengths of FR and CDR regions are kept.",
+    "Regions with other names, repeated FR or CDR rows and all sub-regions of this parent " +
+    "will be deleted. The length of the first row of each FR and CDR region is kept.",
   confirmLabel: "Reset",
 });
 
 async function resetToVdjRegions(parentId: string) {
   const cfg = configFor(parentId);
   const vdjNames = new Set<string>(VDJ_REGION_NAMES);
-  const loses = cfg.regions.some(
-    (r) =>
-      (r.children?.length ?? 0) > 0 ||
-      (!vdjNames.has(r.name.trim()) && (r.name.trim() !== "" || r.length > 0)),
-  );
+  // The first row of each FR/CDR name keeps its length; a repeat of that name is dropped.
+  const lengths = new Map<string, number>();
+  let loses = false;
+  for (const r of cfg.regions) {
+    const name = r.name.trim();
+    if ((r.children?.length ?? 0) > 0) loses = true;
+    if (!vdjNames.has(name)) {
+      if (name !== "" || r.length > 0) loses = true;
+    } else if (lengths.has(name)) loses = true;
+    else lengths.set(name, r.length);
+  }
   if (loses && !(await confirmReset())) return;
-  setConfig({
-    ...configFor(parentId),
-    regions: vdjSeed(new Map(cfg.regions.map((r) => [r.name.trim(), r.length]))),
-  });
+  setConfig({ ...configFor(parentId), regions: vdjSeed(lengths) });
 }
 
 // Slices a span out of the parent and works out whether it can carry an amino-acid
@@ -392,21 +395,52 @@ async function onImportFile(file: ImportFileHandle | undefined) {
   }
 }
 
-/** Configured parents with no matching sequence in the current FASTA. They still reach
- *  the run, but no editor row shows them. */
-const strandedParentIds = computed(() => {
+/** Configured parents with no matching sequence in the current FASTA. No editor row shows
+ *  them, so the warning lists every one: those that still reach the run, and those kept
+ *  under `none` that do not. Both are exported, so the user must be able to see them. */
+const strandedConfigs = computed(() => {
   const present = new Set(parents.value.map((p) => p.id));
-  return (app.model.data.parentRegions ?? [])
-    .filter((c) => c.scheme !== "none" || c.completeFeatureName?.trim())
-    .map((c) => c.parentId)
-    .filter((id) => !present.has(id));
+  return (app.model.data.parentRegions ?? []).filter((c) => !present.has(c.parentId));
 });
+const reachesRun = (c: ParentRegionConfig) =>
+  c.scheme !== "none" || !!c.completeFeatureName?.trim();
+const strandedUsedIds = computed(() =>
+  strandedConfigs.value.filter(reachesRun).map((c) => c.parentId),
+);
+const strandedUnusedIds = computed(() =>
+  strandedConfigs.value.filter((c) => !reachesRun(c)).map((c) => c.parentId),
+);
+
+const confirmRemoveStranded = useConfirm({
+  title: "Remove unmatched regions?",
+  message:
+    "Regions of parents that match no sequence in the parent FASTA will be deleted. " +
+    "Regions of the parents shown below are not affected.",
+  confirmLabel: "Remove",
+});
+
+async function removeStranded() {
+  if (!(await confirmRemoveStranded())) return;
+  const present = new Set(parents.value.map((p) => p.id));
+  app.model.data.parentRegions = (app.model.data.parentRegions ?? []).filter((c) =>
+    present.has(c.parentId),
+  );
+}
 </script>
 
 <template>
-  <PlAlert v-if="strandedParentIds.length > 0" type="warn" :icon="true">
-    No parent sequence matches {{ strandedParentIds.join(", ") }}. Those regions are kept and still
-    reach the run, but nothing below edits them — check that the parent FASTA uses the same ids.
+  <PlAlert v-if="strandedConfigs.length > 0" type="warn" :icon="true">
+    No parent sequence matches some saved regions, so nothing below edits them. Check that the
+    parent FASTA uses the same ids.
+    <template v-if="strandedUsedIds.length > 0">
+      Still used in the run: {{ strandedUsedIds.join(", ") }}.
+    </template>
+    <template v-if="strandedUnusedIds.length > 0">
+      Kept but not used (scheme None): {{ strandedUnusedIds.join(", ") }}.
+    </template>
+    <div>
+      <PlBtnGhost @click.prevent="removeStranded"> Remove unmatched regions </PlBtnGhost>
+    </div>
   </PlAlert>
 
   <div v-if="parents.length === 0" class="region-hint">
