@@ -37,6 +37,10 @@ const schemeOptions = [
   { label: "Custom regions", value: "custom" as const },
 ];
 
+// A parent shown in the editor. `missing` marks a saved config whose parent id is not in the
+// FASTA: it has no sequence, so only lengths and offsets can be shown for it.
+type EditorParent = ParsedParent & { missing?: boolean };
+
 // Parent ids + sequences from the FASTA the user supplied (pasted directly, or
 // read from the uploaded file's bytes once the prerun delivers them).
 const parents = computed<ParsedParent[]>(() => {
@@ -288,7 +292,7 @@ function spanPreview(p: ParsedParent, r: RegionDef, begin: number, end: number, 
 // Per-parent region previews (begin/end + sliced nt/aa) and the warnings. Recurses one
 // level: a region's sub-regions are laid out by the same cumulative rule, seeded at the
 // region's own begin, which is exactly what buildParentRegionsJson does on the model side.
-function previews(p: ParsedParent) {
+function previews(p: EditorParent) {
   const cfg = configFor(p.id);
   const offs = cumulativeOffsets(cfg.regions.map((r) => r.length));
   const ids = idsFor(p.id, cfg.regions.length);
@@ -319,14 +323,14 @@ function previews(p: ParsedParent) {
   const untiled = rows
     .filter((r) => r.childGap !== 0)
     .map((r) => `${r.name || "(unnamed)"} (${r.childGap > 0 ? "+" : ""}${r.childGap} nt)`);
-  return { rows, total, overflow: total > p.sequence.length, outOfFrame, untiled };
+  return { rows, total, overflow: !p.missing && total > p.sequence.length, outOfFrame, untiled };
 }
 
 // previews() slices and translates sequences, and the template reads it four
 // times per parent — compute it once per render pass instead.
 const previewByParent = computed(() => {
   const byId: Record<string, ReturnType<typeof previews>> = {};
-  for (const p of parents.value) byId[p.id] = previews(p);
+  for (const p of editorParents.value) byId[p.id] = previews(p);
   return byId;
 });
 
@@ -395,66 +399,78 @@ async function onImportFile(file: ImportFileHandle | undefined) {
   }
 }
 
-/** Configured parents with no matching sequence in the current FASTA. No editor row shows
- *  them, so the warning lists every one: those that still reach the run, and those kept
- *  under `none` that do not. Both are exported, so the user must be able to see them.
- *  Empty while no parent sequence is loaded: every entry would be "unmatched" then, and the
- *  block cannot run without parents anyway. */
-const strandedConfigs = computed(() => {
+/** Configured parents with no matching sequence in the current FASTA — typically a parent
+ *  renamed after its regions were entered. They get an editor section of their own, so the
+ *  regions can be moved to the right parent or deleted rather than retyped. Empty while no
+ *  parent sequence is loaded: every entry would be "unmatched" then, and the block cannot
+ *  run without parents anyway. */
+const missingParents = computed<EditorParent[]>(() => {
   if (parents.value.length === 0) return [];
   const present = new Set(parents.value.map((p) => p.id));
-  return (app.model.data.parentRegions ?? []).filter((c) => !present.has(c.parentId));
-});
-const reachesRun = (c: ParentRegionConfig) =>
-  c.scheme !== "none" || !!c.completeFeatureName?.trim();
-const strandedUsedIds = computed(() =>
-  strandedConfigs.value.filter(reachesRun).map((c) => c.parentId),
-);
-const strandedUnusedIds = computed(() =>
-  strandedConfigs.value.filter((c) => !reachesRun(c)).map((c) => c.parentId),
-);
-
-const confirmRemoveStranded = useConfirm({
-  title: "Remove unmatched regions?",
-  message:
-    "Regions of parents that match no sequence in the parent FASTA will be deleted. " +
-    "Regions of the parents shown below are not affected.",
-  confirmLabel: "Remove",
+  return (app.model.data.parentRegions ?? [])
+    .filter((c) => !present.has(c.parentId))
+    .map((c) => ({ id: c.parentId, sequence: "", missing: true }));
 });
 
-async function removeStranded() {
-  if (!(await confirmRemoveStranded())) return;
-  const present = new Set(parents.value.map((p) => p.id));
-  app.model.data.parentRegions = (app.model.data.parentRegions ?? []).filter((c) =>
-    present.has(c.parentId),
+const editorParents = computed<EditorParent[]>(() => [...parents.value, ...missingParents.value]);
+
+/** Parents a missing parent's regions can move to: only those with nothing saved yet, so a
+ *  move never overwrites regions. */
+const moveTargets = computed(() => {
+  const configured = new Set((app.model.data.parentRegions ?? []).map((c) => c.parentId));
+  return parents.value
+    .filter((p) => !configured.has(p.id))
+    .map((p) => ({ label: p.id, value: p.id }));
+});
+
+function moveRegions(fromId: string, toId: string) {
+  app.model.data.parentRegions = (app.model.data.parentRegions ?? []).map((c) =>
+    c.parentId === fromId ? { ...c, parentId: toId } : c,
+  );
+}
+
+const confirmDeleteRegions = useConfirm({
+  title: "Delete these regions?",
+  message: "The regions saved for this parent will be deleted.",
+  confirmLabel: "Delete",
+});
+
+async function deleteRegions(parentId: string) {
+  if (!(await confirmDeleteRegions())) return;
+  app.model.data.parentRegions = (app.model.data.parentRegions ?? []).filter(
+    (c) => c.parentId !== parentId,
   );
 }
 </script>
 
 <template>
-  <PlAlert v-if="strandedConfigs.length > 0" type="warn" :icon="true">
-    No parent sequence matches some saved regions, so nothing below edits them. Check that the
-    parent FASTA uses the same ids.
-    <template v-if="strandedUsedIds.length > 0">
-      Still used in the run: {{ strandedUsedIds.join(", ") }}.
-    </template>
-    <template v-if="strandedUnusedIds.length > 0">
-      Kept but not used (scheme None): {{ strandedUnusedIds.join(", ") }}.
-    </template>
-    <div>
-      <PlBtnGhost @click.prevent="removeStranded"> Remove unmatched regions </PlBtnGhost>
-    </div>
-  </PlAlert>
-
   <div v-if="parents.length === 0" class="region-hint">
     Supply parent sequences above to define regions.
   </div>
 
-  <div v-for="p in parents" :key="p.id" class="region-parent">
+  <div v-for="p in editorParents" :key="p.id" class="region-parent">
     <div class="region-parent__head">
       <span class="region-parent__id">{{ p.id }}</span>
-      <span class="region-parent__len">{{ p.sequence.length }} nt</span>
+      <span v-if="!p.missing" class="region-parent__len">{{ p.sequence.length }} nt</span>
+      <PlBtnGhost v-else icon="delete-bin" @click.prevent="deleteRegions(p.id)">
+        Delete
+      </PlBtnGhost>
     </div>
+
+    <template v-if="p.missing">
+      <div class="region-parent__error">
+        No sequence named {{ p.id }} in the parent FASTA. These regions are not applied to any
+        parent. Move them to the right parent, or delete them.
+      </div>
+
+      <PlDropdown
+        v-if="moveTargets.length > 0"
+        :model-value="undefined"
+        :options="moveTargets"
+        label="Move regions to parent"
+        @update:model-value="(v) => v && moveRegions(p.id, v as string)"
+      />
+    </template>
 
     <PlDropdown
       :model-value="configFor(p.id).scheme"
@@ -669,6 +685,10 @@ async function removeStranded() {
 }
 .region-parent__id {
   font-weight: 600;
+}
+.region-parent__error {
+  color: var(--txt-error);
+  font-size: 12px;
 }
 .region-parent__len {
   color: var(--txt-03);
