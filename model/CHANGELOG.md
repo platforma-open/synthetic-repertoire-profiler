@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.model
 
+## 1.3.3
+
+### Patch Changes
+
+- 8036848: Region annotation editor: switching the scheme no longer clears the regions. Reset to FR1–FR4 and Import now ask before they delete regions the user entered.
+
 ## 1.3.2
 
 ### Patch Changes
