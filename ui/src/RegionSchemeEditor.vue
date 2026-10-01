@@ -17,6 +17,7 @@ import {
   PlNumberField,
   PlTextField,
   ReactiveFileContent,
+  useConfirm,
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "./app";
@@ -56,39 +57,37 @@ function configFor(parentId: string): ParentRegionConfig {
   );
 }
 
-// Persist an updated config, dropping entries that carry nothing (scheme none and
-// no complete feature name) so a cleared parent leaves no trace in args.
+// Persist an updated config, dropping entries that carry nothing (scheme none, no
+// complete feature name and no kept regions) so a cleared parent leaves no trace.
 function setConfig(cfg: ParentRegionConfig) {
   const rest = (app.model.data.parentRegions ?? []).filter((c) => c.parentId !== cfg.parentId);
-  const empty = cfg.scheme === "none" && !cfg.completeFeatureName?.trim();
+  const empty =
+    cfg.scheme === "none" && !cfg.completeFeatureName?.trim() && cfg.regions.length === 0;
   app.model.data.parentRegions = empty ? rest : [...rest, cfg];
 }
 
+const vdjSeed = (lengths?: Map<string, number>): RegionDef[] =>
+  VDJ_REGION_NAMES.map((name) => ({ name, length: lengths?.get(name) ?? 0 }));
+
+// The scheme is a label on the region list, not a reset: switching keeps the regions,
+// so a user who tries another scheme and comes back finds their work. `none` keeps them
+// too — the model skips a `none` parent's regions, so they stay out of the run. Only the
+// full sequence name is cleared on `none`: its field is hidden there, and a hidden value
+// would still reach the run.
 function onScheme(parentId: string, scheme: RegionScheme) {
   const cur = configFor(parentId);
-  // Switching scheme resets the full sequence name: VDJ gets its conventional
-  // default, custom/none start blank so a previous scheme's value doesn't leak.
-  if (scheme === "vdj") {
-    const byName = new Map(cur.regions.map((r) => [r.name, r.length]));
-    setConfig({
-      parentId,
-      scheme,
-      completeFeatureName: "VDJRegion",
-      regions: VDJ_REGION_NAMES.map((name) => ({ name, length: byName.get(name) ?? 0 })),
-    });
-  } else if (scheme === "custom") {
-    // Keep regions only when coming from a previous custom layout; switching from
-    // VDJ must start fresh so the fixed VDJ regions don't leak into custom mode.
-    const keep = cur.scheme === "custom" && cur.regions.length > 0;
-    setConfig({
-      parentId,
-      scheme,
-      completeFeatureName: undefined,
-      regions: keep ? cur.regions : [{ name: "", length: 0 }],
-    });
-  } else {
-    setConfig({ parentId, scheme: "none", completeFeatureName: undefined, regions: [] });
+  if (scheme === "none") {
+    setConfig({ ...cur, scheme, completeFeatureName: undefined });
+    return;
   }
+  const seeded =
+    cur.regions.length > 0 ? cur.regions : scheme === "vdj" ? vdjSeed() : [{ name: "", length: 0 }];
+  setConfig({
+    ...cur,
+    scheme,
+    completeFeatureName: cur.completeFeatureName ?? (scheme === "vdj" ? "VDJRegion" : undefined),
+    regions: seeded,
+  });
 }
 
 function setCompleteFeatureName(parentId: string, name: string) {
@@ -247,11 +246,30 @@ function idsFor(parentId: string, count: number): number[] {
 
 const rowKey = (row: { id: number }) => row.id;
 
-// Reseed the VDJ scheme with the conventional FR1-FR4 partition. Same path as
-// picking the scheme in the dropdown, so a length already typed for a surviving
-// name carries over and a renamed region loses its length.
-function resetToVdjRegions(parentId: string) {
-  onScheme(parentId, "vdj");
+// Reseed the VDJ scheme with the conventional FR1-FR4 partition. A length already typed
+// for a surviving name carries over; any other region and every sub-region is dropped,
+// so the user confirms first whenever the reset would delete something they entered.
+const confirmReset = useConfirm({
+  title: "Reset to FR1–FR4?",
+  message:
+    "Regions with other names and all sub-regions of this parent will be deleted. " +
+    "Lengths of FR and CDR regions are kept.",
+  confirmLabel: "Reset",
+});
+
+async function resetToVdjRegions(parentId: string) {
+  const cfg = configFor(parentId);
+  const vdjNames = new Set<string>(VDJ_REGION_NAMES);
+  const loses = cfg.regions.some(
+    (r) =>
+      (r.children?.length ?? 0) > 0 ||
+      (!vdjNames.has(r.name.trim()) && (r.name.trim() !== "" || r.length > 0)),
+  );
+  if (loses && !(await confirmReset())) return;
+  setConfig({
+    ...configFor(parentId),
+    regions: vdjSeed(new Map(cfg.regions.map((r) => [r.name.trim(), r.length]))),
+  });
 }
 
 // Slices a span out of the parent and works out whether it can carry an amino-acid
@@ -319,6 +337,13 @@ const importNote = ref<string | undefined>();
 // renders it.
 let importSeq = 0;
 
+const confirmImport = useConfirm({
+  title: "Replace the region annotation?",
+  message:
+    "The imported file replaces the regions of every parent, including regions you entered here.",
+  confirmLabel: "Replace",
+});
+
 function exportRegionAnnotation() {
   const text = JSON.stringify(app.model.data.parentRegions ?? [], null, 2);
   const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
@@ -350,6 +375,13 @@ async function onImportFile(file: ImportFileHandle | undefined) {
     if (seq !== importSeq) return;
 
     const configs = parseRegionAnnotation(JSON.parse(new TextDecoder().decode(bytes)));
+    // Asked only after the file parses, so a broken file reports its error, not a dialog.
+    const hasCurrent = (app.model.data.parentRegions ?? []).length > 0;
+    if (hasCurrent && !(await confirmImport())) {
+      if (seq === importSeq) importHandle.value = undefined;
+      return;
+    }
+    if (seq !== importSeq) return;
     app.model.data.parentRegions = configs;
     // Assigning the prop does not make PlFileInput emit, so this does not re-enter.
     importHandle.value = undefined;
@@ -365,6 +397,7 @@ async function onImportFile(file: ImportFileHandle | undefined) {
 const strandedParentIds = computed(() => {
   const present = new Set(parents.value.map((p) => p.id));
   return (app.model.data.parentRegions ?? [])
+    .filter((c) => c.scheme !== "none" || c.completeFeatureName?.trim())
     .map((c) => c.parentId)
     .filter((id) => !present.has(id));
 });
@@ -392,6 +425,16 @@ const strandedParentIds = computed(() => {
       label="Scheme"
       @update:model-value="(v) => onScheme(p.id, v as RegionScheme)"
     />
+
+    <div
+      v-if="configFor(p.id).scheme === 'none' && configFor(p.id).regions.length > 0"
+      class="region-hint"
+    >
+      {{ configFor(p.id).regions.length }} region{{
+        configFor(p.id).regions.length === 1 ? "" : "s"
+      }}
+      kept but not used. Pick a scheme to edit and use them again.
+    </div>
 
     <template v-if="configFor(p.id).scheme !== 'none'">
       <PlTextField
