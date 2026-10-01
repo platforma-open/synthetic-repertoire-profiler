@@ -397,8 +397,11 @@ async function onImportFile(file: ImportFileHandle | undefined) {
 
 /** Configured parents with no matching sequence in the current FASTA. No editor row shows
  *  them, so the warning lists every one: those that still reach the run, and those kept
- *  under `none` that do not. Both are exported, so the user must be able to see them. */
+ *  under `none` that do not. Both are exported, so the user must be able to see them.
+ *  Empty while no parent sequence is loaded: every entry would be "unmatched" then, and the
+ *  block cannot run without parents anyway. */
 const strandedConfigs = computed(() => {
+  if (parents.value.length === 0) return [];
   const present = new Set(parents.value.map((p) => p.id));
   return (app.model.data.parentRegions ?? []).filter((c) => !present.has(c.parentId));
 });
