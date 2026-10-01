@@ -17,6 +17,7 @@ import {
   PlNumberField,
   PlTextField,
   ReactiveFileContent,
+  useConfirm,
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "./app";
@@ -35,6 +36,10 @@ const schemeOptions = [
   { label: "VDJ", value: "vdj" as const },
   { label: "Custom regions", value: "custom" as const },
 ];
+
+// A parent shown in the editor. `missing` marks a saved config whose parent id is not in the
+// FASTA: it has no sequence, so only lengths and offsets can be shown for it.
+type EditorParent = ParsedParent & { missing?: boolean };
 
 // Parent ids + sequences from the FASTA the user supplied (pasted directly, or
 // read from the uploaded file's bytes once the prerun delivers them).
@@ -56,39 +61,37 @@ function configFor(parentId: string): ParentRegionConfig {
   );
 }
 
-// Persist an updated config, dropping entries that carry nothing (scheme none and
-// no complete feature name) so a cleared parent leaves no trace in args.
+// Persist an updated config, dropping entries that carry nothing (scheme none, no
+// complete feature name and no kept regions) so a cleared parent leaves no trace.
 function setConfig(cfg: ParentRegionConfig) {
   const rest = (app.model.data.parentRegions ?? []).filter((c) => c.parentId !== cfg.parentId);
-  const empty = cfg.scheme === "none" && !cfg.completeFeatureName?.trim();
+  const empty =
+    cfg.scheme === "none" && !cfg.completeFeatureName?.trim() && cfg.regions.length === 0;
   app.model.data.parentRegions = empty ? rest : [...rest, cfg];
 }
 
+const vdjSeed = (lengths?: Map<string, number>): RegionDef[] =>
+  VDJ_REGION_NAMES.map((name) => ({ name, length: lengths?.get(name) ?? 0 }));
+
+// The scheme is a label on the region list, not a reset: switching keeps the regions,
+// so a user who tries another scheme and comes back finds their work. `none` keeps them
+// too — the model skips a `none` parent's regions, so they stay out of the run. Only the
+// full sequence name is cleared on `none`: its field is hidden there, and a hidden value
+// would still reach the run.
 function onScheme(parentId: string, scheme: RegionScheme) {
   const cur = configFor(parentId);
-  // Switching scheme resets the full sequence name: VDJ gets its conventional
-  // default, custom/none start blank so a previous scheme's value doesn't leak.
-  if (scheme === "vdj") {
-    const byName = new Map(cur.regions.map((r) => [r.name, r.length]));
-    setConfig({
-      parentId,
-      scheme,
-      completeFeatureName: "VDJRegion",
-      regions: VDJ_REGION_NAMES.map((name) => ({ name, length: byName.get(name) ?? 0 })),
-    });
-  } else if (scheme === "custom") {
-    // Keep regions only when coming from a previous custom layout; switching from
-    // VDJ must start fresh so the fixed VDJ regions don't leak into custom mode.
-    const keep = cur.scheme === "custom" && cur.regions.length > 0;
-    setConfig({
-      parentId,
-      scheme,
-      completeFeatureName: undefined,
-      regions: keep ? cur.regions : [{ name: "", length: 0 }],
-    });
-  } else {
-    setConfig({ parentId, scheme: "none", completeFeatureName: undefined, regions: [] });
+  if (scheme === "none") {
+    setConfig({ ...cur, scheme, completeFeatureName: undefined });
+    return;
   }
+  const seeded =
+    cur.regions.length > 0 ? cur.regions : scheme === "vdj" ? vdjSeed() : [{ name: "", length: 0 }];
+  setConfig({
+    ...cur,
+    scheme,
+    completeFeatureName: cur.completeFeatureName ?? (scheme === "vdj" ? "VDJRegion" : undefined),
+    regions: seeded,
+  });
 }
 
 function setCompleteFeatureName(parentId: string, name: string) {
@@ -247,11 +250,33 @@ function idsFor(parentId: string, count: number): number[] {
 
 const rowKey = (row: { id: number }) => row.id;
 
-// Reseed the VDJ scheme with the conventional FR1-FR4 partition. Same path as
-// picking the scheme in the dropdown, so a length already typed for a surviving
-// name carries over and a renamed region loses its length.
-function resetToVdjRegions(parentId: string) {
-  onScheme(parentId, "vdj");
+// Reseed the VDJ scheme with the conventional FR1-FR4 partition. A length already typed
+// for a surviving name carries over; any other region and every sub-region is dropped,
+// so the user confirms first whenever the reset would delete something they entered.
+const confirmReset = useConfirm({
+  title: "Reset to FR1–FR4?",
+  message:
+    "Regions with other names, repeated FR or CDR rows and all sub-regions of this parent " +
+    "will be deleted. The length of the first row of each FR and CDR region is kept.",
+  confirmLabel: "Reset",
+});
+
+async function resetToVdjRegions(parentId: string) {
+  const cfg = configFor(parentId);
+  const vdjNames = new Set<string>(VDJ_REGION_NAMES);
+  // The first row of each FR/CDR name keeps its length; a repeat of that name is dropped.
+  const lengths = new Map<string, number>();
+  let loses = false;
+  for (const r of cfg.regions) {
+    const name = r.name.trim();
+    if ((r.children?.length ?? 0) > 0) loses = true;
+    if (!vdjNames.has(name)) {
+      if (name !== "" || r.length > 0) loses = true;
+    } else if (lengths.has(name)) loses = true;
+    else lengths.set(name, r.length);
+  }
+  if (loses && !(await confirmReset())) return;
+  setConfig({ ...configFor(parentId), regions: vdjSeed(lengths) });
 }
 
 // Slices a span out of the parent and works out whether it can carry an amino-acid
@@ -267,7 +292,7 @@ function spanPreview(p: ParsedParent, r: RegionDef, begin: number, end: number, 
 // Per-parent region previews (begin/end + sliced nt/aa) and the warnings. Recurses one
 // level: a region's sub-regions are laid out by the same cumulative rule, seeded at the
 // region's own begin, which is exactly what buildParentRegionsJson does on the model side.
-function previews(p: ParsedParent) {
+function previews(p: EditorParent) {
   const cfg = configFor(p.id);
   const offs = cumulativeOffsets(cfg.regions.map((r) => r.length));
   const ids = idsFor(p.id, cfg.regions.length);
@@ -298,14 +323,14 @@ function previews(p: ParsedParent) {
   const untiled = rows
     .filter((r) => r.childGap !== 0)
     .map((r) => `${r.name || "(unnamed)"} (${r.childGap > 0 ? "+" : ""}${r.childGap} nt)`);
-  return { rows, total, overflow: total > p.sequence.length, outOfFrame, untiled };
+  return { rows, total, overflow: !p.missing && total > p.sequence.length, outOfFrame, untiled };
 }
 
 // previews() slices and translates sequences, and the template reads it four
 // times per parent — compute it once per render pass instead.
 const previewByParent = computed(() => {
   const byId: Record<string, ReturnType<typeof previews>> = {};
-  for (const p of parents.value) byId[p.id] = previews(p);
+  for (const p of editorParents.value) byId[p.id] = previews(p);
   return byId;
 });
 
@@ -318,6 +343,13 @@ const importNote = ref<string | undefined>();
 // must not write: the file it read is no longer the selected one. Not a ref — nothing
 // renders it.
 let importSeq = 0;
+
+const confirmImport = useConfirm({
+  title: "Replace the region annotation?",
+  message:
+    "The imported file replaces the regions of every parent, including regions you entered here.",
+  confirmLabel: "Replace",
+});
 
 function exportRegionAnnotation() {
   const text = JSON.stringify(app.model.data.parentRegions ?? [], null, 2);
@@ -350,6 +382,13 @@ async function onImportFile(file: ImportFileHandle | undefined) {
     if (seq !== importSeq) return;
 
     const configs = parseRegionAnnotation(JSON.parse(new TextDecoder().decode(bytes)));
+    // Asked only after the file parses, so a broken file reports its error, not a dialog.
+    const hasCurrent = (app.model.data.parentRegions ?? []).length > 0;
+    if (hasCurrent && !(await confirmImport())) {
+      if (seq === importSeq) importHandle.value = undefined;
+      return;
+    }
+    if (seq !== importSeq) return;
     app.model.data.parentRegions = configs;
     // Assigning the prop does not make PlFileInput emit, so this does not re-enter.
     importHandle.value = undefined;
@@ -360,31 +399,78 @@ async function onImportFile(file: ImportFileHandle | undefined) {
   }
 }
 
-/** Configured parents with no matching sequence in the current FASTA. They still reach
- *  the run, but no editor row shows them. */
-const strandedParentIds = computed(() => {
+/** Configured parents with no matching sequence in the current FASTA — typically a parent
+ *  renamed after its regions were entered. They get an editor section of their own, so the
+ *  regions can be moved to the right parent or deleted rather than retyped. Empty while no
+ *  parent sequence is loaded: every entry would be "unmatched" then, and the block cannot
+ *  run without parents anyway. */
+const missingParents = computed<EditorParent[]>(() => {
+  if (parents.value.length === 0) return [];
   const present = new Set(parents.value.map((p) => p.id));
   return (app.model.data.parentRegions ?? [])
-    .map((c) => c.parentId)
-    .filter((id) => !present.has(id));
+    .filter((c) => !present.has(c.parentId))
+    .map((c) => ({ id: c.parentId, sequence: "", missing: true }));
 });
+
+const editorParents = computed<EditorParent[]>(() => [...parents.value, ...missingParents.value]);
+
+/** Parents a missing parent's regions can move to: only those with nothing saved yet, so a
+ *  move never overwrites regions. */
+const moveTargets = computed(() => {
+  const configured = new Set((app.model.data.parentRegions ?? []).map((c) => c.parentId));
+  return parents.value
+    .filter((p) => !configured.has(p.id))
+    .map((p) => ({ label: p.id, value: p.id }));
+});
+
+function moveRegions(fromId: string, toId: string) {
+  app.model.data.parentRegions = (app.model.data.parentRegions ?? []).map((c) =>
+    c.parentId === fromId ? { ...c, parentId: toId } : c,
+  );
+}
+
+const confirmDeleteRegions = useConfirm({
+  title: "Delete these regions?",
+  message: "The regions saved for this parent will be deleted.",
+  confirmLabel: "Delete",
+});
+
+async function deleteRegions(parentId: string) {
+  if (!(await confirmDeleteRegions())) return;
+  app.model.data.parentRegions = (app.model.data.parentRegions ?? []).filter(
+    (c) => c.parentId !== parentId,
+  );
+}
 </script>
 
 <template>
-  <PlAlert v-if="strandedParentIds.length > 0" type="warn" :icon="true">
-    No parent sequence matches {{ strandedParentIds.join(", ") }}. Those regions are kept and still
-    reach the run, but nothing below edits them — check that the parent FASTA uses the same ids.
-  </PlAlert>
-
   <div v-if="parents.length === 0" class="region-hint">
     Supply parent sequences above to define regions.
   </div>
 
-  <div v-for="p in parents" :key="p.id" class="region-parent">
+  <div v-for="p in editorParents" :key="p.id" class="region-parent">
     <div class="region-parent__head">
       <span class="region-parent__id">{{ p.id }}</span>
-      <span class="region-parent__len">{{ p.sequence.length }} nt</span>
+      <span v-if="!p.missing" class="region-parent__len">{{ p.sequence.length }} nt</span>
+      <PlBtnGhost v-else icon="delete-bin" @click.prevent="deleteRegions(p.id)">
+        Delete
+      </PlBtnGhost>
     </div>
+
+    <template v-if="p.missing">
+      <div class="region-parent__error">
+        No sequence named {{ p.id }} in the parent FASTA. These regions are not applied to any
+        parent. Move them to the right parent, or delete them.
+      </div>
+
+      <PlDropdown
+        v-if="moveTargets.length > 0"
+        :model-value="undefined"
+        :options="moveTargets"
+        label="Move regions to parent"
+        @update:model-value="(v) => v && moveRegions(p.id, v as string)"
+      />
+    </template>
 
     <PlDropdown
       :model-value="configFor(p.id).scheme"
@@ -392,6 +478,16 @@ const strandedParentIds = computed(() => {
       label="Scheme"
       @update:model-value="(v) => onScheme(p.id, v as RegionScheme)"
     />
+
+    <div
+      v-if="configFor(p.id).scheme === 'none' && configFor(p.id).regions.length > 0"
+      class="region-hint"
+    >
+      {{ configFor(p.id).regions.length }} region{{
+        configFor(p.id).regions.length === 1 ? "" : "s"
+      }}
+      kept but not used. Pick a scheme to edit and use them again.
+    </div>
 
     <template v-if="configFor(p.id).scheme !== 'none'">
       <PlTextField
@@ -589,6 +685,10 @@ const strandedParentIds = computed(() => {
 }
 .region-parent__id {
   font-weight: 600;
+}
+.region-parent__error {
+  color: var(--txt-error);
+  font-size: 12px;
 }
 .region-parent__len {
   color: var(--txt-03);
