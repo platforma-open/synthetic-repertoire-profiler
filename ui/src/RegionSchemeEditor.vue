@@ -82,6 +82,9 @@ const vdjSeed = (lengths?: Map<string, number>): RegionDef[] =>
 // too — the model skips a `none` parent's regions, so they stay out of the run. Only the
 // full sequence name is cleared on `none`: its field is hidden there, and a hidden value
 // would still reach the run.
+// One codon: a new region is valid and in frame before the user types a length.
+const NEW_REGION_LENGTH = 3;
+
 function onScheme(parentId: string, scheme: RegionScheme) {
   const cur = configFor(parentId);
   if (scheme === "none") {
@@ -89,7 +92,11 @@ function onScheme(parentId: string, scheme: RegionScheme) {
     return;
   }
   const seeded =
-    cur.regions.length > 0 ? cur.regions : scheme === "vdj" ? vdjSeed() : [{ name: "", length: 0 }];
+    cur.regions.length > 0
+      ? cur.regions
+      : scheme === "vdj"
+        ? vdjSeed()
+        : [{ name: "", length: NEW_REGION_LENGTH }];
   setConfig({
     ...cur,
     scheme,
@@ -110,7 +117,7 @@ function setRegion(parentId: string, i: number, patch: Partial<{ name: string; l
 
 function addRegion(parentId: string) {
   const cfg = configFor(parentId);
-  setConfig({ ...cfg, regions: [...cfg.regions, { name: "", length: 0 }] });
+  setConfig({ ...cfg, regions: [...cfg.regions, { name: "", length: NEW_REGION_LENGTH }] });
 }
 
 function setChild(
@@ -135,9 +142,8 @@ function setChild(
 // fall back to one nt and the graft takes the rest — valid, but the out-of-frame warning
 // will say the parts carry no amino-acid columns until the lengths are adjusted.
 function splitThree(len: number): [number, number, number] {
-  // Lengths are not typed yet on a freshly picked scheme — every region starts at 0.
-  // Give the graft the whole (empty) span rather than refuse: the row is created, tiling
-  // holds at 0 = 0, and the user fills the numbers in the same pass as everything else.
+  // Too short for a flank on each side. Give the graft the whole span rather than refuse:
+  // the row is created, tiling holds, and the user fills the numbers in from there.
   if (len < 3) return [0, len, 0];
   const flank = Math.max(1, Math.floor(Math.floor(len / 3) / 3) * 3);
   if (2 * flank + 1 > len) return [1, len - 2, 1];
