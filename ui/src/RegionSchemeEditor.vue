@@ -2,6 +2,7 @@
 import {
   featureNameError,
   parseRegionAnnotation,
+  regionLengthError,
   VDJ_REGION_NAMES,
   type ParentRegionConfig,
   type RegionDef,
@@ -528,6 +529,7 @@ async function deleteRegions(parentId: string) {
                 :model-value="row.length"
                 placeholder="length"
                 :min-value="0"
+                :error-message="regionLengthError(row.length)"
                 @update:model-value="(v) => setRegion(p.id, i, { length: v ?? 0 })"
               />
 
@@ -569,6 +571,7 @@ async function deleteRegions(parentId: string) {
                     :model-value="child.length"
                     placeholder="length"
                     :min-value="0"
+                    :error-message="regionLengthError(child.length)"
                     @update:model-value="(v) => setChild(p.id, i, j, { length: v ?? 0 })"
                   />
 
@@ -610,11 +613,13 @@ async function deleteRegions(parentId: string) {
         </PlBtnGhost>
       </div>
 
-      <PlAlert v-if="previewByParent[p.id].overflow" type="warn" :icon="true">
+      <PlAlert v-if="previewByParent[p.id].overflow" type="error" :icon="true">
         Regions span {{ previewByParent[p.id].total }} nt — longer than the parent ({{
           p.sequence.length
         }}
-        nt).
+        nt).<br />
+        Reduce the total region length by at least
+        {{ previewByParent[p.id].total - p.sequence.length }} nt to run.
       </PlAlert>
 
       <PlAlert v-if="previewByParent[p.id].untiled.length > 0" type="warn" :icon="true">
