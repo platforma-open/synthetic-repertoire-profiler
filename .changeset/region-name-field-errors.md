@@ -4,4 +4,4 @@
 "@platforma-open/milaboratories.synthetic-repertoire-profiler.block": patch
 ---
 
-Show an error on region, sub-region and full sequence name fields when the name is empty or uses characters other than letters, digits and `_`. Previously such a name silently disabled the Run button.
+Show inline errors on region, sub-region and full sequence name fields, and on region and sub-region length fields, when a value blocks the run. A region list longer than a pasted parent sequence now blocks Run, and its alert is shown as an error.

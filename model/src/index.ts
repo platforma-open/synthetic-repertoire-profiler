@@ -27,10 +27,13 @@ import type {
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
 import { kind } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
 import type { PatternParts, UmiSpec } from "./pattern";
+import { parseParentFasta } from "./parentFasta";
 import { parsePattern, patternUmiSpec } from "./pattern";
 
 export { parsePattern, patternHasUmi, patternUmiSpec } from "./pattern";
 export type { LengthRange, PatternHalf, PatternParts, UmiSpec } from "./pattern";
+export { parseParentFasta } from "./parentFasta";
+export type { ParsedParent } from "./parentFasta";
 
 // The parent-input and region shapes are part of the kind's init-params
 // contract, so the kind declares them. Re-exported here because the UI reads
@@ -75,6 +78,16 @@ export function featureNameError(
   return undefined;
 }
 
+/**
+ * What is wrong with a region or sub-region length, or undefined. Shown on the length
+ * fields, and re-checked by `.args(...)`.
+ */
+export function regionLengthError(length: number | undefined): string | undefined {
+  if (length === undefined || !Number.isInteger(length) || length <= 0)
+    return "Length must be a whole number greater than 0.";
+  return undefined;
+}
+
 /** A resolved span in the parent's own nucleotide frame. `children`, when present,
  *  tile the span exactly; their offsets are absolute in the same frame, so every span
  *  in the overlay is read the same way. */
@@ -85,6 +98,7 @@ type Span = { name: string; begin: number; end: number; children?: Span[] };
  *  when nothing is configured. Throws on an invalid partition. */
 export function buildParentRegionsJson(
   configs: ParentRegionConfig[] | undefined,
+  parentLengths?: Map<string, number>,
 ): string | undefined {
   const parents: Record<
     string,
@@ -108,8 +122,8 @@ export function buildParentRegionsJson(
         const nameError = featureNameError(name);
         if (nameError)
           throw new Error(`Region name '${r.name}' (parent ${c.parentId}): ${nameError}`);
-        if (!Number.isInteger(r.length) || r.length <= 0)
-          throw new Error(`Region '${name}' (parent ${c.parentId}) needs a positive length.`);
+        const lengthError = regionLengthError(r.length);
+        if (lengthError) throw new Error(`Region '${name}' (parent ${c.parentId}): ${lengthError}`);
       }
       return name;
     };
@@ -145,6 +159,13 @@ export function buildParentRegionsJson(
     // panel instead of at run time.
     if (c.scheme !== "none" && regions.length === 0)
       throw new Error(`Scheme '${c.scheme}' (parent ${c.parentId}) needs at least one region.`);
+    // mitool rejects a region that ends past the parent. Lengths are known only for a
+    // pasted FASTA; an uploaded file is checked by mitool at run time.
+    const parentLength = parentLengths?.get(c.parentId);
+    if (c.scheme !== "none" && parentLength !== undefined && pos > parentLength)
+      throw new Error(
+        `Regions span ${pos} nt — longer than parent ${c.parentId} (${parentLength} nt).`,
+      );
     // One namespace across the whole parent: every name becomes an output column id.
     const names = regions.flatMap((r) => [r.name, ...(r.children?.map((ch) => ch.name) ?? [])]);
     if (new Set(names).size !== names.length)
@@ -1088,7 +1109,12 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       // regions from germline, so the manual parentRegions projection is suppressed.
       parentRegionsJson: data.vdjAutoDetect
         ? undefined
-        : buildParentRegionsJson(data.parentRegions),
+        : buildParentRegionsJson(
+            data.parentRegions,
+            data.parentInputMode === "fastaSequence"
+              ? new Map(parseParentFasta(data.parentSequence).map((p) => [p.id, p.sequence.length]))
+              : undefined,
+          ),
       vdjAutoDetect: data.vdjAutoDetect ? true : undefined,
       knownNtFileHandle: data.knownNtFileHandle,
       knownAaFileHandle: data.knownAaFileHandle,
