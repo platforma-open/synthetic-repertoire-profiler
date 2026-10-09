@@ -60,6 +60,21 @@ export const VDJ_REGION_NAMES = ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "F
 
 const FEATURE_NAME_RE = /^[A-Za-z0-9_]+$/;
 
+/**
+ * What is wrong with a region or full-sequence name, or undefined. Shown on the name
+ * fields, and re-checked by `.args(...)` so the field and the run gate cannot disagree.
+ */
+export function featureNameError(
+  name: string | undefined,
+  kind: "region" | "sequence" = "region",
+): string | undefined {
+  const trimmed = (name ?? "").trim();
+  if (trimmed === "") return "Name is required.";
+  if (!FEATURE_NAME_RE.test(trimmed))
+    return `Invalid ${kind} name.\nOnly numbers, letters, and underscores are allowed.`;
+  return undefined;
+}
+
 /** A resolved span in the parent's own nucleotide frame. `children`, when present,
  *  tile the span exactly; their offsets are absolute in the same frame, so every span
  *  in the overlay is read the same way. */
@@ -82,18 +97,17 @@ export function buildParentRegionsJson(
   for (const c of configs ?? []) {
     const af = c.completeFeatureName?.trim() || undefined;
     if (c.scheme === "none" && !af) continue; // nothing to carry for this parent
-    if (af && !FEATURE_NAME_RE.test(af))
-      throw new Error(`Complete feature name '${af}' must be alphanumeric/underscore.`);
+    const afError = af && featureNameError(af, "sequence");
+    if (afError) throw new Error(`Full sequence name '${af}' (parent ${c.parentId}): ${afError}`);
 
     // Name and length are checked identically at either level — a sub-region is an
     // ordinary span that happens to sit inside another.
     const checked = (r: RegionDef): string => {
       const name = r.name.trim();
       if (c.scheme !== "none") {
-        if (!FEATURE_NAME_RE.test(name))
-          throw new Error(
-            `Region name '${r.name}' (parent ${c.parentId}) must be alphanumeric/underscore.`,
-          );
+        const nameError = featureNameError(name);
+        if (nameError)
+          throw new Error(`Region name '${r.name}' (parent ${c.parentId}): ${nameError}`);
         if (!Number.isInteger(r.length) || r.length <= 0)
           throw new Error(`Region '${name}' (parent ${c.parentId}) needs a positive length.`);
       }

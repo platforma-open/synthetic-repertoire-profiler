@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  featureNameError,
   parseRegionAnnotation,
   VDJ_REGION_NAMES,
   type ParentRegionConfig,
@@ -494,6 +495,7 @@ async function deleteRegions(parentId: string) {
         :model-value="configFor(p.id).completeFeatureName ?? ''"
         label="Full sequence name (optional)"
         placeholder="e.g. VDJRegion"
+        :validate="(v: string) => (v.trim() ? featureNameError(v, 'sequence') : undefined)"
         @update:model-value="(v) => setCompleteFeatureName(p.id, v)"
       >
         <template #tooltip>
@@ -517,6 +519,7 @@ async function deleteRegions(parentId: string) {
                 class="region-row__name"
                 :model-value="row.name"
                 placeholder="name"
+                :validate="featureNameError"
                 @update:model-value="(v) => setRegion(p.id, i, { name: v })"
               />
 
@@ -557,6 +560,7 @@ async function deleteRegions(parentId: string) {
                     class="region-row__name"
                     :model-value="child.name"
                     placeholder="sub-region name"
+                    :validate="featureNameError"
                     @update:model-value="(v) => setChild(p.id, i, j, { name: v })"
                   />
 
@@ -709,7 +713,8 @@ async function deleteRegions(parentId: string) {
 }
 .region-row__controls {
   display: flex;
-  align-items: center;
+  /* A name error renders under the name field; top-align so the row does not shift. */
+  align-items: flex-start;
   gap: 8px;
 }
 /* Fields carry no label: the pair reads as name + length, and a floating label on
@@ -740,6 +745,7 @@ async function deleteRegions(parentId: string) {
   color: var(--txt-03);
   font-size: 12px;
   white-space: nowrap;
+  line-height: var(--control-height);
 }
 .region-row__aa {
   font-family: monospace;
