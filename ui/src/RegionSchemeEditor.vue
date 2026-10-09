@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import {
+  DUPLICATE_NAME_ERROR,
+  duplicateRegionNames,
   featureNameError,
   parseRegionAnnotation,
   regionLengthError,
@@ -336,6 +338,20 @@ const previewByParent = computed(() => {
   return byId;
 });
 
+// Names repeated within a parent, so each copy can carry the error on its own field.
+const duplicatesByParent = computed(() => {
+  const byId: Record<string, Set<string>> = {};
+  for (const p of editorParents.value) byId[p.id] = duplicateRegionNames(configFor(p.id).regions);
+  return byId;
+});
+
+function regionNameError(parentId: string, name: string): string | undefined {
+  return (
+    featureNameError(name) ??
+    (duplicatesByParent.value[parentId]?.has(name.trim()) ? DUPLICATE_NAME_ERROR : undefined)
+  );
+}
+
 // One import gesture, not the user's configuration — so all three stay out of `data`.
 const importHandle = ref<ImportFileHandle | undefined>();
 const importError = ref<string | undefined>();
@@ -520,7 +536,7 @@ async function deleteRegions(parentId: string) {
                 class="region-row__name"
                 :model-value="row.name"
                 placeholder="name"
-                :validate="featureNameError"
+                :validate="(v: string) => regionNameError(p.id, v)"
                 @update:model-value="(v) => setRegion(p.id, i, { name: v })"
               />
 
@@ -562,7 +578,7 @@ async function deleteRegions(parentId: string) {
                     class="region-row__name"
                     :model-value="child.name"
                     placeholder="sub-region name"
-                    :validate="featureNameError"
+                    :validate="(v: string) => regionNameError(p.id, v)"
                     @update:model-value="(v) => setChild(p.id, i, j, { name: v })"
                   />
 
