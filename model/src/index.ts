@@ -78,6 +78,27 @@ export function featureNameError(
   return undefined;
 }
 
+export const DUPLICATE_NAME_ERROR = "Names must be unique.";
+
+/**
+ * Non-empty names used more than once across a parent's regions and sub-regions, trimmed.
+ * Every name becomes an output column id, so the whole parent is one namespace. Shown on
+ * the name fields, and re-checked by `.args(...)`.
+ */
+export function duplicateRegionNames(
+  regions: { name: string; children?: { name: string }[] }[],
+): Set<string> {
+  const seen = new Set<string>();
+  const dups = new Set<string>();
+  for (const r of regions.flatMap((r) => [r, ...(r.children ?? [])])) {
+    const name = r.name.trim();
+    if (name === "") continue;
+    if (seen.has(name)) dups.add(name);
+    seen.add(name);
+  }
+  return dups;
+}
+
 /**
  * What is wrong with a region or sub-region length, or undefined. Shown on the length
  * fields, and re-checked by `.args(...)`.
@@ -166,10 +187,9 @@ export function buildParentRegionsJson(
       throw new Error(
         `Regions span ${pos} nt — longer than parent ${c.parentId} (${parentLength} nt).`,
       );
-    // One namespace across the whole parent: every name becomes an output column id.
-    const names = regions.flatMap((r) => [r.name, ...(r.children?.map((ch) => ch.name) ?? [])]);
-    if (new Set(names).size !== names.length)
-      throw new Error(`Region names must be unique within parent ${c.parentId}.`);
+    const [duplicate] = duplicateRegionNames(regions);
+    if (duplicate !== undefined)
+      throw new Error(`Region name '${duplicate}' (parent ${c.parentId}): ${DUPLICATE_NAME_ERROR}`);
 
     // Second line, for state that reached `data` before the parser grew the check above.
     if (parents[c.parentId] !== undefined)
