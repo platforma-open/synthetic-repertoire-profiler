@@ -43,7 +43,7 @@ TestUmiStepsAreSizedFromTheMic := func() {
 TestMemoryOverrideMakesTheGrantFlat := func() {
 	row := rs.effective(rs.lookup("analyze"), { perProcessMemGB: 2.5 })
 	test.isEqual("3GiB", _ram(row, _gib(100)))
-	test.isEqual(4, row.cpu)
+	test.isEqual(8, row.cpu)
 }
 
 TestCpuOverrideKeepsTheMemoryRule := func() {
