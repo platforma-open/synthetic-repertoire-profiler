@@ -11,6 +11,7 @@ exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+resources := import(":resources")
 smChunks := import(":state-matrix-chunks")
 
 times := import("times")
@@ -30,9 +31,9 @@ self.defineOutputs(outputNames)
 progressPrefix := "[==PROGRESS==]"
 
 // `memory-from-limits` sizes the JVM heap (-Xmx) from the scheduler's RAM limit
-// (system.ram.mib, set by mem(mitoolMem) below). The `:main` entrypoint instead
+// (system.ram.mib, set from the analyze row of :resources). The `:main` entrypoint instead
 // uses -XX:MaxRAMPercentage of the RAM the JVM sees, which on native/desktop runs
-// is the whole host — ignoring mem(mitoolMem). Match the MiXCR blocks here.
+// is the whole host — ignoring the grant. Match the MiXCR blocks here.
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 
 self.body(func(inputs) {
@@ -96,15 +97,11 @@ self.body(func(inputs) {
 	minReadsPerConsensus := params.minReadsPerConsensus
 	minUmiQuality := params.minUmiQuality
 	limitInput := params.limitInput
-	mitoolCPUs := inputs.mitoolCPUs
-	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
 
 	// --- repertoire analyze: .mic -> variant / aa / state-matrix TSVs + qc.json ---
 	analyzeBuilder := exec.builder().
 		printErrStreamToStdout().
 		saveStdoutStream().
-		cpu(mitoolCPUs).
-		mem(mitoolMem).
 		env("MI_PROGRESS_PREFIX", progressPrefix).
 		software(mitoolSw).
 		arg("repertoire").arg("analyze").
@@ -212,7 +209,7 @@ self.body(func(inputs) {
 	}
 
 	analyzeBuilder = analyzeBuilder.
-		addFile("input.mic", analyzeMic).
+		addFile("input.mic", analyzeMic, { tag: resources.INPUT_TAG }).
 		saveFile("out.variants.tsv").
 		saveFile("out.aa-variants.tsv").
 		saveFile("out.aa-state-matrix.tsv").
@@ -252,6 +249,7 @@ self.body(func(inputs) {
 			saveFile("out.known-aa.tsv")
 	}
 
+	resources.apply(analyzeBuilder, "analyze", inputs.resources)
 	// cache() retains the result; without it there is nothing for a rerun to match.
 	analyzeCmd := analyzeBuilder.cache(48 * times.hour).run()
 
@@ -273,7 +271,7 @@ self.body(func(inputs) {
 	// Left unsized on purpose: pt sizes CPU/RAM from input volume when neither is
 	// set. Under exportOnlyKnown this workflow also joins the per-sample state
 	// matrices (one row per variant per position), so a fixed budget under-sizes it
-	// on large repertoires. See aggregate-state-matrix for the full rationale.
+	// on large repertoires. See aggregate-sizing.
 	ptWf := pt.workflow()
 
 	// Abundance. variants.tsv is already ~one row per variantKey; group
