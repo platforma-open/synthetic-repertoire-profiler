@@ -332,7 +332,7 @@ function previews(p: EditorParent) {
     .map((r) => r.name || "(unnamed)");
   const untiled = rows
     .filter((r) => r.childGap !== 0)
-    .map((r) => `${r.name || "(unnamed)"} (${r.childGap > 0 ? "+" : ""}${r.childGap} nt)`);
+    .map((r) => `${r.name || "(unnamed)"} (${r.childGap > 0 ? "+" : ""}${r.childGap} nt)`);
   return { rows, total, overflow: !p.missing && total > p.sequence.length, outOfFrame, untiled };
 }
 
@@ -475,7 +475,7 @@ async function deleteRegions(parentId: string) {
   <div v-for="p in editorParents" :key="p.id" class="region-parent">
     <div class="region-parent__head">
       <span class="region-parent__id">{{ p.id }}</span>
-      <span v-if="!p.missing" class="region-parent__len">{{ p.sequence.length }} nt</span>
+      <span v-if="!p.missing" class="region-parent__len">{{ p.sequence.length }}&nbsp;nt</span>
       <PlBtnGhost v-else icon="delete-bin" @click.prevent="deleteRegions(p.id)">
         Delete
       </PlBtnGhost>
@@ -611,8 +611,8 @@ async function deleteRegions(parentId: string) {
           </PlElementList>
 
           <div v-if="row.childGap !== 0" class="region-row__gap">
-            Sub-regions must add up to {{ row.length }} nt — they are
-            {{ row.childGap > 0 ? "over" : "under" }} by {{ Math.abs(row.childGap) }} nt.
+            Sub-regions must add up to {{ row.length }}&nbsp;nt — they are
+            {{ row.childGap > 0 ? "over" : "under" }} by {{ Math.abs(row.childGap) }}&nbsp;nt.
           </div>
 
           <PlBtnGhost v-if="row.childRows.length > 0" @click.prevent="addChild(p.id, i)">
@@ -635,21 +635,22 @@ async function deleteRegions(parentId: string) {
         </PlBtnGhost>
       </div>
 
-      <PlAlert v-if="previewByParent[p.id].overflow" type="error" :icon="true">
-        Regions span {{ previewByParent[p.id].total }} nt — longer than the parent ({{
+      <!-- No `icon`: uikit ships no `.icon-24` rule, so the icon slot renders as a blank
+           24px box plus the 12px gap — an empty left indent on every alert. -->
+      <PlAlert v-if="previewByParent[p.id].overflow" type="error">
+        Regions span {{ previewByParent[p.id].total }}&nbsp;nt — longer than the parent ({{
           p.sequence.length
-        }}
-        nt).<br />
+        }}&nbsp;nt).<br />
         Reduce the total region length by at least
-        {{ previewByParent[p.id].total - p.sequence.length }} nt to run.
+        {{ previewByParent[p.id].total - p.sequence.length }}&nbsp;nt to run.
       </PlAlert>
 
-      <PlAlert v-if="previewByParent[p.id].untiled.length > 0" type="warn" :icon="true">
+      <PlAlert v-if="previewByParent[p.id].untiled.length > 0" type="warn">
         Sub-regions do not tile their region: {{ previewByParent[p.id].untiled.join(", ") }}. They
         must add up to exactly the region's own length.
       </PlAlert>
 
-      <PlAlert v-if="previewByParent[p.id].outOfFrame.length > 0" type="warn" :icon="true">
+      <PlAlert v-if="previewByParent[p.id].outOfFrame.length > 0" type="warn">
         No amino-acid columns for {{ previewByParent[p.id].outOfFrame.join(", ") }}. A region is
         translated only when it starts and ends on a codon boundary, so a length that is not a
         multiple of 3 also shifts every region after it out of frame.
