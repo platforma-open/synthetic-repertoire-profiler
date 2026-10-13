@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import {
+  DUPLICATE_NAME_ERROR,
+  duplicateRegionNames,
+  featureNameError,
   parseRegionAnnotation,
+  regionLengthError,
   VDJ_REGION_NAMES,
   type ParentRegionConfig,
   type RegionDef,
@@ -78,6 +82,9 @@ const vdjSeed = (lengths?: Map<string, number>): RegionDef[] =>
 // too — the model skips a `none` parent's regions, so they stay out of the run. Only the
 // full sequence name is cleared on `none`: its field is hidden there, and a hidden value
 // would still reach the run.
+// One codon: a new region is valid and in frame before the user types a length.
+const NEW_REGION_LENGTH = 3;
+
 function onScheme(parentId: string, scheme: RegionScheme) {
   const cur = configFor(parentId);
   if (scheme === "none") {
@@ -85,7 +92,11 @@ function onScheme(parentId: string, scheme: RegionScheme) {
     return;
   }
   const seeded =
-    cur.regions.length > 0 ? cur.regions : scheme === "vdj" ? vdjSeed() : [{ name: "", length: 0 }];
+    cur.regions.length > 0
+      ? cur.regions
+      : scheme === "vdj"
+        ? vdjSeed()
+        : [{ name: "", length: NEW_REGION_LENGTH }];
   setConfig({
     ...cur,
     scheme,
@@ -106,7 +117,7 @@ function setRegion(parentId: string, i: number, patch: Partial<{ name: string; l
 
 function addRegion(parentId: string) {
   const cfg = configFor(parentId);
-  setConfig({ ...cfg, regions: [...cfg.regions, { name: "", length: 0 }] });
+  setConfig({ ...cfg, regions: [...cfg.regions, { name: "", length: NEW_REGION_LENGTH }] });
 }
 
 function setChild(
@@ -131,9 +142,8 @@ function setChild(
 // fall back to one nt and the graft takes the rest — valid, but the out-of-frame warning
 // will say the parts carry no amino-acid columns until the lengths are adjusted.
 function splitThree(len: number): [number, number, number] {
-  // Lengths are not typed yet on a freshly picked scheme — every region starts at 0.
-  // Give the graft the whole (empty) span rather than refuse: the row is created, tiling
-  // holds at 0 = 0, and the user fills the numbers in the same pass as everything else.
+  // Too short for a flank on each side. Give the graft the whole span rather than refuse:
+  // the row is created, tiling holds, and the user fills the numbers in from there.
   if (len < 3) return [0, len, 0];
   const flank = Math.max(1, Math.floor(Math.floor(len / 3) / 3) * 3);
   if (2 * flank + 1 > len) return [1, len - 2, 1];
@@ -322,7 +332,7 @@ function previews(p: EditorParent) {
     .map((r) => r.name || "(unnamed)");
   const untiled = rows
     .filter((r) => r.childGap !== 0)
-    .map((r) => `${r.name || "(unnamed)"} (${r.childGap > 0 ? "+" : ""}${r.childGap} nt)`);
+    .map((r) => `${r.name || "(unnamed)"} (${r.childGap > 0 ? "+" : ""}${r.childGap} nt)`);
   return { rows, total, overflow: !p.missing && total > p.sequence.length, outOfFrame, untiled };
 }
 
@@ -333,6 +343,20 @@ const previewByParent = computed(() => {
   for (const p of editorParents.value) byId[p.id] = previews(p);
   return byId;
 });
+
+// Names repeated within a parent, so each copy can carry the error on its own field.
+const duplicatesByParent = computed(() => {
+  const byId: Record<string, Set<string>> = {};
+  for (const p of editorParents.value) byId[p.id] = duplicateRegionNames(configFor(p.id).regions);
+  return byId;
+});
+
+function regionNameError(parentId: string, name: string): string | undefined {
+  return (
+    featureNameError(name) ??
+    (duplicatesByParent.value[parentId]?.has(name.trim()) ? DUPLICATE_NAME_ERROR : undefined)
+  );
+}
 
 // One import gesture, not the user's configuration — so all three stay out of `data`.
 const importHandle = ref<ImportFileHandle | undefined>();
@@ -451,7 +475,7 @@ async function deleteRegions(parentId: string) {
   <div v-for="p in editorParents" :key="p.id" class="region-parent">
     <div class="region-parent__head">
       <span class="region-parent__id">{{ p.id }}</span>
-      <span v-if="!p.missing" class="region-parent__len">{{ p.sequence.length }} nt</span>
+      <span v-if="!p.missing" class="region-parent__len">{{ p.sequence.length }}&nbsp;nt</span>
       <PlBtnGhost v-else icon="delete-bin" @click.prevent="deleteRegions(p.id)">
         Delete
       </PlBtnGhost>
@@ -494,6 +518,7 @@ async function deleteRegions(parentId: string) {
         :model-value="configFor(p.id).completeFeatureName ?? ''"
         label="Full sequence name (optional)"
         placeholder="e.g. VDJRegion"
+        :validate="(v: string) => (v.trim() ? featureNameError(v, 'sequence') : undefined)"
         @update:model-value="(v) => setCompleteFeatureName(p.id, v)"
       >
         <template #tooltip>
@@ -512,11 +537,12 @@ async function deleteRegions(parentId: string) {
       >
         <template #item-title="{ item: row, index: i }">
           <div class="region-row">
-            <div class="region-row__controls">
+            <div class="region-row__controls" @click.stop>
               <PlTextField
                 class="region-row__name"
                 :model-value="row.name"
                 placeholder="name"
+                :validate="(v: string) => regionNameError(p.id, v)"
                 @update:model-value="(v) => setRegion(p.id, i, { name: v })"
               />
 
@@ -525,6 +551,7 @@ async function deleteRegions(parentId: string) {
                 :model-value="row.length"
                 placeholder="length"
                 :min-value="0"
+                :error-message="regionLengthError(row.length)"
                 @update:model-value="(v) => setRegion(p.id, i, { length: v ?? 0 })"
               />
 
@@ -552,11 +579,12 @@ async function deleteRegions(parentId: string) {
           >
             <template #item-title="{ item: child, index: j }">
               <div class="region-row">
-                <div class="region-row__controls">
+                <div class="region-row__controls" @click.stop>
                   <PlTextField
                     class="region-row__name"
                     :model-value="child.name"
                     placeholder="sub-region name"
+                    :validate="(v: string) => regionNameError(p.id, v)"
                     @update:model-value="(v) => setChild(p.id, i, j, { name: v })"
                   />
 
@@ -565,6 +593,7 @@ async function deleteRegions(parentId: string) {
                     :model-value="child.length"
                     placeholder="length"
                     :min-value="0"
+                    :error-message="regionLengthError(child.length)"
                     @update:model-value="(v) => setChild(p.id, i, j, { length: v ?? 0 })"
                   />
 
@@ -582,8 +611,8 @@ async function deleteRegions(parentId: string) {
           </PlElementList>
 
           <div v-if="row.childGap !== 0" class="region-row__gap">
-            Sub-regions must add up to {{ row.length }} nt — they are
-            {{ row.childGap > 0 ? "over" : "under" }} by {{ Math.abs(row.childGap) }} nt.
+            Sub-regions must add up to {{ row.length }}&nbsp;nt — they are
+            {{ row.childGap > 0 ? "over" : "under" }} by {{ Math.abs(row.childGap) }}&nbsp;nt.
           </div>
 
           <PlBtnGhost v-if="row.childRows.length > 0" @click.prevent="addChild(p.id, i)">
@@ -606,19 +635,22 @@ async function deleteRegions(parentId: string) {
         </PlBtnGhost>
       </div>
 
-      <PlAlert v-if="previewByParent[p.id].overflow" type="warn" :icon="true">
-        Regions span {{ previewByParent[p.id].total }} nt — longer than the parent ({{
+      <!-- No `icon`: uikit ships no `.icon-24` rule, so the icon slot renders as a blank
+           24px box plus the 12px gap — an empty left indent on every alert. -->
+      <PlAlert v-if="previewByParent[p.id].overflow" type="error">
+        Regions span {{ previewByParent[p.id].total }}&nbsp;nt — longer than the parent ({{
           p.sequence.length
-        }}
-        nt).
+        }}&nbsp;nt).<br />
+        Reduce the total region length by at least
+        {{ previewByParent[p.id].total - p.sequence.length }}&nbsp;nt to run.
       </PlAlert>
 
-      <PlAlert v-if="previewByParent[p.id].untiled.length > 0" type="warn" :icon="true">
+      <PlAlert v-if="previewByParent[p.id].untiled.length > 0" type="warn">
         Sub-regions do not tile their region: {{ previewByParent[p.id].untiled.join(", ") }}. They
         must add up to exactly the region's own length.
       </PlAlert>
 
-      <PlAlert v-if="previewByParent[p.id].outOfFrame.length > 0" type="warn" :icon="true">
+      <PlAlert v-if="previewByParent[p.id].outOfFrame.length > 0" type="warn">
         No amino-acid columns for {{ previewByParent[p.id].outOfFrame.join(", ") }}. A region is
         translated only when it starts and ends on a codon boundary, so a length that is not a
         multiple of 3 also shifts every region after it out of frame.
@@ -709,7 +741,8 @@ async function deleteRegions(parentId: string) {
 }
 .region-row__controls {
   display: flex;
-  align-items: center;
+  /* A name error renders under the name field; top-align so the row does not shift. */
+  align-items: flex-start;
   gap: 8px;
 }
 /* Fields carry no label: the pair reads as name + length, and a floating label on
@@ -740,6 +773,7 @@ async function deleteRegions(parentId: string) {
   color: var(--txt-03);
   font-size: 12px;
   white-space: nowrap;
+  line-height: var(--control-height);
 }
 .region-row__aa {
   font-family: monospace;
