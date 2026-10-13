@@ -537,7 +537,7 @@ async function deleteRegions(parentId: string) {
       >
         <template #item-title="{ item: row, index: i }">
           <div class="region-row">
-            <div class="region-row__controls">
+            <div class="region-row__controls" @click.stop>
               <PlTextField
                 class="region-row__name"
                 :model-value="row.name"
@@ -579,7 +579,7 @@ async function deleteRegions(parentId: string) {
           >
             <template #item-title="{ item: child, index: j }">
               <div class="region-row">
-                <div class="region-row__controls">
+                <div class="region-row__controls" @click.stop>
                   <PlTextField
                     class="region-row__name"
                     :model-value="child.name"
