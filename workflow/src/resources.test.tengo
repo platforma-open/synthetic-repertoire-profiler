@@ -1,0 +1,58 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+rs := import(":resources")
+
+f := exec.formula
+
+_gib := func(n) { return n * 1073741824 }
+
+// Evaluates a formula node against a fake staged input of sizeBytes.
+_evalSize := func(node, sizeBytes) {
+	fileName := "input.mic"
+	inputs := {}
+	inputs[rs.INPUT_TAG] = [fileName]
+	resolved := f.resolveAst(node, inputs, [fileName])
+	resolver := { size: func(files) { return sizeBytes }, lineCount: func(files) { return 0 } }
+	return f.evaluateResource(resolved, resolver, "test")
+}
+
+// A row's memory for a fake staged input of sizeBytes: a string for a flat row, bytes otherwise.
+_ram := func(row, sizeBytes) {
+	node := rs.ram(row)
+	return is_string(node) ? node : _evalSize(node, sizeBytes)
+}
+
+TestParseAndSortAreFlat := func() {
+	test.isEqual("8GiB", _ram(rs.lookup("parse"), _gib(100)))
+	test.isEqual("8GiB", _ram(rs.lookup("sort"), _gib(100)))
+}
+
+TestAnalyzeIsSizedFromTheMic := func() {
+	// max(8, 4 + 4 x GiB), rounded up.
+	test.isEqual(_gib(8), _ram(rs.lookup("analyze"), _gib(1) / 2))
+	test.isEqual(_gib(16), _ram(rs.lookup("analyze"), _gib(3)))
+	test.isEqual(_gib(13), _ram(rs.lookup("analyze"), _gib(21) / 10))
+	test.isEqual(_gib(84), _ram(rs.lookup("analyze"), _gib(20)))
+}
+
+TestUmiStepsAreSizedFromTheMic := func() {
+	test.isEqual(_gib(8), _ram(rs.lookup("refine-tags"), _gib(1)))
+	test.isEqual(_gib(44), _ram(rs.lookup("consensus"), _gib(10)))
+}
+
+TestMemoryOverrideMakesTheGrantFlat := func() {
+	row := rs.effective(rs.lookup("analyze"), { perProcessMemGB: 2.5 })
+	test.isEqual("3GiB", _ram(row, _gib(100)))
+	test.isEqual(4, row.cpu)
+}
+
+TestCpuOverrideKeepsTheMemoryRule := func() {
+	row := rs.effective(rs.lookup("analyze"), { perProcessCPUs: 12 })
+	test.isEqual(12, row.cpu)
+	test.isEqual(_gib(16), _ram(row, _gib(3)))
+}
+
+TestNoOverrides := func() {
+	row := rs.effective(rs.lookup("parse"), {})
+	test.isEqual(rs.lookup("parse"), row)
+}

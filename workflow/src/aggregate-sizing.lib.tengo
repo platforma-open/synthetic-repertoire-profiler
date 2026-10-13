@@ -1,0 +1,61 @@
+// Memory of the cross-sample ptabler steps: the variant, linker and known-set aggregates, the
+// state-matrix dedup and merge, the composition heat map, and the variant-keyed imports.
+//
+// On a backend that reports blob sizes, each step keeps pt's input-size rule, 4 GiB + 10 x
+// input, with no upper limit, and a floor of FLOOR_GIB. The "Memory for aggregation" setting
+// does not apply there: the grant already covers the measured need, so a user number could
+// only shrink how many steps the queue admits at once.
+//
+// A backend without blob sizes cannot evaluate the rule. There each step gets a flat
+// FLOOR_GIB, and the setting raises it. Same rule as mixcr-clonotyping's shard plan.
+//
+// Measured peak RSS per stored input byte, polars 1.33.1, 8 threads, 1 to 6 samples:
+//
+//   aggregate-variants        1.1 to 2.1
+//   aggregate-linkers         1.0
+//   state-matrix dedup        0.5 GiB + 5.5 x input with every row distinct; 3.8 x on 3 samples
+//   state-matrix merge        0.9 to 3.4, collected in memory
+//   heat map                  2.0 to 6.2
+//   xsv import                2.0 to 5.7
+//
+// So 10 x input covers every step by 1.6x or more.
+
+feats := import("@platforma-sdk/workflow-tengo:feats")
+units := import("@platforma-sdk/workflow-tengo:units")
+math := import("math")
+
+FLOOR_GIB := 16
+
+// fallbackGiB returns the flat grant on a backend without blob sizes.
+fallbackGiB := func(aggMemGB) {
+	if !is_undefined(aggMemGB) && aggMemGB > FLOOR_GIB {
+		return int(math.ceil(aggMemGB))
+	}
+	return FLOOR_GIB
+}
+
+// apply puts `wf` on the heavy queue and sets its memory.
+apply := func(wf, aggMemGB) {
+	wf = wf.inHeavyQueue()
+	if feats.hasBlobSize {
+		return wf.memFloor(FLOOR_GIB * units.GiB)
+	}
+	return wf.mem(fallbackGiB(aggMemGB) * units.GiB)
+}
+
+// importMem returns the `mem` option of a variant-keyed xsv.importFile: undefined, which
+// leaves the SDK's input-size rule in charge, or the flat grant on a backend without blob
+// sizes.
+importMem := func(aggMemGB) {
+	if feats.hasBlobSize {
+		return undefined
+	}
+	return fallbackGiB(aggMemGB) * units.GiB
+}
+
+export {
+	FLOOR_GIB: FLOOR_GIB,
+	fallbackGiB: fallbackGiB,
+	apply: apply,
+	importMem: importMem
+}

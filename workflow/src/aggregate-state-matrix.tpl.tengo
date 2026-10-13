@@ -17,6 +17,7 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
+aggSizing := import(":aggregate-sizing")
 
 self.defineOutputs("stateMatrix")
 
@@ -27,13 +28,9 @@ self.body(func(inputs) {
 	// [sampleId] -> this chunk's per-sample file.
 	rmMap := inputs.stateMatrixData.inputs()
 
-	// The dedup holds every distinct key in RAM (~200 B/row) and does not spill.
-	// Raise DIGITS in state-matrix-chunks if a run needs more than this covers.
-	// mem() must be a literal: it reaches pt.workflow-run as JSON, so a formula
-	// cannot survive the crossing.
-	wf := pt.workflow().
-		inHeavyQueue().
-		mem("48GiB")
+	// The dedup holds every distinct key in RAM and does not spill. Raise DIGITS in
+	// state-matrix-chunks if one chunk outgrows a node.
+	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
 
 	frames := []
 	for sKey in maps.getKeys(rmMap) {

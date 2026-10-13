@@ -276,13 +276,14 @@ export type BlockData = {
   minReadsPerConsensus?: number; // consensus -O minRecordsPerConsensus
   minUmiQuality?: number; // refine-tags -q
 
-  // Optional per-sample mitool resource overrides (Advanced). Empty = workflow
-  // defaults. Passed to the parse + analyze exec steps.
+  // Optional per-sample mitool resource overrides (Advanced). Empty = the workflow's
+  // per-step sizing (resources.lib.tengo). Replace it on every per-sample mitool step.
   perProcessMemGB?: number;
   // Memory for the cross-sample aggregation and the parquet imports that follow
   // it. Separate from perProcessMemGB: those steps are variant-keyed, so they grow
-  // with the repertoire rather than with one sample. Empty = the SDK's input-size
-  // formula, which caps at 64 GiB.
+  // with the repertoire rather than with one sample. The steps size themselves from
+  // their input; this applies only on a backend that cannot report input sizes,
+  // where it raises their flat 16 GiB grant.
   aggregationMemGB?: number;
   perProcessCPUs?: number;
 

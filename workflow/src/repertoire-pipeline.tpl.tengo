@@ -90,8 +90,8 @@ self.body(func(inputs) {
 	minReadsPerConsensus := params.minReadsPerConsensus
 	minUmiQuality := params.minUmiQuality
 	limitInput := params.limitInput
-	mitoolCPUs := inputs.mitoolCPUs
-	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
+	// The "Advanced Settings" overrides for :resources; either may be absent.
+	res := inputs.resources
 
 	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
 
@@ -178,8 +178,7 @@ self.body(func(inputs) {
 		inputFiles: inputFilesBuilder.build()
 	}, {
 		metaInputs: {
-			mitoolCPUs: mitoolCPUs,
-			mitoolMemGB: inputs.mitoolMemGB
+			resources: res
 		}
 	})
 	micFile := parseRun.output("parsedMic")
@@ -210,8 +209,7 @@ self.body(func(inputs) {
 		}, {
 			// Meta: a change to the per-process limits must not re-run the chain.
 			metaInputs: {
-				mitoolCPUs: mitoolCPUs,
-				mitoolMemGB: inputs.mitoolMemGB
+				resources: res
 			}
 		})
 		analyzeMic = umiRun.output("consensusMic")
@@ -230,8 +228,7 @@ self.body(func(inputs) {
 	}
 	downRun := render.create(downstreamTpl, downInputs, {
 		metaInputs: {
-			mitoolCPUs: mitoolCPUs,
-			mitoolMemGB: inputs.mitoolMemGB
+			resources: res
 		}
 	})
 
