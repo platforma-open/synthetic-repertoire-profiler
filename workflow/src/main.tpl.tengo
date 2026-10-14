@@ -346,7 +346,7 @@ wf.body(func(args) {
 			// it can stamp the QC row.
 			passKey: true,
 			// Retains each per-sample iteration so a rerun can recover it.
-			stepCache: 30 * times.minute,
+			stepCache: 48 * times.hour,
 			traceSteps: [{
 				type: "milaboratories.synthetic-repertoire-profiler",
 				id: blockId,
