@@ -30,6 +30,7 @@ self.body(func(inputs) {
 
 	envelope := func(step) {
 		builder := exec.builder().
+			name("mitool " + step).
 			printErrStreamToStdout().
 			saveStdoutStream().
 			env("MI_PROGRESS_PREFIX", progressPrefix).

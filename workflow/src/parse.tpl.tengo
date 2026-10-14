@@ -27,6 +27,7 @@ self.body(func(inputs) {
 	limitInput := inputs.limitInput
 
 	parseBuilder := exec.builder().
+		name("mitool parse").
 		printErrStreamToStdout().
 		saveStdoutStream().
 		env("MI_PROGRESS_PREFIX", progressPrefix).
