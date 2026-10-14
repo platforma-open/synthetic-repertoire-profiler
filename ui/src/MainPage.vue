@@ -166,7 +166,14 @@ const { gridOptions } = useAgGridOptions<SampleRow>(() => ({
       <AgGridVue :style="{ height: '100%' }" v-bind="gridOptions as {}" />
     </div>
 
-    <PlSlideModal v-model="settingsOpen" :shadow="true" :close-on-outside-click="false" width="40%">
+    <!-- Fixed width: a percentage shrinks with the window and clips the region editor's
+         name + length + offset row (~450px top-level, ~500px with nested sub-regions). -->
+    <PlSlideModal
+      v-model="settingsOpen"
+      :shadow="true"
+      :close-on-outside-click="false"
+      width="480px"
+    >
       <template #title>Settings</template>
       <SettingsPanel />
     </PlSlideModal>

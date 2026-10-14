@@ -482,7 +482,7 @@ ACGTACGT..."
         taken. Recommended: 100,000 without a UMI, 1,000,000 with one.
       </template>
     </PlNumberField>
-    <PlAlert v-if="umi" type="warn" :icon="true">
+    <PlAlert v-if="umi" type="warn">
       With a UMI, limiting reads also lowers reads per molecule, so fewer molecules pass the
       consensus filter. Consider running 1–2 complete samples at full depth instead.
     </PlAlert>
