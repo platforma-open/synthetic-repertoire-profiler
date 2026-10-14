@@ -2,12 +2,13 @@
 //
 // Its own memoization boundary: parse reads only the tag pattern, the read limit
 // and the FASTQ files, so it survives a change to any analyze or export setting.
-// CPU and RAM arrive as meta inputs, which deduplication ignores.
+// The resource overrides arrive as a meta input, which deduplication ignores.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 maps := import("@platforma-sdk/workflow-tengo:maps")
+resources := import(":resources")
 
 json := import("json")
 times := import("times")
@@ -24,14 +25,11 @@ self.body(func(inputs) {
 	pattern := inputs.pattern
 	inputArg := inputs.inputArg
 	limitInput := inputs.limitInput
-	mitoolCPUs := inputs.mitoolCPUs
-	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
 
 	parseBuilder := exec.builder().
+		name("mitool parse").
 		printErrStreamToStdout().
 		saveStdoutStream().
-		cpu(mitoolCPUs).
-		mem(mitoolMem).
 		env("MI_PROGRESS_PREFIX", progressPrefix).
 		software(mitoolSw).
 		arg("parse").
@@ -51,8 +49,9 @@ self.body(func(inputs) {
 	// name the reads-file argument above expands to (e.g. "input_L1_R1.fastq.gz").
 	filesMap := inputs.inputFiles.inputs()
 	for encKey in maps.getKeys(filesMap) {
-		parseBuilder = parseBuilder.addFile(json.decode(encKey)[0], filesMap[encKey])
+		parseBuilder = parseBuilder.addFile(json.decode(encKey)[0], filesMap[encKey], { tag: resources.INPUT_TAG })
 	}
+	resources.apply(parseBuilder, "parse", inputs.resources)
 
 	// cache() retains the result; without it there is nothing for a rerun to match.
 	parseCmd := parseBuilder.saveFile("parsed.mic").cache(48 * times.hour).run()

@@ -654,8 +654,8 @@ ACGTACGT..."
       :clearable="true"
     >
       <template #tooltip>
-        Override the memory given to each per-sample mitool run (parse + analyze). Leave empty for
-        the default.
+        Override the memory given to each per-sample mitool step (parse, UMI consensus, analyze).
+        Leave empty to size each step from its input files.
       </template>
     </PlNumberField>
 
@@ -677,10 +677,9 @@ ACGTACGT..."
       :clearable="true"
     >
       <template #tooltip>
-        Memory for the step that merges all samples into the final variant tables. It works on every
-        distinct variant at once, so a run with many variants can need more here even when the
-        per-sample steps finish fine. Leave empty for the automatic setting, which can be too low on
-        very large runs.
+        Memory for the steps that merge all samples into the final variant tables, used only on an
+        older backend that cannot size these steps from their input. There they get 16 GB, and this
+        value raises it. Leave empty otherwise.
       </template>
     </PlNumberField>
   </PlAccordionSection>

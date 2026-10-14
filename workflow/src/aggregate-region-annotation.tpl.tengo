@@ -18,7 +18,7 @@ self.awaitState("regionAnnotationData", "ResourceReady")
 self.body(func(inputs) {
 	rmMap := inputs.regionAnnotationData.inputs()
 	// Left unsized on purpose — pt sizes CPU/RAM from input volume when neither is
-	// set. See aggregate-state-matrix for the full rationale.
+	// set. See aggregate-sizing.
 	wf := pt.workflow().
 		inMediumQueue()
 

@@ -15,7 +15,7 @@ strings := import("@platforma-sdk/workflow-tengo:strings")
 columnSpecs := import(":column-specs")
 regionConfig := import(":region-config")
 smChunks := import(":state-matrix-chunks")
-units := import("@platforma-sdk/workflow-tengo:units")
+aggSizing := import(":aggregate-sizing")
 json := import("json")
 times := import("times")
 text := import("text")
@@ -35,11 +35,10 @@ aggregateKnownTpl := assets.importTemplate(":aggregate-known")
 processKnownSetTpl := assets.importTemplate(":process-known-set")
 computeQcTpl := assets.importTemplate(":compute-qc")
 
-// Resource allocation defaults. User overrides via perProcessMemGB/perProcessCPUs.
-// Xsv imports carry no defaults: they run an unsized pt.workflow() and are sized
-// from input volume by the SDK (see aggregate-state-matrix).
-defaultMitoolMemGB := 16 // per-sample mitool parse + analyze
-defaultMitoolCPUs := 4
+// The per-sample mitool steps take their CPU and memory from :resources; the user
+// overrides perProcessMemGB / perProcessCPUs replace them. Xsv imports carry no
+// defaults: they run an unsized pt.workflow() and are sized from input volume by
+// the SDK (see aggregate-sizing).
 
 // Prerun drives the file uploads (parent FASTA / known-set TSVs) so they finish
 // during staging.
@@ -79,16 +78,11 @@ wf.body(func(args) {
 	// is chosen on its own. It also carries the nt parent-residue track, which mitool
 	// writes only alongside the matrix.
 	exportNtStateMatrix := !is_undefined(args.exportNtStateMatrix) && args.exportNtStateMatrix
-	// Cross-sample aggregation and the parquet imports that follow it are
-	// variant-keyed, so they grow with the repertoire. Unsized they fall back to the
-	// pt formula, which caps at 64 GiB; an explicit mem() does not. Carried on
-	// its own setting, separate from the per-sample mitool budget. Absent = today's
-	// formula.
+	// The "Memory for aggregation" setting. It applies only on a backend that cannot size
+	// the cross-sample steps from their input (see aggregate-sizing).
 	aggMemGB := args.aggregationMemGB
-	// Passed to every variant-keyed xsv import below. Undefined leaves the SDK's
-	// input-size formula in charge, which is right for the parent-keyed imports but
-	// under-reads anything whose row count follows the variant count.
-	aggMem := is_undefined(aggMemGB) ? undefined : aggMemGB * units.GiB
+	// Passed to every variant-keyed xsv import below.
+	aggMem := aggSizing.importMem(aggMemGB)
 	// nt has a match signal only when an nt known set was supplied.
 	hasNtKnown := !is_undefined(args.knownNtFileHandle)
 
@@ -225,7 +219,7 @@ wf.body(func(args) {
 	// sampleId partition, yielding [sampleId, …] PARTITIONED by sampleId — the
 	// shape downstream blocks (clonotype-browser) split on. No mem/cpu override —
 	// the import runs an unsized pt.workflow() and is sized from input volume
-	// (see aggregate-state-matrix).
+	// (see aggregate-sizing).
 	xsvTarget := func(name, path, axes, columns) {
 		return {
 			type: "Xsv",
@@ -331,6 +325,13 @@ wf.body(func(args) {
 		targetOutputs = append(targetOutputs, fileOutput(smChunks.outputName("nt", chunkKey)))
 	}
 
+	mitoolResources := {}
+	if !is_undefined(args.perProcessMemGB) {
+		mitoolResources.perProcessMemGB = args.perProcessMemGB
+	}
+	if !is_undefined(args.perProcessCPUs) {
+		mitoolResources.perProcessCPUs = args.perProcessCPUs
+	}
 	perSampleResults := pframes.processColumn(
 		{ spec: inputSpec, data: inputData },
 		repertoirePipelineTpl,
@@ -345,7 +346,7 @@ wf.body(func(args) {
 			// it can stamp the QC row.
 			passKey: true,
 			// Retains each per-sample iteration so a rerun can recover it.
-			stepCache: 30 * times.minute,
+			stepCache: 48 * times.hour,
 			traceSteps: [{
 				type: "milaboratories.synthetic-repertoire-profiler",
 				id: blockId,
@@ -353,10 +354,7 @@ wf.body(func(args) {
 				label: traceLabel
 			}],
 			extra: { params: params },
-			metaExtra: {
-				mitoolMemGB: is_undefined(args.perProcessMemGB) ? defaultMitoolMemGB : args.perProcessMemGB,
-				mitoolCPUs: is_undefined(args.perProcessCPUs) ? defaultMitoolCPUs : args.perProcessCPUs
-			}
+			metaExtra: { resources: mitoolResources }
 		}
 	)
 
@@ -407,9 +405,10 @@ wf.body(func(args) {
 	// frame rather than round-tripping the imported column back out.
 	importStateMatrix := func(levelPrefix, variantAxis, alphabet, posLabel) {
 		// One dedup job per position chunk, then a streaming concat of the results.
-		mergeInputs := {}
+		mergeInputs := { aggMemGB: aggMemGB }
 		for idx, key in smChunks.keys() {
 			chunkRun := render.createEphemeral(aggregateStateMatrixTpl, {
+				aggMemGB: aggMemGB,
 				stateMatrixData: perSampleResults.outputData(smChunks.outputName(levelPrefix, key))
 			})
 			mergeInputs["chunk" + string(idx)] = chunkRun.output("stateMatrix")
@@ -754,6 +753,7 @@ wf.body(func(args) {
 	stateHeatmapPfBuilder := pframes.pFrameBuilder()
 	addStateHeatmap := func(prefix, stateMatrixTsv, propertiesTsv, alphabet, posLabel, trace, parentResidueCols) {
 		hmRun := render.createEphemeral(computeStateHeatmapTpl, {
+			aggMemGB: aggMemGB,
 			stateMatrixTsv: stateMatrixTsv,
 			propertiesTsv: propertiesTsv,
 			hasUmi: hasUmi

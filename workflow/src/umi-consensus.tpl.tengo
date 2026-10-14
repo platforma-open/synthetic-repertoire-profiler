@@ -5,6 +5,7 @@
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
+resources := import(":resources")
 
 times := import("times")
 
@@ -26,29 +27,27 @@ self.body(func(inputs) {
 	payloadTags := inputs.payloadTags
 	minReadsPerConsensus := inputs.minReadsPerConsensus
 	minUmiQuality := inputs.minUmiQuality
-	mitoolCPUs := inputs.mitoolCPUs
-	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
 
-	envelope := func(builder) {
-		return builder.
+	envelope := func(step) {
+		builder := exec.builder().
+			name("mitool " + step).
 			printErrStreamToStdout().
 			saveStdoutStream().
 			env("MI_PROGRESS_PREFIX", progressPrefix).
 			software(mitoolSw).
-			cpu(mitoolCPUs).
-			mem(mitoolMem).
 			cache(48 * times.hour)
+		return resources.apply(builder, step, inputs.resources)
 	}
 
 	// --- refine-tags: correct sequencing errors inside the barcodes ---
-	refineBuilder := envelope(exec.builder()).arg("refine-tags")
+	refineBuilder := envelope("refine-tags").arg("refine-tags")
 	for tag in umiTags {
 		refineBuilder = refineBuilder.arg("-t").arg(tag)
 	}
 	refineCmd := refineBuilder.
 		arg("-q").arg(string(minUmiQuality)).
 		arg("--json-report").arg("refine.report.json").
-		addFile("parsed.mic", parsedMic).
+		addFile("parsed.mic", parsedMic, { tag: resources.INPUT_TAG }).
 		arg("parsed.mic").
 		arg("refined.mic").
 		saveFile("refined.mic").
@@ -58,20 +57,20 @@ self.body(func(inputs) {
 	// --- sort: make equal barcodes adjacent ---
 	// A separate step: the sort `consensus` does internally uses a 2 GB budget against
 	// this command's 256 MB.
-	sortBuilder := envelope(exec.builder()).arg("sort")
+	sortBuilder := envelope("sort").arg("sort")
 	for tag in umiTags {
 		sortBuilder = sortBuilder.arg("-s").arg(tag)
 	}
 	sortCmd := sortBuilder.
 		arg("--use-local-temp").
-		addFile("refined.mic", refineCmd.getFile("refined.mic")).
+		addFile("refined.mic", refineCmd.getFile("refined.mic"), { tag: resources.INPUT_TAG }).
 		arg("refined.mic").
 		arg("sorted.mic").
 		saveFile("sorted.mic").
 		run()
 
 	// --- consensus: one record per molecule ---
-	consensusBuilder := envelope(exec.builder()).arg("consensus")
+	consensusBuilder := envelope("consensus").arg("consensus")
 	for tag in umiTags {
 		consensusBuilder = consensusBuilder.arg("--group-tag").arg(tag)
 	}
@@ -82,7 +81,7 @@ self.body(func(inputs) {
 		arg("-O").arg("minRecordsPerConsensus=" + string(minReadsPerConsensus)).
 		arg("--threads").argWithVar("{system.cpu}").
 		arg("--json-report").arg("consensus.report.json").
-		addFile("sorted.mic", sortCmd.getFile("sorted.mic")).
+		addFile("sorted.mic", sortCmd.getFile("sorted.mic"), { tag: resources.INPUT_TAG }).
 		arg("sorted.mic").
 		arg("consensus.mic").
 		saveFile("consensus.mic").
