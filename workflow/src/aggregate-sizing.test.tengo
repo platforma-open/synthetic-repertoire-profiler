@@ -1,0 +1,12 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+aggSizing := import(":aggregate-sizing")
+
+TestFallbackDefaultsTo16GiB := func() {
+	test.isEqual(16, aggSizing.fallbackGiB(undefined))
+}
+
+TestSettingOnlyRaisesTheFallback := func() {
+	test.isEqual(16, aggSizing.fallbackGiB(8))
+	test.isEqual(100, aggSizing.fallbackGiB(100))
+	test.isEqual(33, aggSizing.fallbackGiB(32.5))
+}

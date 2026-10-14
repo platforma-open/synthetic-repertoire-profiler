@@ -1,0 +1,119 @@
+// CPU and memory of each per-sample mitool step, as one table keyed by step.
+//
+// Every row grants
+//
+//     ram = max(memFloor, memIntercept + memSlope x input GiB), rounded up to a whole GiB
+//
+// where `input GiB` is the stored size of the files the step stages under INPUT_TAG, summed.
+// CPU is a fixed count.
+//
+// The "Advanced Settings" overrides replace a row: the memory override with a flat amount, the
+// CPU override with its count.
+
+exec := import("@platforma-sdk/workflow-tengo:exec")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+math := import("math")
+
+f := exec.formula
+
+// The tag every step puts on the files it is sized from.
+INPUT_TAG := "input"
+
+// Backends that cannot evaluate resource formulas get max(floor, this).
+_FALLBACK_GIB := 16
+
+// The fields of a row:
+//
+//   step          the mitool command
+//   cpu           CPUs
+//   memFloor      GiB, the least the step gets
+//   memIntercept  GiB, added to the data term
+//   memSlope      GiB per GiB of input; 0 makes the grant flat at max(memFloor, memIntercept)
+//
+// The heap is about 0.85 of the grant, and grant - 2.5 GiB below 17 GiB (`memory-from-limits`).
+// A 8 GiB floor gives a 5.5 GiB heap.
+//
+// The rows are best-effort sizing while backend OOM retries are off, fitted to the largest input
+// shape tested. Measured heap need, mitool 2.3.1-172:
+//
+//   parse        flat: ~0.5 GiB live at 0.25M to 4M reads
+//   refine-tags  0.12 GiB .mic of 1M reads, saturated 12 nt UMI: runs in 0.8 GiB
+//   sort         the sort buffer follows the heap: runs in 0.8 GiB
+//   consensus    same input: thrashes in 0.8 GiB with ~0.65 GiB live. It holds the largest UMI
+//                group, which grows when UMIs collide.
+//   analyze      holds every distinct variant in memory until export, so it grows with the
+//                variant count, and the .mic size bounds that count. Heap need per GiB of .mic:
+//                0.26 on a site-saturation DMS library, 0.8 on a natural VHH repertoire,
+//                2.2 on a designed library where 43% of reads are distinct, and 7.3 on a
+//                short-read random-loop library where 69% are. A slope of 9 keeps the heap
+//                above 7.3 x input at every size: 0.85 x (4 + 9 x input) > 7.3 x input.
+_ROWS := [
+	{ step: "parse", cpu: 8, memFloor: 8, memIntercept: 0, memSlope: 0 },
+
+	// Sized from the parsed .mic.
+	{ step: "refine-tags", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 4 },
+	{ step: "sort", cpu: 8, memFloor: 8, memIntercept: 0, memSlope: 0 },
+	{ step: "consensus", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 4 },
+
+	// Sized from the .mic analyze reads: the parsed one, or the consensus one on a UMI run.
+	{ step: "analyze", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 9 }
+]
+
+_byStep := {}
+for row in _ROWS {
+	_byStep[row.step] = row
+}
+
+// lookup returns the row of a step.
+lookup := func(step) {
+	row := _byStep[step]
+	ll.assert(!is_undefined(row), "no resource row for step %v", step)
+	return row
+}
+
+// ram returns the memory request of a row: a fixed amount when its slope is 0, an exec.formula
+// over the INPUT_TAG files otherwise.
+ram := func(row) {
+	if row.memSlope == 0 {
+		gib := row.memIntercept > row.memFloor ? row.memIntercept : row.memFloor
+		return string(gib) + "GiB"
+	}
+	// The formula takes integers only, so the slope goes in as hundredths.
+	slopeHundredths := int(row.memSlope * 100 + 0.5)
+	formula := f.gib(row.memIntercept).
+		plus(f.size(INPUT_TAG).times(slopeHundredths).dividedBy(100)).
+		dividedBy(f.gib(1)).times(f.gib(1)). // dividedBy ceils, so this rounds up to a whole GiB
+		atLeast(f.gib(row.memFloor))
+	fallback := row.memFloor > _FALLBACK_GIB ? row.memFloor : _FALLBACK_GIB
+	return formula.staticFallback(f.gib(fallback))
+}
+
+// effective returns the row a step runs with once the overrides in `res` are applied:
+// { perProcessMemGB, perProcessCPUs }, either may be absent.
+effective := func(row, res) {
+	row = copy(row)
+	if !is_undefined(res.perProcessMemGB) {
+		row.memFloor = int(math.ceil(res.perProcessMemGB))
+		row.memIntercept = 0
+		row.memSlope = 0
+	}
+	if !is_undefined(res.perProcessCPUs) {
+		row.cpu = res.perProcessCPUs
+	}
+	return row
+}
+
+// apply sets the CPU and memory of `cmd` from the row of `step` and the overrides in `res`.
+apply := func(cmd, step, res) {
+	row := effective(lookup(step), res)
+	cmd.resources({ queue: "heavy", onCPU: { cpu: row.cpu, ram: ram(row) } })
+	return cmd
+}
+
+export {
+	INPUT_TAG: INPUT_TAG,
+	lookup: lookup,
+	ram: ram,
+	effective: effective,
+	apply: apply
+}

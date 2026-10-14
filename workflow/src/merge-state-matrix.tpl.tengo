@@ -7,6 +7,7 @@
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 pt := import("@platforma-sdk/workflow-tengo:pt")
+aggSizing := import(":aggregate-sizing")
 smChunks := import(":state-matrix-chunks")
 
 self.defineOutputs("stateMatrix")
@@ -17,11 +18,7 @@ for c := 0; c < len(smChunks.keys()); c++ {
 }
 
 self.body(func(inputs) {
-	// Concat streams, so this is headroom. mem() must be a literal: it reaches
-	// pt.workflow-run as JSON, so a formula cannot survive the crossing.
-	wf := pt.workflow().
-		inHeavyQueue().
-		mem("16GiB")
+	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
 
 	frames := []
 	for c := 0; c < len(smChunks.keys()); c++ {
