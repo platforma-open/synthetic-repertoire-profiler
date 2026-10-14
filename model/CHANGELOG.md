@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.model
 
+## 1.3.4
+
+### Patch Changes
+
+- af31d84: Show inline errors on region, sub-region and full sequence name fields, and on region and sub-region length fields, when a value blocks the run, including a name repeated within a parent ("Names must be unique."). A region list longer than a pasted parent sequence now blocks Run, and its alert is shown as an error.
+
 ## 1.3.3
 
 ### Patch Changes
