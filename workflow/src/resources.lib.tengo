@@ -44,7 +44,9 @@ _FALLBACK_GIB := 16
 //   analyze      holds every distinct variant in memory until export, so it grows with the
 //                variant count, and the .mic size bounds that count. Heap need per GiB of .mic:
 //                0.26 on a site-saturation DMS library, 0.8 on a natural VHH repertoire,
-//                7.3 on a short-read random-loop library where 69% of reads are distinct.
+//                2.2 on a designed library where 43% of reads are distinct, and 7.3 on a
+//                short-read random-loop library where 69% are. A slope of 9 keeps the heap
+//                above 7.3 x input at every size: 0.85 x (4 + 9 x input) > 7.3 x input.
 _ROWS := [
 	{ step: "parse", cpu: 8, memFloor: 8, memIntercept: 0, memSlope: 0 },
 
@@ -54,7 +56,7 @@ _ROWS := [
 	{ step: "consensus", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 4 },
 
 	// Sized from the .mic analyze reads: the parsed one, or the consensus one on a UMI run.
-	{ step: "analyze", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 4 }
+	{ step: "analyze", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 9 }
 ]
 
 _byStep := {}
