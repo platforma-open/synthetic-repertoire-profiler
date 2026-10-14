@@ -100,6 +100,7 @@ self.body(func(inputs) {
 
 	// --- repertoire analyze: .mic -> variant / aa / state-matrix TSVs + qc.json ---
 	analyzeBuilder := exec.builder().
+		name("mitool repertoire analyze").
 		printErrStreamToStdout().
 		saveStdoutStream().
 		env("MI_PROGRESS_PREFIX", progressPrefix).

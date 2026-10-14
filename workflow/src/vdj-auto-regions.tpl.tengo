@@ -29,6 +29,7 @@ self.body(func(inputs) {
 	// 1) Split each parent at mid-CDR3 into a V-half and a J-half; record the
 	//    split offset per parent id (splits.json).
 	splitBuilder := exec.builder().
+		name("vdj-region-tools split").
 		software(vdjToolsSw).
 		arg("split").
 		arg("--input").arg("parents.fa").
@@ -52,6 +53,7 @@ self.body(func(inputs) {
 
 	// 2) repseqio: build the reference library and infer anchor points.
 	vFromFasta := exec.builder().
+		name("repseqio fromFasta V").
 		software(repseqioSw).
 		arg("fromFasta").
 		arg("--chain").arg("IGH").
@@ -66,6 +68,7 @@ self.body(func(inputs) {
 		cpu(1).mem("4GiB").run()
 
 	jFromFasta := exec.builder().
+		name("repseqio fromFasta J").
 		software(repseqioSw).
 		arg("fromFasta").
 		arg("--chain").arg("IGH").
@@ -80,6 +83,7 @@ self.body(func(inputs) {
 		cpu(1).mem("4GiB").run()
 
 	mergeRes := exec.builder().
+		name("repseqio merge").
 		software(repseqioSw).
 		arg("merge").
 		addFile("vGenes.json", vFromFasta.getFile("vGenes.json")).
@@ -90,6 +94,7 @@ self.body(func(inputs) {
 		cpu(1).mem("4GiB").run()
 
 	inferVRes := exec.builder().
+		name("repseqio inferPoints V").
 		software(repseqioSw).
 		arg("inferPoints").
 		arg("--gene-feature").arg("VRegion").
@@ -107,6 +112,7 @@ self.body(func(inputs) {
 	// whole parent unannotatable. 20 keeps the V step's ratio (150 over a ~95-residue V is
 	// about 1.6 per residue; 20 over 14 is about 1.4) instead of demanding 2.1 per residue.
 	inferJRes := exec.builder().
+		name("repseqio inferPoints J").
 		software(repseqioSw).
 		arg("inferPoints").
 		arg("--gene-feature").arg("JRegion").
@@ -119,6 +125,7 @@ self.body(func(inputs) {
 		cpu(1).mem("4GiB").run()
 
 	compileRes := exec.builder().
+		name("repseqio compile").
 		software(repseqioSw).
 		arg("compile").
 		arg("--force").
@@ -131,6 +138,7 @@ self.body(func(inputs) {
 
 	// 3) Reassemble the anchor points onto the whole parent -> mitool overlay JSON.
 	assembleRes := exec.builder().
+		name("vdj-region-tools assemble").
 		software(vdjToolsSw).
 		arg("assemble").
 		arg("--library").arg("referenceLibrary.json").
