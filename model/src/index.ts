@@ -376,6 +376,8 @@ type BlockDataV6 = Omit<BlockDataV7, "exportStateMatrix">;
 type BlockDataV7 = Omit<BlockDataV8, "exportNtStateMatrix">;
 /** v9 changes no field, only resets `graphStateStateHeatmap`. */
 type BlockDataV8 = BlockData;
+/** v10 changes no field, only tilts the mutation histogram's x labels. */
+type BlockDataV9 = BlockData;
 
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -385,6 +387,11 @@ const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
     // A fixed fill is what disables the colouring: left unset, graph-maker maps
     // fill to the primary grouping (here the mutation count) and colours every bar.
     bar: { fillColor: "#99e099" },
+  },
+  axesSettings: {
+    axisX: {
+      axisLabelsAngle: 45,
+    },
   },
 };
 
@@ -464,10 +471,24 @@ const dataModel = new DataModelBuilder({ kind })
   // parent filter that fights the new tab — pick another parent in the tab bar
   // and the filter empties the plot. Reset the whole graph state rather than
   // patch one basket; the page's own defaults rebuild it on the next render.
-  .migrate<BlockData>("v9", (v8) => ({
+  .migrate<BlockDataV9>("v9", (v8) => ({
     ...v8,
     graphStateStateHeatmap: { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
   }))
+  // Keeps the rest of a saved histogram state; only the x label angle changes.
+  .migrate<BlockData>("v10", (v9) => {
+    const state = v9.graphStateMutationHistogram;
+    return {
+      ...v9,
+      graphStateMutationHistogram: {
+        ...state,
+        axesSettings: {
+          ...state.axesSettings,
+          axisX: { ...state.axesSettings?.axisX, axisLabelsAngle: 45 },
+        },
+      },
+    };
+  })
   // The first group of fields is the kind's init-params contract, field for
   // field, and
   // `.templateParams(...)` below projects those same fields back out. `params` is
