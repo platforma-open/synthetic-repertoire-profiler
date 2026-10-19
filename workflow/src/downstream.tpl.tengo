@@ -97,6 +97,9 @@ self.body(func(inputs) {
 	minReadsPerConsensus := params.minReadsPerConsensus
 	minUmiQuality := params.minUmiQuality
 	limitInput := params.limitInput
+	// Drop variants that are frame-shifted or carry a stop codon. Defensive default
+	// when the param is absent (removeUndefs).
+	filterNonProductive := !is_undefined(params.filterNonProductive) && params.filterNonProductive
 
 	// --- repertoire analyze: .mic -> variant / aa / state-matrix TSVs + qc.json ---
 	analyzeBuilder := exec.builder().
@@ -266,6 +269,42 @@ self.body(func(inputs) {
 		reportsMap.add(["consensus", "json"], inputs.consensusReportJson)
 	}
 
+	// --- Productive filter (its own pt workflow) ----------------------------
+	// A variant is productive when mitool did not call a frame shift and its
+	// translation carries no stop codon. A frame-shifted nt variant has no aa key,
+	// so the join on productive aa keys drops it along with the stop-codon ones.
+	// Read fractions renormalise over what is left, as they do for the mitool gates.
+	// Every table below reads these two files; only the QC row reads the raw ones,
+	// so it still counts what the filter removed.
+	variantsFile := analyzeCmd.getFile("out.variants.tsv")
+	aaVariantsFile := analyzeCmd.getFile("out.aa-variants.tsv")
+	if filterNonProductive {
+		prodWf := pt.workflow()
+		prodAa := prodWf.frame({
+			file: aaVariantsFile,
+			xsvType: "tsv"
+		}, { id: "prodAa", inferSchema: false }).
+			filter(pt.col("aaSequence").strContains("*", { literal: true }).not())
+		prodAa.save("productive.aa-variants.tsv", { xsvType: "tsv" })
+		prodWf.frame({
+			file: variantsFile,
+			xsvType: "tsv"
+		}, { id: "prodNt", inferSchema: false }).
+			filter(pt.col("frameShift").strToUpper().eq("TRUE").not()).
+			join(prodAa.select(pt.col("aaVariantKey")), { how: "inner", on: ["aaVariantKey"] }).
+			withColumns(pt.col("readCount").cast("Long").sum().alias("_productiveReads")).
+			withColumns(
+				pt.col("readCount").cast("Double").truediv(
+					pt.col("_productiveReads").cast("Double")
+				).alias("readFraction")
+			).
+			withoutColumns("_productiveReads").
+			save("productive.variants.tsv", { xsvType: "tsv" })
+		prodResult := prodWf.run()
+		variantsFile = prodResult.getFile("productive.variants.tsv")
+		aaVariantsFile = prodResult.getFile("productive.aa-variants.tsv")
+	}
+
 	// --- Per-sample tables (ptabler) --------------------------------------
 	// One pt workflow produces the nt/aa per-sample abundance (keyed by mitool's
 	// content-hash variantKey / aaVariantKey) and the per-sample QC row.
@@ -280,7 +319,7 @@ self.body(func(inputs) {
 	// members into each aa variant. The aa key is aliased to "variantKey" so both
 	// levels share the variant-axis column name.
 	vAbund := ptWf.frame({
-		file: analyzeCmd.getFile("out.variants.tsv"),
+		file: variantsFile,
 		xsvType: "tsv"
 	}, { id: "variantsAbund" })
 
@@ -303,7 +342,7 @@ self.body(func(inputs) {
 	// state matrix filter.
 	hasNtKnown := !is_undefined(knownNtFile)
 	matchedAaKeys := ptWf.frame({
-		file: analyzeCmd.getFile("out.aa-variants.tsv"),
+		file: aaVariantsFile,
 		xsvType: "tsv"
 	}, { id: "matchedAaKeys" }).
 		filter(b6NonEmpty("knownAaKey")).
@@ -434,7 +473,7 @@ self.body(func(inputs) {
 	// aa known × this sample: reads of the nt members of each assigned aa variant,
 	// keyed by hash(aa known seq).
 	aaForKnown := ptWf.frame({
-		file: analyzeCmd.getFile("out.aa-variants.tsv"),
+		file: aaVariantsFile,
 		xsvType: "tsv"
 	}, { id: "aaForKnown" })
 	aaKnownSeq := aaForKnown.
@@ -550,6 +589,15 @@ self.body(func(inputs) {
 	}, { id: "aaVariantsRaw" })
 
 	fs := pt.col("frameShift").cast("String").strToUpper().eq("TRUE")
+	// Stop codon: an in-frame nt variant whose aa translation carries a `*`. Frame-
+	// shifted variants have no aa key, so the two counters never overlap.
+	stopAaKeys := adf.
+		filter(pt.col("aaSequence").cast("String").strContains("*", { literal: true })).
+		select(pt.col("aaVariantKey").cast("String").alias("aaVariantKey"), pt.lit(1).alias("_stop"))
+	vdf = vdf.
+		withColumns(pt.col("aaVariantKey").cast("String").alias("aaVariantKey")).
+		join(stopAaKeys, { how: "left", on: ["aaVariantKey"] })
+	hasStop := pt.col("_stop").fillNull(pt.lit(0)).eq(pt.lit(1))
 	isAssigned := pt.col("assignStatus").cast("String").eq("ASSIGNED")
 	isUnassigned := pt.col("assignStatus").cast("String").eq("UNASSIGNED")
 	isAmbiguous := pt.col("assignStatus").cast("String").eq("AMBIGUOUS")
@@ -571,6 +619,8 @@ self.body(func(inputs) {
 		reads.sum().alias("totalReads"),
 		countWhen(fs).alias("frameShiftVariants"),
 		readsWhen(fs).alias("frameShiftReads"),
+		countWhen(hasStop).alias("stopCodonVariants"),
+		readsWhen(hasStop).alias("stopCodonReads"),
 		countWhen(isAssigned).alias("assignedVariants"),
 		readsWhen(isAssigned).alias("assignedReads"),
 		countWhen(isUnassigned).alias("unassignedVariants"),
@@ -583,6 +633,7 @@ self.body(func(inputs) {
 		vSelect = append(vSelect,
 			mols.sum().alias("totalMolecules"),
 			molsWhen(fs).alias("frameShiftMolecules"),
+			molsWhen(hasStop).alias("stopCodonMolecules"),
 			molsWhen(isAssigned).alias("assignedMolecules"),
 			molsWhen(isUnassigned).alias("unassignedMolecules"),
 			molsWhen(isAmbiguous).alias("ambiguousMolecules")
@@ -618,11 +669,13 @@ self.body(func(inputs) {
 			select(outCols...).
 			sort(["mutationCount"])
 	}
-	histogram(vdf, "variantKey").save("ntMutationHistogram.parquet")
+	// The histograms describe the repertoire the tables export, so they read the
+	// filtered frames, not the raw QC ones.
+	histogram(vAbund, "variantKey").save("ntMutationHistogram.parquet")
 
 	// The aa mutation count lives in aa-variants.tsv; the reads come from its nt
 	// members in variants.tsv.
-	aaMutations := adf.
+	aaMutations := aaForKnown.
 		groupBy("aaVariantKey").
 		agg(pt.col("mutationCount").cast("Int").first().alias("mutationCount"))
 	// Every abundance column histogram() reads must survive this roll-up.
@@ -632,7 +685,7 @@ self.body(func(inputs) {
 			pt.col("moleculeCount").cast("Long").sum().alias("moleculeCount"))
 	}
 	histogram(
-		vdf.
+		vAbund.
 			filter(b6NonEmpty("aaVariantKey")).
 			groupBy("aaVariantKey").agg(aaMembers...).
 			join(aaMutations, { how: "inner", on: ["aaVariantKey"] }),
@@ -663,6 +716,7 @@ self.body(func(inputs) {
 
 	qcCols := [
 		frac("frameShiftReads").alias("frameShiftReadFraction"),
+		frac("stopCodonReads").alias("stopCodonReadFraction"),
 		aaGateFrac("aaMutationsExceededReads", "totalReads").alias("aaMutationsExceededReadFraction"),
 		frac("assignedReads").alias("assignedReadFraction"),
 		frac("unassignedReads").alias("unassignedReadFraction"),
@@ -671,6 +725,7 @@ self.body(func(inputs) {
 	if hasUmi {
 		qcCols = append(qcCols,
 			molFrac("frameShiftMolecules").alias("frameShiftMoleculeFraction"),
+			molFrac("stopCodonMolecules").alias("stopCodonMoleculeFraction"),
 			aaGateFrac("aaMutationsExceededMolecules", "totalMolecules").alias("aaMutationsExceededMoleculeFraction"),
 			molFrac("assignedMolecules").alias("assignedMoleculeFraction"),
 			molFrac("unassignedMolecules").alias("unassignedMoleculeFraction"),
@@ -792,23 +847,26 @@ self.body(func(inputs) {
 	}
 
 	if exportStateMatrix {
-		// Export-only-matched: the matrix is variant-keyed, so it is restricted to
-		// matched variants too. aa keeps variantKeys (== aaVariantKey) with a
-		// knownAaKey. Recomputed here rather than shared — a frame belongs to one
-		// workflow.
+		// The matrix is variant-keyed, so it keeps only the variants the tables keep:
+		// the productive ones (aaVariantsFile is already filtered) and, under
+		// export-only-matched, those with a knownAaKey. Recomputed here rather than
+		// shared — a frame belongs to one workflow.
 		aaSmDf := smWf.frame({
 			file: analyzeCmd.getFile("out.aa-state-matrix.tsv"),
 			xsvType: "tsv"
 		}, { id: "aaSm", inferSchema: false })
-		if exportOnlyKnown {
-			smMatchedAa := smWf.frame({
-				file: analyzeCmd.getFile("out.aa-variants.tsv"),
+		if exportOnlyKnown || filterNonProductive {
+			smKeptAa := smWf.frame({
+				file: aaVariantsFile,
 				xsvType: "tsv"
-			}, { id: "smMatchedAa" }).
-				filter(b6NonEmpty("knownAaKey")).
+			}, { id: "smKeptAa" })
+			if exportOnlyKnown {
+				smKeptAa = smKeptAa.filter(b6NonEmpty("knownAaKey"))
+			}
+			smKeptAa = smKeptAa.
 				groupBy("aaVariantKey").agg(pt.col("aaVariantKey").count().alias("_n")).
 				select(pt.col("aaVariantKey").alias("variantKey"))
-			aaSmDf = aaSmDf.join(smMatchedAa, { how: "inner", on: ["variantKey"] })
+			aaSmDf = aaSmDf.join(smKeptAa, { how: "inner", on: ["variantKey"] })
 		}
 		chunkStateMatrix(aaSmDf, "aa")
 	} else {
@@ -821,18 +879,21 @@ self.body(func(inputs) {
 			file: analyzeCmd.getFile("out.nt-state-matrix.tsv"),
 			xsvType: "tsv"
 		}, { id: "ntSm", inferSchema: false })
-		if exportOnlyKnown {
-			ntMatchKeys := emptySmFrame().select(pt.col("variantKey"))
-			if hasNtKnown {
-				ntMatchKeys = smWf.frame({
-					file: analyzeCmd.getFile("out.variants.tsv"),
+		if exportOnlyKnown || filterNonProductive {
+			ntKeptKeys := emptySmFrame().select(pt.col("variantKey"))
+			if !exportOnlyKnown || hasNtKnown {
+				ntKeptKeys = smWf.frame({
+					file: variantsFile,
 					xsvType: "tsv"
-				}, { id: "smNtVars" }).
-					filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
+				}, { id: "smNtVars" })
+				if exportOnlyKnown {
+					ntKeptKeys = ntKeptKeys.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED"))
+				}
+				ntKeptKeys = ntKeptKeys.
 					groupBy("variantKey").agg(pt.col("variantKey").count().alias("_n")).
 					select(pt.col("variantKey"))
 			}
-			ntSmDf = ntSmDf.join(ntMatchKeys, { how: "inner", on: ["variantKey"] })
+			ntSmDf = ntSmDf.join(ntKeptKeys, { how: "inner", on: ["variantKey"] })
 		}
 		chunkStateMatrix(ntSmDf, "nt")
 	} else {
@@ -849,8 +910,10 @@ self.body(func(inputs) {
 	result := {
 		// The caller assembles the per-step log map; this is just the analyze half.
 		analyzeLogStream: analyzeCmd.getStdoutStream(),
-		variantsTsv: analyzeCmd.getFile("out.variants.tsv"),
-		aaVariantsTsv: analyzeCmd.getFile("out.aa-variants.tsv"),
+		// Filtered when filterNonProductive is on, so every cross-sample aggregate
+		// (properties, linkers, known overlay) sees the same variants as the tables.
+		variantsTsv: variantsFile,
+		aaVariantsTsv: aaVariantsFile,
 		regionAnnotationTsv: emitRegionAnnotation ? analyzeCmd.getFile("out.region-annotation.tsv") : ptResult.getFile("emptyRegionAnnotation.tsv"),
 		qcJson: analyzeCmd.getFile("out.qc.json"),
 		reports: reportsMap.build(),
