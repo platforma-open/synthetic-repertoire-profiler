@@ -3,7 +3,7 @@
 // Reads the per-sample resource maps — nt/aa abundance parquets (for totals) and
 // the raw variants/aa-variants TSVs (for sample-independent metadata) — and emits
 // per-variant property tables:
-//   ntProperties.tsv  [variantKey]      -> label, sequence, mutations, mutationCount, totals
+//   ntProperties.tsv  [variantKey]      -> label, sequence, mutations, mutationCount, isProductive, totals
 //   aaProperties.tsv  [variantKey(aa)]  -> + ntVariantCount
 //
 // Keys are mitool's content hashes (variantKey / aaVariantKey); the aa key is
@@ -98,37 +98,20 @@ self.body(func(inputs) {
 	ntRegionCols := is_undefined(inputs.ntRegionCols) ? [] : inputs.ntRegionCols
 	aaRegionCols := is_undefined(inputs.aaRegionCols) ? [] : inputs.aaRegionCols
 
-	// --- nt level ---
-	ntAggs := [
-		pt.col("ntSequence").first().alias("sequence"),
-		pt.col("mutations").cast("String").first().alias("mutations"),
-		pt.col("mutationCount").cast("Int").first().alias("mutationCount")
-	]
-	ntSelect := [
-		pt.col("variantKey"),
-		pt.col("variantLabel"),
-		pt.col("sequence"),
-		pt.col("mutations"),
-		pt.col("mutationCount"),
-		pt.col("readCountTotal"),
-		pt.col("readFractionMean"),
-		pt.col("sampleCount")
-	]
-	if hasUmi {
-		ntSelect = append(ntSelect, pt.col("uniqueMoleculeCountSum"), pt.col("uniqueMoleculeFractionMean"))
+	// Productive = no frame shift and no stop codon in the translation, as "true" /
+	// "false" strings (the MiXCR blocks' convention). An aa variant is productive when
+	// its sequence carries no `*`. An nt variant is productive when no sample calls it
+	// frame-shifted and the aa variant it translates to is productive. The frame-shift
+	// call can differ between samples (AA_MISMATCH looks at the sample's other
+	// synonymous members), so any one sample calling it is enough. Both are folded
+	// into the one group-by per level: ptabler's group-by keeps order and cannot
+	// stream, so each extra one holds another table of every distinct variant.
+	productiveIf := func(cond) {
+		return pt.when(cond).then(pt.lit("true")).otherwise(pt.lit("false"))
 	}
-	for rn in ntRegionCols {
-		ntAggs = append(ntAggs, pt.col("nSeq" + rn).cast("String").first().alias("nSeq" + rn))
-		ntSelect = append(ntSelect, pt.col("nSeq" + rn))
-	}
-	ntVariants := concatF(loadFrames(inputs.variantsTsvData, "ntv", "tsv"))
-	ntMeta := ntVariants.groupBy("variantKey").agg(ntAggs...)
-	withLabel(
-		totals(loadFrames(inputs.ntAbundanceData, "ntab", "parquet")).
-			join(ntMeta, { how: "left", on: ["variantKey"] })
-	).select(ntSelect...).sort(["variantKey"]).save("ntProperties.tsv", { xsvType: "tsv" })
 
-	// --- aa level (metadata keyed by aaVariantKey -> aliased to variantKey) ---
+	// --- aa level, grouped first: the nt level reads its isProductive ---
+	// Metadata keyed by aaVariantKey, aliased to variantKey on output.
 	aaAggs := [
 		pt.col("aaSequence").first().alias("sequence"),
 		pt.col("mutations").cast("String").first().alias("mutations"),
@@ -139,6 +122,7 @@ self.body(func(inputs) {
 		pt.col("sequence"),
 		pt.col("mutations"),
 		pt.col("mutationCount"),
+		pt.col("isProductive"),
 		pt.col("ntVariantCount")
 	]
 	aaSelect := [
@@ -147,6 +131,7 @@ self.body(func(inputs) {
 		pt.col("sequence"),
 		pt.col("mutations"),
 		pt.col("mutationCount"),
+		pt.col("isProductive"),
 		pt.col("readCountTotal"),
 		pt.col("readFractionMean"),
 		pt.col("sampleCount"),
@@ -160,6 +145,56 @@ self.body(func(inputs) {
 		aaMetaSelect = append(aaMetaSelect, pt.col("aaSeq" + rn))
 		aaSelect = append(aaSelect, pt.col("aaSeq" + rn))
 	}
+	aaGrouped := concatF(loadFrames(inputs.aaVariantsTsvData, "aav", "tsv")).
+		groupBy("aaVariantKey").agg(aaAggs...).
+		withColumns(
+			productiveIf(pt.col("sequence").strContains("*", { literal: true }).not()).alias("isProductive")
+		)
+
+	// --- nt level ---
+	ntAggs := [
+		pt.col("ntSequence").first().alias("sequence"),
+		pt.col("mutations").cast("String").first().alias("mutations"),
+		pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
+		// A frame-shifted sample leaves the aa key empty; max() takes the real one.
+		pt.col("aaVariantKey").cast("String").max().alias("aaVariantKey"),
+		pt.when(pt.col("frameShift").strToUpper().eq("TRUE")).
+			then(pt.lit(1)).otherwise(pt.lit(0)).max().alias("_frameShift")
+	]
+	ntSelect := [
+		pt.col("variantKey"),
+		pt.col("variantLabel"),
+		pt.col("sequence"),
+		pt.col("mutations"),
+		pt.col("mutationCount"),
+		pt.col("isProductive"),
+		pt.col("readCountTotal"),
+		pt.col("readFractionMean"),
+		pt.col("sampleCount")
+	]
+	if hasUmi {
+		ntSelect = append(ntSelect, pt.col("uniqueMoleculeCountSum"), pt.col("uniqueMoleculeFractionMean"))
+	}
+	for rn in ntRegionCols {
+		ntAggs = append(ntAggs, pt.col("nSeq" + rn).cast("String").first().alias("nSeq" + rn))
+		ntSelect = append(ntSelect, pt.col("nSeq" + rn))
+	}
+	ntVariants := concatF(loadFrames(inputs.variantsTsvData, "ntv", "tsv"))
+	ntMeta := ntVariants.groupBy("variantKey").agg(ntAggs...).
+		join(
+			aaGrouped.select(pt.col("aaVariantKey"), pt.col("isProductive").alias("_aaProductive")),
+			{ how: "left", on: ["aaVariantKey"] }
+		).
+		withColumns(
+			productiveIf(
+				pt.col("_frameShift").eq(pt.lit(0)).and(pt.col("_aaProductive").fillNull("false").eq(pt.lit("true")))
+			).alias("isProductive")
+		)
+	withLabel(
+		totals(loadFrames(inputs.ntAbundanceData, "ntab", "parquet")).
+			join(ntMeta, { how: "left", on: ["variantKey"] })
+	).select(ntSelect...).sort(["variantKey"]).save("ntProperties.tsv", { xsvType: "tsv" })
+
 	// Synonymous-replicate count: distinct nt variants encoding this aa variant, over
 	// the whole dataset. Recounted here — the TSV's own ntVariantCount is mitool's
 	// per-sample count, and no cross-sample aggregation of it is right (first() takes
@@ -170,8 +205,7 @@ self.body(func(inputs) {
 		filter(pt.col("aaVariantKey").cast("String").fillNull("").strLenChars().gt(pt.lit(0))).
 		groupBy("aaVariantKey").
 		agg(pt.col("variantKey").nUnique().alias("ntVariantCount"))
-	aaMeta := concatF(loadFrames(inputs.aaVariantsTsvData, "aav", "tsv")).
-		groupBy("aaVariantKey").agg(aaAggs...).
+	aaMeta := aaGrouped.
 		join(ntPerAa, { how: "left", on: ["aaVariantKey"] }).
 		select(aaMetaSelect...)
 	withLabel(
