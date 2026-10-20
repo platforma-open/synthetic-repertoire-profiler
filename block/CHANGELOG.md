@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.block
 
+## 1.6.1
+
+### Patch Changes
+
+- bfb0fb6: Release every package through npm trusted publishing (OIDC) so each package's trusted publisher is used before it expires.
+
 ## 1.6.0
 
 ### Minor Changes
