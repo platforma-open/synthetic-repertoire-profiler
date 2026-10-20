@@ -646,6 +646,19 @@ ACGTACGT..."
       </PlNumberField>
     </PlRow>
 
+    <PlCheckbox v-model="app.model.data.filterNonProductive">
+      Remove non-productive variants
+      <PlTooltip class="info" position="top">
+        <template #tooltip>
+          On by default. A variant is non-productive when it is frame-shifted (see above) or its
+          protein carries a stop codon. Removed variants leave every table and plot, and read
+          fractions are recomputed over the variants that remain. The QC Report still counts them in
+          its frame-shift and stop-codon columns. Turn it off to keep them; the Productive column
+          then marks which variants they are.
+        </template>
+      </PlTooltip>
+    </PlCheckbox>
+
     <PlSectionSeparator>Resource Allocation</PlSectionSeparator>
     <PlNumberField
       v-model="app.model.data.perProcessMemGB"

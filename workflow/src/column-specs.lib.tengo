@@ -4,6 +4,8 @@
 
 maps := import("@platforma-sdk/workflow-tengo:maps")
 
+json := import("json")
+
 // Merge standard table annotations (order + visibility) onto a spec's annotations.
 tableAnno := func(order, visibility, anno) {
 	return maps.merge(anno, {
@@ -990,6 +992,22 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName, hasU
 			})
 		}
 	}, {
+		// Same name, values and filter annotations as the MiXCR blocks' column. All
+		// "true" when the run drops non-productive variants.
+		column: "isProductive",
+		id: "is-productive",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/vdj/sequence/productive",
+			valueType: "String",
+			annotations: tableAnno(93000, "optional", {
+				"pl7.app/label": "Productive",
+				"pl7.app/description": "No frame shift and no stop codon in the translation.",
+				"pl7.app/isDiscreteFilter": "true",
+				"pl7.app/discreteValues": string(json.encode(["true", "false"]))
+			})
+		}
+	}, {
 		column: "readCountTotal",
 		id: "read-count-total",
 		allowNA: false,
@@ -1135,6 +1153,9 @@ qcColumns := func(sampleIdAxisSpec, hasUmi) {
 			longCol("frameShiftVariants", "frame-shift-variants", 90000, "default", "Frame-Shift Variants", "Variants whose mutations shift the reading frame."),
 			longCol("frameShiftReads", "frame-shift-reads", 89000, "optional", "Frame-Shift Reads", "Reads on frame-shift variants."),
 			fracCol("frameShiftReadFraction", "frame-shift-read-fraction", 88000, readVis, "Frame-Shift Reads (%)", "Fraction of total reads on frame-shift variants."),
+			longCol("stopCodonVariants", "stop-codon-variants", 87900, "default", "Stop-Codon Variants", "In-frame variants whose translation carries a stop codon."),
+			longCol("stopCodonReads", "stop-codon-reads", 87700, "optional", "Stop-Codon Reads", "Reads on stop-codon variants."),
+			fracCol("stopCodonReadFraction", "stop-codon-read-fraction", 87500, readVis, "Stop-Codon Reads (%)", "Fraction of total reads on stop-codon variants."),
 			longCol("aaMutationsExceededVariants", "aa-mutations-exceeded-variants", 87000, "default", "AA Mutation-Limit Variants", "In-frame variants dropped by mutation filter"),
 			longCol("aaMutationsExceededReads", "aa-mutations-exceeded-reads", 86000, "optional", "AA Mutation-Limit Reads", "Reads on aa mutation-limit variants."),
 			fracCol("aaMutationsExceededReadFraction", "aa-mutations-exceeded-read-fraction", 85000, readVis, "AA Mutation-Limit Reads (%)", "Fraction of total reads on aa mutation-limit variants."),
@@ -1175,6 +1196,8 @@ qcColumns := func(sampleIdAxisSpec, hasUmi) {
 			},
 			longCol("frameShiftMolecules", "frame-shift-molecules", 89500, "optional", "Frame-Shift UMIs", "UMIs on frame-shift variants."),
 			fracCol("frameShiftMoleculeFraction", "frame-shift-molecule-fraction", 88500, "default", "Frame-Shift UMIs (%)", "Fraction of total UMIs on frame-shift variants."),
+			longCol("stopCodonMolecules", "stop-codon-molecules", 87800, "optional", "Stop-Codon UMIs", "UMIs on stop-codon variants."),
+			fracCol("stopCodonMoleculeFraction", "stop-codon-molecule-fraction", 87600, "default", "Stop-Codon UMIs (%)", "Fraction of total UMIs on stop-codon variants."),
 			longCol("aaMutationsExceededMolecules", "aa-mutations-exceeded-molecules", 86500, "optional", "AA Mutation-Limit UMIs", "UMIs on aa mutation-limit variants."),
 			fracCol("aaMutationsExceededMoleculeFraction", "aa-mutations-exceeded-molecule-fraction", 85500, "default", "AA Mutation-Limit UMIs (%)", "Fraction of total UMIs on aa mutation-limit variants."),
 			longCol("assignedMolecules", "assigned-molecules", 79500, "optional", "Assigned UMIs", "UMIs on assigned variants."),

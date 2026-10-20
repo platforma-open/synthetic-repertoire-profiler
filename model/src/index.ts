@@ -316,6 +316,11 @@ export type BlockData = {
   frameShiftMode?: FrameShiftMode;
   frameShiftAaThreshold?: number; // AA_MISMATCH only; ignored under TRIPLET
 
+  // Drop non-productive variants: frame-shifted ones, and in-frame ones whose
+  // translation carries a stop codon. The workflow filters after mitool, so the QC
+  // table still counts them. Every variant carries an isProductive column either way.
+  filterNonProductive: boolean;
+
   // minBaseQuality → align step (AlignParams.filter): reject a fragment if ANY
   // read base inside the parent-covered span is below this Phred. Bases outside
   // the span (overhang, adapter tails) are ignored.
@@ -404,6 +409,8 @@ export type BlockArgs = {
   // Absent = mitool defaults (AA_MISMATCH / 10).
   frameShiftMode?: FrameShiftMode;
   frameShiftAaThreshold?: number;
+  // Block-side productive filter, applied to the mitool output in the workflow.
+  filterNonProductive: boolean;
   // Quality gates → mitool -Malign.filter.minBaseQuality / -Massemble.minVariantQuality.
   // Absent = mitool defaults (5 / 20), which are ON — not off.
   minBaseQuality?: number;
@@ -430,9 +437,10 @@ type BlockDataV5 = Omit<BlockDataV6, "runMode" | "limitInput">;
 type BlockDataV6 = Omit<BlockDataV7, "exportStateMatrix">;
 type BlockDataV7 = Omit<BlockDataV8, "exportNtStateMatrix">;
 /** v9 changes no field, only resets `graphStateStateHeatmap`. */
-type BlockDataV8 = BlockData;
+type BlockDataV8 = BlockDataV10;
 /** v10 changes no field, only tilts the mutation histogram's x labels. */
-type BlockDataV9 = BlockData;
+type BlockDataV9 = BlockDataV10;
+type BlockDataV10 = Omit<BlockData, "filterNonProductive">;
 
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -531,7 +539,7 @@ const dataModel = new DataModelBuilder({ kind })
     graphStateStateHeatmap: { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
   }))
   // Keeps the rest of a saved histogram state; only the x label angle changes.
-  .migrate<BlockData>("v10", (v9) => {
+  .migrate<BlockDataV10>("v10", (v9) => {
     const state = v9.graphStateMutationHistogram;
     return {
       ...v9,
@@ -544,6 +552,11 @@ const dataModel = new DataModelBuilder({ kind })
       },
     };
   })
+  // Existing projects kept every variant, so they keep doing so.
+  .migrate<BlockData>("v11", (v10) => ({
+    ...v10,
+    filterNonProductive: false,
+  }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
   // `.templateParams(...)` below projects those same fields back out. `params` is
@@ -568,6 +581,7 @@ const dataModel = new DataModelBuilder({ kind })
     maxAaMutationFraction: params?.maxAaMutationFraction,
     frameShiftMode: params?.frameShiftMode,
     frameShiftAaThreshold: params?.frameShiftAaThreshold,
+    filterNonProductive: params?.filterNonProductive ?? true,
     minBaseQuality: params?.minBaseQuality,
     minVariantQuality: params?.minVariantQuality,
     minVariantReads: params?.minVariantReads,
@@ -1194,6 +1208,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       maxAaMutationFraction,
       frameShiftMode,
       frameShiftAaThreshold,
+      filterNonProductive: data.filterNonProductive,
       minBaseQuality,
       minVariantQuality,
       minVariantReads,
@@ -1235,6 +1250,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     maxAaMutationFraction: data.maxAaMutationFraction,
     frameShiftMode: data.frameShiftMode,
     frameShiftAaThreshold: data.frameShiftAaThreshold,
+    filterNonProductive: data.filterNonProductive,
     minBaseQuality: data.minBaseQuality,
     minVariantQuality: data.minVariantQuality,
     minVariantReads: data.minVariantReads,

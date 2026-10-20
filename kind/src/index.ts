@@ -84,6 +84,7 @@ export type BlockParams = {
   maxAaMutationFraction?: number;
   frameShiftMode?: FrameShiftMode;
   frameShiftAaThreshold?: number;
+  filterNonProductive?: boolean;
   minBaseQuality?: number;
   minVariantQuality?: number;
   minVariantReads?: number;
@@ -137,6 +138,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     maxAaMutationFraction,
     frameShiftMode,
     frameShiftAaThreshold,
+    filterNonProductive,
     minBaseQuality,
     minVariantQuality,
     minVariantReads,
@@ -167,6 +169,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     maxAaMutationFraction: optionalNumber(maxAaMutationFraction, "maxAaMutationFraction"),
     frameShiftMode: optionalEnum(frameShiftMode, FRAME_SHIFT_MODES, "frameShiftMode"),
     frameShiftAaThreshold: optionalNumber(frameShiftAaThreshold, "frameShiftAaThreshold"),
+    filterNonProductive: optionalBoolean(filterNonProductive, "filterNonProductive"),
     minBaseQuality: optionalNumber(minBaseQuality, "minBaseQuality"),
     minVariantQuality: optionalNumber(minVariantQuality, "minVariantQuality"),
     minVariantReads: optionalNumber(minVariantReads, "minVariantReads"),
