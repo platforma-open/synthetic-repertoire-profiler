@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.vdj-region-tools
 
+## 1.1.3
+
+### Patch Changes
+
+- bfb0fb6: Release every package through npm trusted publishing (OIDC) so each package's trusted publisher is used before it expires.
+
 ## 1.1.2
 
 ### Patch Changes

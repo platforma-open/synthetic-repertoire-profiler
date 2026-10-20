@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.workflow
 
+## 1.4.1
+
+### Patch Changes
+
+- bfb0fb6: Release every package through npm trusted publishing (OIDC) so each package's trusted publisher is used before it expires.
+- Updated dependencies [bfb0fb6]
+  - @platforma-open/milaboratories.synthetic-repertoire-profiler.vdj-region-tools@1.1.3
+
 ## 1.4.0
 
 ### Minor Changes
