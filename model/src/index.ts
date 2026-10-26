@@ -441,6 +441,9 @@ type BlockDataV8 = BlockDataV10;
 /** v10 changes no field, only tilts the mutation histogram's x labels. */
 type BlockDataV9 = BlockDataV10;
 type BlockDataV10 = Omit<BlockData, "filterNonProductive">;
+/** v12 changes no field, only tilts the mutation histogram's x labels by the key the
+ *  discrete chart reads. */
+type BlockDataV11 = BlockData;
 
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -451,9 +454,10 @@ const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
     // fill to the primary grouping (here the mutation count) and colours every bar.
     bar: { fillColor: "#99e099" },
   },
+  // A discrete chart reads `labelsRotation`; `axisLabelsAngle` is heatmap/bubble only.
   axesSettings: {
     axisX: {
-      axisLabelsAngle: 45,
+      labelsRotation: "45deg",
     },
   },
 };
@@ -553,10 +557,25 @@ const dataModel = new DataModelBuilder({ kind })
     };
   })
   // Existing projects kept every variant, so they keep doing so.
-  .migrate<BlockData>("v11", (v10) => ({
+  .migrate<BlockDataV11>("v11", (v10) => ({
     ...v10,
     filterNonProductive: false,
   }))
+  // v10 set `axisLabelsAngle`, which the discrete chart ignores. Keeps the rest of a
+  // saved histogram state.
+  .migrate<BlockData>("v12", (v11) => {
+    const state = v11.graphStateMutationHistogram;
+    return {
+      ...v11,
+      graphStateMutationHistogram: {
+        ...state,
+        axesSettings: {
+          ...state.axesSettings,
+          axisX: { ...state.axesSettings?.axisX, labelsRotation: "45deg" },
+        },
+      },
+    };
+  })
   // The first group of fields is the kind's init-params contract, field for
   // field, and
   // `.templateParams(...)` below projects those same fields back out. `params` is
