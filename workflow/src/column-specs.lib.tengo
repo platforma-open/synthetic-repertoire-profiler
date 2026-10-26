@@ -973,7 +973,8 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName, hasU
 			},
 			annotations: tableAnno(95000, "default", {
 				"pl7.app/table/fontFamily": "monospace",
-				"pl7.app/label": "Mutations"
+				"pl7.app/label": "Mutations",
+				"pl7.app/description": "Changes from the parent, 1-based, colon-separated. Examples: SA42G - A at position 42 changed to G. DT17 - T at position 17 deleted. I5C - C inserted before position 5"
 			})
 		}
 	}, {
