@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.model
 
+## 1.6.2
+
+### Patch Changes
+
+- 59fca0c: - Mutation Distribution: x-axis labels are now actually tilted 45°, in new and existing projects. The earlier change set a setting the bar chart ignores.
+- Updated dependencies [59fca0c]
+  - @platforma-open/milaboratories.synthetic-repertoire-profiler.kind@1.1.1
+
 ## 1.5.1
 
 ### Patch Changes
