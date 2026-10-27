@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.workflow
 
+## 1.6.3
+
+### Patch Changes
+
+- 74c5bd3: Update RepSeq.IO, MiTool to the versions with the rebuilt Docker images. The old images trust the compromised eMudhra intermediate CAs.
+
 ## 1.6.2
 
 ### Patch Changes
