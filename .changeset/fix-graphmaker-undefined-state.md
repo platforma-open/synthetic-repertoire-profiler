@@ -3,6 +3,7 @@
 "@platforma-open/milaboratories.synthetic-repertoire-profiler.ui": patch
 "@platforma-open/milaboratories.synthetic-repertoire-profiler.model": patch
 "@platforma-open/milaboratories.synthetic-repertoire-profiler.workflow": patch
+"@platforma-open/milaboratories.synthetic-repertoire-profiler.vdj-region-tools": patch
 ---
 
 Fix the Mutation Distribution and Residue Composition plots failing to render in projects created by an earlier version of the block.
