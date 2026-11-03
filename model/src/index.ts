@@ -444,8 +444,20 @@ type BlockDataV10 = Omit<BlockData, "filterNonProductive">;
 /** v12 changes no field, only tilts the mutation histogram's x labels by the key the
  *  discrete chart reads. */
 type BlockDataV11 = BlockData;
+// A project created before these three fields reached `.init()` is stamped v12 but its
+// saved data never had them, so the shape v13 reads marks them optional.
+type BlockDataV12 = Omit<
+  BlockData,
+  "graphStateMutationHistogram" | "graphStateStateHeatmap" | "knownVariantsNtTableState"
+> &
+  Partial<
+    Pick<
+      BlockData,
+      "graphStateMutationHistogram" | "graphStateStateHeatmap" | "knownVariantsNtTableState"
+    >
+  >;
 
-const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
+export const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
   template: "bar",
   currentTab: null,
@@ -462,7 +474,7 @@ const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   },
 };
 
-const DEFAULT_STATE_HEATMAP_GRAPH_STATE: GraphMakerState = {
+export const DEFAULT_STATE_HEATMAP_GRAPH_STATE: GraphMakerState = {
   // Fuller than the sidebar label ("Residue Composition"): this one shows on the
   // chart itself and in exports, where "per-position" is what stops a pooled
   // marginal being read as a per-mutation effect map.
@@ -563,7 +575,7 @@ const dataModel = new DataModelBuilder({ kind })
   }))
   // v10 set `axisLabelsAngle`, which the discrete chart ignores. Keeps the rest of a
   // saved histogram state.
-  .migrate<BlockData>("v12", (v11) => {
+  .migrate<BlockDataV12>("v12", (v11) => {
     const state = v11.graphStateMutationHistogram;
     return {
       ...v11,
@@ -576,6 +588,17 @@ const dataModel = new DataModelBuilder({ kind })
       },
     };
   })
+  // A project created before these fields reached `.init()` is stamped v12 with them
+  // absent, and an already-v12 project runs no migration unless a new version exists.
+  // So backfill here. A v12 project that already has them keeps its own values.
+  .migrate<BlockData>("v13", (v12) => ({
+    ...v12,
+    graphStateMutationHistogram: v12.graphStateMutationHistogram ?? {
+      ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE,
+    },
+    graphStateStateHeatmap: v12.graphStateStateHeatmap ?? { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
+    knownVariantsNtTableState: v12.knownVariantsNtTableState ?? createPlDataTableStateV2(),
+  }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
   // `.templateParams(...)` below projects those same fields back out. `params` is
