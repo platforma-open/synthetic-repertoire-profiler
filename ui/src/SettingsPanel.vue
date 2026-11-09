@@ -222,9 +222,8 @@ watch([() => app.model.data.runMode, previewDefault], ([mode, seed], old) => {
   if (current === undefined || wasSeed) app.model.data.limitInput = seed;
 });
 
-// Both writes happen on the user gesture, never in a watcher on the outputs —
-// that loop would be a hairpin. `.subtitle` is args-only, so it needs the dataset
-// label snapshotted here.
+// The pattern write happens on the user gesture, never in a watcher on the
+// outputs — that loop would be a hairpin, since the pattern reaches args.
 //
 // The pattern is refitted only while it is still a default, so an edited pattern
 // (UMI, anchors, fixed lengths) survives a dataset switch. Paired-endedness comes
@@ -233,10 +232,6 @@ watch([() => app.model.data.runMode, previewDefault], ([mode, seed], old) => {
 type InputRef = NonNullable<typeof app.model.data.input>;
 function onSelectInput(ref: InputRef | undefined) {
   app.model.data.input = ref;
-  app.model.data.subtitleLabel =
-    app.model.outputs.inputOptions?.find(
-      (o) => ref && o.ref.blockId === ref.blockId && o.ref.name === ref.name,
-    )?.label ?? "";
 
   const isPaired = ref ? app.model.outputs.inputPairedEndByRef?.[plRefKey(ref)] : undefined;
   if (isPaired !== undefined && isDefaultTagPattern(app.model.data.tagPattern)) {
