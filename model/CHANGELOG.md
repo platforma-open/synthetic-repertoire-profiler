@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.model
 
+## 1.6.5
+
+### Patch Changes
+
+- c108b1b: Keep the block subtitle in sync with the chosen input's current label
+
 ## 1.6.4
 
 ### Patch Changes
