@@ -208,9 +208,8 @@ export function buildParentRegionsJson(
  *  projects this to the workflow-facing args; view-only fields stay here. */
 export type BlockData = {
   // `customBlockLabel` is the user-renamed override of both the trace label and
-  // the subtitle. `subtitleLabel` holds the selected dataset's name, written by
-  // the UI when the user picks the dataset (the `.subtitle` context is args-only
-  // and can't resolve the dataset label live).
+  // the subtitle. `subtitleLabel` holds the selected dataset's current name, kept
+  // in sync by the UI while the block is open; it never reaches the args.
   customBlockLabel?: string;
   subtitleLabel?: string;
 
@@ -1317,9 +1316,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   .title(() => "Amplicon Profiling")
 
   // Subtitle: custom label if the user set one, else a prompt until a dataset is
-  // picked, else the selected dataset's name (written into data by the UI on
-  // selection). The subtitle context is args-only — it can't resolve the dataset
-  // label live — so the name must already be persisted in data here.
+  // picked, else the selected dataset's name as last stored in data by the UI.
   .subtitle(
     (ctx) =>
       ctx.data.customBlockLabel ||
