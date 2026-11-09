@@ -1,4 +1,5 @@
 ---
+"@platforma-open/milaboratories.synthetic-repertoire-profiler.model": patch
 "@platforma-open/milaboratories.synthetic-repertoire-profiler.ui": patch
 ---
 
