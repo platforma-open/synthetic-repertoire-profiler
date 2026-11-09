@@ -207,12 +207,12 @@ export function buildParentRegionsJson(
 /** Unified, UI-editable block state (V3 data model). The `.args(...)` lambda
  *  projects this to the workflow-facing args; view-only fields stay here. */
 export type BlockData = {
-  // Block label shown as the subtitle. `customBlockLabel` is the user-renamed
-  // override; `defaultBlockLabel` holds the selected dataset's name, snapshotted
-  // by the UI on selection (the `.subtitle` context is args-only and can't
-  // resolve the dataset label live).
+  // `customBlockLabel` is the user-renamed override of both the trace label and
+  // the subtitle. `subtitleLabel` holds the selected dataset's name, written by
+  // the UI when the user picks the dataset (the `.subtitle` context is args-only
+  // and can't resolve the dataset label live).
   customBlockLabel?: string;
-  defaultBlockLabel?: string;
+  subtitleLabel?: string;
 
   // Input reads — a fastq dataset from the result pool.
   input?: PlRef;
@@ -421,8 +421,7 @@ export type BlockArgs = {
   aggregationMemGB?: number;
   perProcessCPUs?: number;
   limitInput?: number; // → mitool parse -n. Absent = full run.
-  defaultBlockLabel: string;
-  customBlockLabel: string;
+  traceLabel: string;
 };
 
 /** v1 data shape: the toggle was `ntStateMatrix` (nt state matrix only). v2
@@ -440,10 +439,11 @@ type BlockDataV7 = Omit<BlockDataV8, "exportNtStateMatrix">;
 type BlockDataV8 = BlockDataV10;
 /** v10 changes no field, only tilts the mutation histogram's x labels. */
 type BlockDataV9 = BlockDataV10;
-type BlockDataV10 = Omit<BlockData, "filterNonProductive">;
+type BlockDataV10 = Omit<BlockDataV12, "filterNonProductive">;
 /** v12 changes no field, only tilts the mutation histogram's x labels by the key the
  *  discrete chart reads. */
-type BlockDataV11 = BlockData;
+type BlockDataV11 = BlockDataV12;
+type BlockDataV12 = Omit<BlockData, "subtitleLabel"> & { defaultBlockLabel?: string };
 
 const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -563,7 +563,7 @@ const dataModel = new DataModelBuilder({ kind })
   }))
   // v10 set `axisLabelsAngle`, which the discrete chart ignores. Keeps the rest of a
   // saved histogram state.
-  .migrate<BlockData>("v12", (v11) => {
+  .migrate<BlockDataV12>("v12", (v11) => {
     const state = v11.graphStateMutationHistogram;
     return {
       ...v11,
@@ -576,6 +576,12 @@ const dataModel = new DataModelBuilder({ kind })
       },
     };
   })
+  // `defaultBlockLabel` held only the selected dataset's name, so it carries over
+  // to the subtitle unchanged.
+  .migrate<BlockData>("v13", ({ defaultBlockLabel, ...rest }) => ({
+    ...rest,
+    subtitleLabel: defaultBlockLabel,
+  }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
   // `.templateParams(...)` below projects those same fields back out. `params` is
@@ -615,7 +621,7 @@ const dataModel = new DataModelBuilder({ kind })
     // Also `runMode`: a template is a recipe for a real run, so a saved preview
     // would hand every block made from it a partial answer.
     runMode: "full" as const,
-    defaultBlockLabel: "",
+    subtitleLabel: "",
     knownNtMetadataColumns: [],
     knownAaMetadataColumns: [],
     qcTableState: createPlDataTableStateV2(),
@@ -627,7 +633,7 @@ const dataModel = new DataModelBuilder({ kind })
 
 const DNA_IUPAC_RE = /^[ACGTacgtMKRYWSBDHVNmkrywsbdhvn]*$/;
 
-/** Trace-label fallback when neither a custom label nor a dataset name is set. */
+/** Trace label when no custom label is set. */
 const DEFAULT_BLOCK_LABEL = "Amplicon Profiling";
 
 /** milib's `SequenceQuality.MAX_QUALITY_VALUE` — the ceiling for both quality
@@ -1235,10 +1241,8 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       aggregationMemGB: data.aggregationMemGB,
       perProcessCPUs: data.perProcessCPUs,
       limitInput,
-      // Workflow trace label: the selected dataset's name (snapshotted by the
-      // UI), falling back to the constant when not yet resolved.
-      defaultBlockLabel: data.defaultBlockLabel || DEFAULT_BLOCK_LABEL,
-      customBlockLabel: data.customBlockLabel ?? "",
+      // The dataset name is already in the inherited upstream trace.
+      traceLabel: data.customBlockLabel || DEFAULT_BLOCK_LABEL,
     };
   })
 
@@ -1312,11 +1316,15 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
 
   .title(() => "Amplicon Profiling")
 
-  // Subtitle: custom label if the user set one, else the selected dataset's
-  // name (snapshotted into data by the UI on selection), else a prompt. The
-  // subtitle context is args-only — it can't resolve the dataset label live —
-  // so the name must already be persisted in data here.
-  .subtitle((ctx) => ctx.data.customBlockLabel || ctx.data.defaultBlockLabel || NO_DATASET_LABEL)
+  // Subtitle: custom label if the user set one, else a prompt until a dataset is
+  // picked, else the selected dataset's name (written into data by the UI on
+  // selection). The subtitle context is args-only — it can't resolve the dataset
+  // label live — so the name must already be persisted in data here.
+  .subtitle(
+    (ctx) =>
+      ctx.data.customBlockLabel ||
+      (ctx.data.input ? (ctx.data.subtitleLabel ?? "") : NO_DATASET_LABEL),
+  )
 
   .done();
 

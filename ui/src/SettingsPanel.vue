@@ -233,7 +233,7 @@ watch([() => app.model.data.runMode, previewDefault], ([mode, seed], old) => {
 type InputRef = NonNullable<typeof app.model.data.input>;
 function onSelectInput(ref: InputRef | undefined) {
   app.model.data.input = ref;
-  app.model.data.defaultBlockLabel =
+  app.model.data.subtitleLabel =
     app.model.outputs.inputOptions?.find(
       (o) => ref && o.ref.blockId === ref.blockId && o.ref.name === ref.name,
     )?.label ?? "";
