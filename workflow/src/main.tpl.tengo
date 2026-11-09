@@ -51,9 +51,7 @@ wf.prepare(func(args) {
 wf.body(func(args) {
 	blockId := wf.blockId().getDataAsJson()
 
-	traceLabel := args.customBlockLabel
-	if traceLabel == "" { traceLabel = args.defaultBlockLabel }
-	if traceLabel == "" { traceLabel = "Amplicon Profiling" }
+	traceLabel := args.traceLabel
 
 	inputSpec := args.resolvedInput.spec
 	inputData := args.resolvedInput.data
