@@ -48,6 +48,20 @@ const frameShiftModeOptions = [
   { label: "Triplet", value: "TRIPLET" as const },
 ];
 
+const chainOptions = [
+  { label: "IG Heavy", value: "IGHeavy" as const },
+  { label: "IG Light", value: "IGLight" as const },
+  { label: "TCR Beta", value: "TCRBeta" as const },
+  { label: "TCR Alpha", value: "TCRAlpha" as const },
+  { label: "TCR Delta", value: "TCRDelta" as const },
+  { label: "TCR Gamma", value: "TCRGamma" as const },
+];
+
+// Whole-dataset germline auto-detect sets one chain for every parent at once, so the run-level
+// chain select below applies to it. A manual vdj scheme sets the chain per parent, in the region
+// editor instead.
+const isWholeDatasetVdjAutoDetect = computed(() => app.model.data.vdjAutoDetect === true);
+
 // The threshold is read only in AA_MISMATCH mode, so the field is disabled under
 // TRIPLET rather than accepting a number mitool would ignore. The model drops it
 // from args in that mode too, so a stale value cannot leak into a run.
@@ -300,6 +314,20 @@ ACGTACGT..."
       </template>
     </PlTooltip>
   </PlCheckbox>
+
+  <PlDropdown
+    v-if="isWholeDatasetVdjAutoDetect"
+    v-model="app.model.data.chain"
+    :options="chainOptions"
+    label="Chain"
+    clearable
+  >
+    <template #tooltip>
+      Which immune chain the auto-detected parents are. Optional: leave it unset for VDJ with the
+      chain unresolved. Set it so downstream blocks can tell the chain apart. The receptor follows
+      from the chain. For a manual VDJ scheme, set the chain per parent in the region editor.
+    </template>
+  </PlDropdown>
 
   <PlNumberField
     v-model="app.model.data.maxAaMutations"

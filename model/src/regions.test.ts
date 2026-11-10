@@ -2,10 +2,14 @@ import { describe, expect, test } from "vitest";
 import type { ParentRegionConfig, RegionDef } from "./index";
 import {
   buildParentRegionsJson,
+  buildRegionChains,
   duplicateRegionNames,
+  expandScfvConfigs,
   featureNameError,
+  hasAutoDetectRegion,
   parseParentFasta,
   regionLengthError,
+  validateChainSet,
 } from "./index";
 
 const custom = (regions: RegionDef[], completeFeatureName?: string): ParentRegionConfig[] => [
@@ -134,7 +138,7 @@ describe("buildParentRegionsJson", () => {
 
   test.for([0, -1, 2.5])("rejects length %s", (length) => {
     expect(() => buildParentRegionsJson(custom([{ name: "A", length }]))).toThrow(
-      /whole number greater than 0/,
+      /Whole number > 0/,
     );
   });
 
@@ -192,6 +196,243 @@ describe("buildParentRegionsJson", () => {
       },
     ]);
     expect(() => buildParentRegionsJson(configs)).toThrow(/must tile it exactly/);
+  });
+
+  test("carries the ignored flag, and only when true", () => {
+    const json = buildParentRegionsJson(
+      custom([
+        { name: "VH", length: 3 },
+        { name: "LINK", length: 3, ignored: true },
+      ]),
+    );
+    // VH has no `ignored` key (byte-identical to an older config); LINK carries it.
+    expect(overlay(json).parents.P1.regions).toEqual([
+      { name: "VH", begin: 0, end: 3 },
+      { name: "LINK", begin: 3, end: 6, ignored: true },
+    ]);
+  });
+
+  test("rejects an ignored region with sub-regions", () => {
+    expect(() =>
+      buildParentRegionsJson(
+        custom([{ name: "LINK", length: 6, ignored: true, children: [{ name: "X", length: 6 }] }]),
+      ),
+    ).toThrow(/ignored and cannot have sub-regions/);
+  });
+
+  test("carries the autoDetect flag, and only when true", () => {
+    const json = buildParentRegionsJson(
+      custom([
+        { name: "VH", length: 3, autoDetect: true },
+        { name: "VL", length: 3 },
+      ]),
+    );
+    // VH carries autoDetect; VL has no such key (byte-identical to an older config).
+    expect(overlay(json).parents.P1.regions).toEqual([
+      { name: "VH", begin: 0, end: 3, autoDetect: true },
+      { name: "VL", begin: 3, end: 6 },
+    ]);
+  });
+
+  test("rejects an auto-detect region that is also ignored or subdivided", () => {
+    expect(() =>
+      buildParentRegionsJson(custom([{ name: "VH", length: 3, autoDetect: true, ignored: true }])),
+    ).toThrow(/ignored and cannot be auto-detected/);
+    expect(() =>
+      buildParentRegionsJson(
+        custom([{ name: "VH", length: 3, autoDetect: true, children: [{ name: "X", length: 3 }] }]),
+      ),
+    ).toThrow(/auto-detected and cannot have sub-regions/);
+  });
+});
+
+describe("buildRegionChains", () => {
+  const cfg = (regions: RegionDef[]): ParentRegionConfig[] => [
+    { parentId: "P1", scheme: "custom", regions },
+  ];
+
+  test("none when no region is tagged", () => {
+    expect(buildRegionChains(cfg([{ name: "A", length: 3 }]))).toEqual({});
+    expect(buildRegionChains(undefined)).toEqual({});
+  });
+
+  test("a parent-level chain applies to every region (vdj scheme)", () => {
+    expect(
+      buildRegionChains([
+        {
+          parentId: "P1",
+          scheme: "vdj",
+          chain: "IGHeavy",
+          regions: [
+            { name: "FR1", length: 3 },
+            { name: "CDR1", length: 3 },
+            { name: "LINK", length: 3, ignored: true },
+          ],
+        },
+      ]),
+    ).toEqual({ FR1: "IGHeavy", CDR1: "IGHeavy" });
+  });
+
+  test("a chain left over on a non-vdj config is ignored", () => {
+    expect(
+      buildRegionChains([
+        { parentId: "P1", scheme: "custom", chain: "IGHeavy", regions: [{ name: "A", length: 3 }] },
+      ]),
+    ).toEqual({});
+  });
+
+  test("maps tagged regions, and sub-regions inherit the parent's chain", () => {
+    expect(
+      buildRegionChains(
+        cfg([
+          { name: "VH", length: 3, chain: "IGHeavy" },
+          { name: "LINK", length: 3, ignored: true },
+          {
+            name: "VL",
+            length: 6,
+            chain: "IGLight",
+            children: [
+              { name: "VL_N", length: 3 },
+              { name: "VL_C", length: 3, chain: "IGHeavy" },
+            ],
+          },
+        ]),
+      ),
+    ).toEqual({ VH: "IGHeavy", VL: "IGLight", VL_N: "IGLight", VL_C: "IGHeavy" });
+  });
+
+  test("an ignored region's chain is dropped", () => {
+    expect(
+      buildRegionChains(cfg([{ name: "LINK", length: 3, ignored: true, chain: "IGHeavy" }])),
+    ).toEqual({});
+  });
+
+  test("an auto-detect domain expands to its container plus seven prefixed FR/CDR columns", () => {
+    expect(
+      buildRegionChains(
+        cfg([
+          { name: "VH", length: 360, chain: "IGHeavy", autoDetect: true },
+          { name: "LINK", length: 45, ignored: true },
+          { name: "VL", length: 321, chain: "IGLight", autoDetect: true },
+        ]),
+      ),
+    ).toEqual({
+      VH: "IGHeavy",
+      VL: "IGLight",
+      VH_FR1: "IGHeavy",
+      VH_CDR1: "IGHeavy",
+      VH_FR2: "IGHeavy",
+      VH_CDR2: "IGHeavy",
+      VH_FR3: "IGHeavy",
+      VH_CDR3: "IGHeavy",
+      VH_FR4: "IGHeavy",
+      VL_FR1: "IGLight",
+      VL_CDR1: "IGLight",
+      VL_FR2: "IGLight",
+      VL_CDR2: "IGLight",
+      VL_FR3: "IGLight",
+      VL_CDR3: "IGLight",
+      VL_FR4: "IGLight",
+    });
+  });
+
+  test("an auto-detect domain with no chain contributes no column", () => {
+    expect(buildRegionChains(cfg([{ name: "VH", length: 360, autoDetect: true }]))).toEqual({});
+  });
+});
+
+describe("expandScfvConfigs", () => {
+  // heavy(6) + linker(6) + light(9), the linker unique in the middle.
+  const seq = "AAACCC" + "GGTTCA" + "TTTGGGCCC";
+  const seqs = new Map([["P1", seq]]);
+  const scfv = (regions: RegionDef[], linker = "GGTTCA"): ParentRegionConfig[] => [
+    { parentId: "P1", scheme: "scfv", linker, regions },
+  ];
+  const domains: RegionDef[] = [
+    { name: "VH", length: 0, chain: "IGHeavy" },
+    { name: "VL", length: 0, chain: "IGLight" },
+  ];
+
+  test("expands to an auto-detect custom config split at the linker", () => {
+    const [out] = expandScfvConfigs(scfv(domains), seqs)!;
+    expect(out.scheme).toBe("custom");
+    expect(out.regions).toEqual([
+      { name: "VH", length: 6, chain: "IGHeavy", autoDetect: true },
+      { name: "Linker", length: 6, ignored: true },
+      { name: "VL", length: 9, chain: "IGLight", autoDetect: true },
+    ]);
+  });
+
+  test("order is preserved (light first swaps the domains)", () => {
+    const lightFirst: RegionDef[] = [
+      { name: "VL", length: 0, chain: "IGLight" },
+      { name: "VH", length: 0, chain: "IGHeavy" },
+    ];
+    const [out] = expandScfvConfigs(scfv(lightFirst), seqs)!;
+    expect(out.regions[0]).toMatchObject({ name: "VL", chain: "IGLight" });
+    expect(out.regions[2]).toMatchObject({ name: "VH", chain: "IGHeavy" });
+  });
+
+  test("a non-scfv config passes through unchanged", () => {
+    const custom: ParentRegionConfig[] = [
+      { parentId: "P1", scheme: "custom", regions: [{ name: "A", length: 3 }] },
+    ];
+    // The non-scfv element is returned by reference, untouched.
+    expect(expandScfvConfigs(custom, seqs)![0]).toBe(custom[0]);
+  });
+
+  test.for([
+    { linker: "", error: /linker sequence is required/ },
+    { linker: "GGXTCA", error: /plain nucleotides/ },
+    { linker: "AAAAAA", error: /not found/ },
+    { linker: "CCC", error: /more than once/ },
+  ])("rejects linker '$linker'", ({ linker, error }) => {
+    expect(() => expandScfvConfigs(scfv(domains, linker), seqs)).toThrow(error);
+  });
+
+  test("requires the pasted parent sequence", () => {
+    expect(() => expandScfvConfigs(scfv(domains), new Map())).toThrow(/paste the parent sequence/);
+  });
+
+  test("needs exactly two domains", () => {
+    expect(() => expandScfvConfigs(scfv([domains[0]]), seqs)).toThrow(/exactly two domains/);
+  });
+});
+
+describe("hasAutoDetectRegion", () => {
+  const cfg = (regions: RegionDef[]): ParentRegionConfig[] => [
+    { parentId: "P1", scheme: "custom", regions },
+  ];
+
+  test("true only when a non-ignored region asks for it", () => {
+    expect(hasAutoDetectRegion(undefined)).toBe(false);
+    expect(hasAutoDetectRegion(cfg([{ name: "VH", length: 3 }]))).toBe(false);
+    expect(hasAutoDetectRegion(cfg([{ name: "VH", length: 3, autoDetect: true }]))).toBe(true);
+    // An ignored region's autoDetect is meaningless and does not activate the path.
+    expect(
+      hasAutoDetectRegion(cfg([{ name: "LINK", length: 3, ignored: true, autoDetect: true }])),
+    ).toBe(false);
+  });
+});
+
+describe("validateChainSet", () => {
+  test("zero or one chain is fine", () => {
+    expect(() => validateChainSet([])).not.toThrow();
+    expect(() => validateChainSet(["IGHeavy"])).not.toThrow();
+    expect(() => validateChainSet(["IGHeavy", "IGHeavy"])).not.toThrow();
+  });
+
+  test("a two-chain receptor is fine", () => {
+    expect(() => validateChainSet(["IGHeavy", "IGLight"])).not.toThrow();
+    expect(() => validateChainSet(["TCRBeta", "TCRAlpha"])).not.toThrow();
+  });
+
+  test("two chains from different receptors are refused", () => {
+    expect(() => validateChainSet(["IGHeavy", "TCRBeta"])).toThrow(/one receptor/);
+  });
+
+  test("three or more chains are refused", () => {
+    expect(() => validateChainSet(["IGHeavy", "IGLight", "TCRBeta"])).toThrow(/3 chains/);
   });
 });
 

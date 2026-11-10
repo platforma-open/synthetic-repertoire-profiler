@@ -22,6 +22,11 @@ analyze := func(parentRegionsJson) {
 		enabled: false,
 		hasRegions: false,
 		hasSubRegions: false,
+		// Whether the per-parent "Subdivided regions" column is worth emitting. True for a
+		// user-defined partition (a graft in a CDR slot). False for the scFv path, where every
+		// V-domain is mechanically split into FR/CDR — listing it would be uniform noise — even
+		// though hasSubRegions stays true so the heat map keeps its sub-region band.
+		showSubdividedRegions: false,
 		subdividedByParent: {},
 		isVdj: false,
 		ntRegionNames: [],
@@ -66,6 +71,8 @@ analyze := func(parentRegionsJson) {
 			kids := r.children
 			if !is_undefined(kids) && len(kids) > 0 {
 				res.hasSubRegions = true
+				// A graft in the overlay is a user-defined partition, so it is worth listing.
+				res.showSubdividedRegions = true
 				held := res.subdividedByParent[pid]
 				if is_undefined(held) {
 					held = []
@@ -76,6 +83,11 @@ analyze := func(parentRegionsJson) {
 				}
 			}
 			for sp in spans {
+				// An ignored span is masked to the parent, so mitool emits no sequence column for
+				// it — the import must not reference one. mitool still lists it in region-annotation.
+				if sp.ignored == true {
+					continue
+				}
 				name := sp.name
 				if is_undefined(ntSeen[name]) {
 					ntSeen[name] = true
@@ -111,6 +123,7 @@ vdjAuto := func() {
 		hasRegions: true,
 		// Germline-inferred boundaries are the seven canonical regions and nothing below.
 		hasSubRegions: false,
+		showSubdividedRegions: false,
 		subdividedByParent: {},
 		isVdj: true,
 		ntRegionNames: names,
@@ -119,7 +132,76 @@ vdjAuto := func() {
 	}
 }
 
+// The seven canonical FR/CDR names germline auto-detect splits a V-domain into. The model
+// (buildRegionChains) and the python `assemble` step expand the same list with the same
+// `<domain>_<name>` prefix, so the column names, their chain tags and the overlay all agree.
+CANONICAL_VDJ_REGIONS := ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
+
+// Static region config for per-domain scFv auto-detect. The overlay is built at run time
+// (repseqio), so the names are derived here from the drawn scheme instead — the same source
+// the model and python read. Each auto-detect domain becomes a container region (the
+// whole-domain VH / VL sequence column) holding its seven prefixed FR/CDR children (all
+// aa-eligible: assemble guarantees codon alignment or fails). The container makes the run
+// subdivided, so a non-scheme run stays byte-identical. A non-auto region passes through by
+// name (aa-eligible only when codon-aligned). Ignored regions carry no column. No single
+// complete feature — an scFv spans two chains.
+scfvAuto := func(autoSchemeJson) {
+	parents := json.decode(autoSchemeJson).parents
+	res := {
+		enabled: true,
+		hasRegions: true,
+		hasSubRegions: false,
+		// The containers subdivide, but it is the uniform V-domain -> FR/CDR split, so the
+		// per-parent "Subdivided regions" column stays off while the heat map keeps its band.
+		showSubdividedRegions: false,
+		subdividedByParent: {},
+		isVdj: true,
+		ntRegionNames: [],
+		aaRegionNames: [],
+		completeFeatureName: undefined
+	}
+	ntSeen := {}
+	aaSeen := {}
+	addName := func(name, aaEligible) {
+		if is_undefined(ntSeen[name]) {
+			ntSeen[name] = true
+			res.ntRegionNames = append(res.ntRegionNames, name)
+		}
+		if aaEligible && is_undefined(aaSeen[name]) {
+			aaSeen[name] = true
+			res.aaRegionNames = append(res.aaRegionNames, name)
+		}
+	}
+	for pid in maps.getKeys(parents) {
+		regions := parents[pid].regions
+		if is_undefined(regions) {
+			regions = []
+		}
+		for r in regions {
+			if r.autoDetect == true {
+				// Container first (matches mitool's flatten order), then its FR/CDR children.
+				addName(r.name, true)
+				res.hasSubRegions = true
+				held := res.subdividedByParent[pid]
+				if is_undefined(held) {
+					held = []
+				}
+				res.subdividedByParent[pid] = append(held, r.name)
+				for canonical in CANONICAL_VDJ_REGIONS {
+					addName(r.name + "_" + canonical, true)
+				}
+			} else if r.ignored == true {
+				continue
+			} else {
+				addName(r.name, int(r.begin) % 3 == 0 && int(r.end) % 3 == 0)
+			}
+		}
+	}
+	return res
+}
+
 export {
 	analyze: analyze,
-	vdjAuto: vdjAuto
+	vdjAuto: vdjAuto,
+	scfvAuto: scfvAuto
 }

@@ -17,13 +17,13 @@ tableAnno := func(order, visibility, anno) {
 // The run-scoping + modality domain carried by every run-scoped spec this block
 // emits — both entity axes (at both alphabets) and the File/Log-valued outputs.
 //
-//   extractionRunId — keeps the axis from colliding with another extraction's
-//                     variants. Its key is FIXED; modality never changes it.
-//   modality        — "vdj" | "amplicon": which kind of repertoire this run
-//                     produced. Declared by the producer rather than left for
-//                     consumers to infer from axis names, because everything
-//                     here sits on the modality-neutral pl7.app/variantKey axis
-//                     and so carries no evidence of what was made.
+//   blockId  — the id of the block that created the spec. Keeps the axis from
+//              colliding with another run's variants.
+//   modality — "vdj" | "amplicon": which kind of repertoire this run produced.
+//              Declared by the producer rather than left for consumers to infer
+//              from axis names, because everything here sits on the
+//              modality-neutral pl7.app/variantKey axis and so carries no evidence
+//              of what was made.
 //
 // One helper, one call per spec, so the declaration can never be present on one
 // spec and absent from a sibling — a consumer that found it on the variant axis
@@ -31,9 +31,97 @@ tableAnno := func(order, visibility, anno) {
 // "unlabelled".
 runScopeDomain := func(blockId, modality) {
 	return {
+		"pl7.app/blockId": blockId,
 		"pl7.app/repertoire/extractionRunId": blockId,
 		"pl7.app/modality": modality
 	}
+}
+
+// A chain id (IGHeavy, TCRBeta, …) mapped to its receptor and bare chain.
+chainIdInfo := func(chainId) {
+	m := {
+		IGHeavy: { receptor: "IG", chain: "Heavy" },
+		IGLight: { receptor: "IG", chain: "Light" },
+		TCRBeta: { receptor: "TCRAB", chain: "Beta" },
+		TCRAlpha: { receptor: "TCRAB", chain: "Alpha" },
+		TCRDelta: { receptor: "TCRGD", chain: "Delta" },
+		TCRGamma: { receptor: "TCRGD", chain: "Gamma" }
+	}
+	return m[chainId]
+}
+
+// Recombination of a bare chain: VDJ for Heavy/Beta/Delta, VJ for the rest.
+recombinationOf := func(chain) {
+	if chain == "Heavy" || chain == "Beta" || chain == "Delta" {
+		return "VDJ"
+	}
+	return "VJ"
+}
+
+// Chain set of a two-chain receptor, VDJ chain first.
+receptorChainsOf := func(receptor) {
+	if receptor == "IG" {
+		return "Heavy+Light"
+	}
+	if receptor == "TCRAB" {
+		return "Beta+Alpha"
+	}
+	return "Delta+Gamma"
+}
+
+// The distinct bare chains in a chain-id list, each as its chainIdInfo, first-seen
+// order. The order fixes which chain leads a two-chain receptor.
+distinctChainInfo := func(chainIds) {
+	info := []
+	seen := {}
+	for cid in chainIds {
+		bi := chainIdInfo(cid)
+		if is_undefined(seen[bi.chain]) {
+			seen[bi.chain] = true
+			info = append(info, bi)
+		}
+	}
+	return info
+}
+
+// Domain for the variantKey axis: runScopeDomain plus the keys that describe the
+// key itself. identitySource is always "derived" — the profiler computes the key
+// from the variant's content. Under modality "vdj" the tree carries the chain
+// resolution from the run's set of chain ids:
+//   no chain   -> resolution "unresolved"
+//   one chain  -> resolution "chain" + receptor + chain
+//   two chains -> resolution "receptor" + pairing "construct" + receptor +
+//                 receptorChains (an scFv construct)
+// identityComponents is fixed "VDJRegion~" per chain: the key is the whole variant
+// over the parent span, with no gene calls.
+variantScopeDomain := func(blockId, modality, chainIds) {
+	d := runScopeDomain(blockId, modality)
+	d["pl7.app/identitySource"] = "derived"
+	if modality != "vdj" {
+		return d
+	}
+	info := distinctChainInfo(chainIds)
+	n := len(info)
+	if n == 0 {
+		d["pl7.app/vdj/resolution"] = "unresolved"
+		d["pl7.app/vdj/identityComponents"] = "VDJRegion~"
+		return d
+	}
+	if n == 1 {
+		d["pl7.app/vdj/resolution"] = "chain"
+		d["pl7.app/vdj/receptor"] = info[0].receptor
+		d["pl7.app/vdj/chain"] = info[0].chain
+		d["pl7.app/vdj/identityComponents"] = "VDJRegion~"
+		return d
+	}
+	// Two chains: a paired construct (scFv). The receptor and its chain set follow
+	// from the chains, which the model has already checked share one receptor.
+	d["pl7.app/vdj/resolution"] = "receptor"
+	d["pl7.app/vdj/pairing"] = "construct"
+	d["pl7.app/vdj/receptor"] = info[0].receptor
+	d["pl7.app/vdj/receptorChains"] = receptorChainsOf(info[0].receptor)
+	d["pl7.app/vdj/identityComponents"] = "VDJRegion~;VDJRegion~"
+	return d
 }
 
 // Variant axis: one distinct variant sequence. `alphabet` is "nucleotide" or
@@ -46,6 +134,20 @@ variantKeyAxisSpec := func(runScope, alphabet, label, ...rest) {
 	if len(rest) > 0 {
 		col = rest[0]
 	}
+	anno := {
+		"pl7.app/label": label,
+		"pl7.app/table/fontFamily": "monospace",
+		"pl7.app/table/visibility": "default",
+		"pl7.app/table/orderPriority": "110000"
+	}
+	// recombination rides with a resolved single chain on the axis (variant-key
+	// doc: A under resolution = chain). It is an annotation, not a domain key. In the
+	// two-chain receptor case there is no vdj/chain on the axis, so it is absent here
+	// and sits on the per-chain columns instead.
+	chain := runScope["pl7.app/vdj/chain"]
+	if !is_undefined(chain) {
+		anno["pl7.app/vdj/chain/recombination"] = recombinationOf(chain)
+	}
 	return {
 		column: col,
 		naRegex: "",
@@ -53,12 +155,7 @@ variantKeyAxisSpec := func(runScope, alphabet, label, ...rest) {
 			name: "pl7.app/variantKey",
 			type: "String",
 			domain: maps.merge({ "pl7.app/alphabet": alphabet }, runScope),
-			annotations: {
-				"pl7.app/label": label,
-				"pl7.app/table/fontFamily": "monospace",
-				"pl7.app/table/visibility": "default",
-				"pl7.app/table/orderPriority": "110000"
-			}
+			annotations: anno
 		}
 	}
 }
@@ -851,35 +948,90 @@ perSampleAbundanceColumns := func(hasUmi) {
 // variantKey. The TSV column is nSeq<name>/aaSeq<name> (matching mitool); each
 // carries the region as its `pl7.app/feature` domain so downstream blocks find
 // it by {feature, alphabet}.
-regionSeqColumns := func(alphabet, regionNames) {
+// The canonical FR/CDR feature a prefixed region name carries, else undefined. An
+// auto-detect domain names its columns `<domain>_FR1`…, so `VH_CDR3` carries feature
+// `CDR3`. This lets a chain-tagged region present the same feature VALUE as
+// mixcr-scfv-clonotyping (under `pl7.app/feature`), with the chain held separately in
+// `pl7.app/vdj/chain`.
+canonicalFeature := func(regionName) {
+	canonical := {FR1: true, CDR1: true, FR2: true, CDR2: true, FR3: true, CDR3: true, FR4: true}
+	idx := -1
+	for i := 0; i < len(regionName); i++ {
+		if regionName[i] == '_' {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return undefined
+	}
+	suffix := regionName[idx+1:]
+	return !is_undefined(canonical[suffix]) ? suffix : undefined
+}
+
+// Per-region sequence columns. Every region stays in the amplicon namespace
+// (`pl7.app/sequence` keyed by `pl7.app/feature`), which is what the profiler's downstream
+// consumers read. Two cases, by whether the region carries a chain:
+//   - untagged (a general amplicon / designed-library region): feature = the region name.
+//   - chain-tagged (an scFv construct): feature = the canonical value (`CDR3`, `FR1`, …, or
+//     `VDJRegion` for the whole V-domain), the same values mixcr-scfv-clonotyping uses. Both chains
+//     carry the same feature and are told apart by `pl7.app/vdj/chain` (Heavy / Light) plus the
+//     recombination annotation, the role the reference's scClonotypeChain plays. The column name
+//     stays `pl7.app/sequence`; the label shows "Heavy CDR3", "Light VDJRegion".
+regionSeqColumns := func(alphabet, regionNames, regionChains) {
 	prefix := (alphabet == "aminoacid") ? "aaSeq" : "nSeq"
 	suffix := (alphabet == "aminoacid") ? " aa" : " nt"
 	cols := []
 	for i := 0; i < len(regionNames); i++ {
 		rn := regionNames[i]
-		cols = append(cols, {
-			column: prefix + rn,
-			id: "region-" + rn,
-			allowNA: true,
-			naRegex: "",
-			spec: {
-				name: "pl7.app/sequence",
-				valueType: "String",
-				domain: {
-					// Each region subsequence is identified by its region name in
-					// pl7.app/feature (mirrors VDJ's pl7.app/vdj/feature). Distinct feature
-					// values keep the specs distinct, so a sequence-consuming downstream
-					// block (clonotype-clustering) that discovers these feature-agnostically
-					// can still resolve the picked column uniquely.
-					"pl7.app/feature": rn,
-					"pl7.app/alphabet": alphabet
-				},
-				annotations: tableAnno(75000 - i * 100, "optional", {
-					"pl7.app/table/fontFamily": "monospace",
-					"pl7.app/label": rn + suffix
-				})
-			}
-		})
+		cid := is_undefined(regionChains) ? undefined : regionChains[rn]
+		anno := { "pl7.app/table/fontFamily": "monospace" }
+		if is_undefined(cid) {
+			// General amplicon region: distinct feature values keep the specs distinct, so a
+			// sequence-consuming downstream block that discovers these feature-agnostically
+			// (clonotype-clustering) still resolves the picked column uniquely.
+			anno["pl7.app/label"] = rn + suffix
+			cols = append(cols, {
+				column: prefix + rn,
+				id: "region-" + rn,
+				allowNA: true,
+				naRegex: "",
+				spec: {
+					name: "pl7.app/sequence",
+					valueType: "String",
+					domain: { "pl7.app/feature": rn, "pl7.app/alphabet": alphabet },
+					annotations: tableAnno(75000 - i * 100, "optional", anno)
+				}
+			})
+		} else {
+			bi := chainIdInfo(cid)
+			recomb := recombinationOf(bi.chain)
+			// A chain-tagged scFv region. The feature is the canonical value (`CDR3`, `FR1`, …, or
+			// `VDJRegion` for the whole V-domain) — the same values mixcr-scfv-clonotyping uses. Both
+			// chains carry the same feature and are told apart by `pl7.app/vdj/chain` (Heavy / Light),
+			// which the consumers read. The column stays in the amplicon namespace (`pl7.app/sequence`)
+			// and the label shows "Heavy CDR3", "Light VDJRegion". The TSV column id keeps the domain
+			// prefix (`nSeqVH_CDR3`) so the two chains' columns stay distinct in the export.
+			cf := canonicalFeature(rn)
+			feature := is_undefined(cf) ? "VDJRegion" : cf
+			anno["pl7.app/label"] = bi.chain + " " + feature + suffix
+			anno["pl7.app/vdj/chain/recombination"] = recomb
+			cols = append(cols, {
+				column: prefix + rn,
+				id: "region-" + rn,
+				allowNA: true,
+				naRegex: "",
+				spec: {
+					name: "pl7.app/sequence",
+					valueType: "String",
+					domain: {
+						"pl7.app/feature": feature,
+						"pl7.app/alphabet": alphabet,
+						"pl7.app/vdj/chain": bi.chain
+					},
+					annotations: tableAnno(75000 - i * 100, "optional", anno)
+				}
+			})
+		}
 	}
 	return cols
 }
@@ -921,11 +1073,27 @@ regionAnnotationColumns := func(withSubRegions) {
 // Per-variant columns aggregated cross-sample (1 axis: variantKey). `isAa` adds
 // the synonymous-replicate count (ntVariantCount), which exists only at aa level.
 // `regionNames` adds per-region sequence columns; `completeFeatureName` (when set)
-// relabels the whole-variant sequence feature (e.g. VDJRegion).
-aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName, hasUmi) {
-	hasCompleteFeature := !is_undefined(completeFeatureName) && completeFeatureName != ""
+// relabels the whole-variant sequence feature (e.g. VDJRegion). `regionChains` maps
+// a region name to its chain id, tagging that region's column with vdj/chain (scFv).
+// `chainIds` is the run's distinct chain-id set; a two-chain IG construct is an scFv,
+// which names the whole-variant sequence when no single complete feature does.
+aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName, hasUmi, regionChains, chainIds) {
 	seqSuffix := (alphabet == "aminoacid") ? " aa" : " nt"
-	seqLabel := (hasCompleteFeature ? completeFeatureName : "Sequence") + seqSuffix
+	// The whole-variant sequence label: a per-parent complete feature (VDJRegion for a single
+	// V-domain) wins; else a two-chain IG construct is an scFv; else the generic "Sequence".
+	// The scFv name is derived here, not written as a mitool complete feature — that would add
+	// a redundant whole-parent column spanning both chains.
+	seqBase := "Sequence"
+	if !is_undefined(completeFeatureName) && completeFeatureName != "" {
+		seqBase = completeFeatureName
+	} else {
+		info := distinctChainInfo(is_undefined(chainIds) ? [] : chainIds)
+		if len(info) == 2 && info[0].receptor == "IG" {
+			// Match mixcr-scfv-clonotyping's label for the whole construct ("scFv sequence aa").
+			seqBase = "scFv sequence"
+		}
+	}
+	seqLabel := seqBase + seqSuffix
 	cols := [{
 		column: "variantLabel",
 		id: "variant-label",
@@ -1097,7 +1265,7 @@ aggregatedColumns := func(alphabet, isAa, regionNames, completeFeatureName, hasU
 			}
 		})
 	}
-	for c in regionSeqColumns(alphabet, regionNames) {
+	for c in regionSeqColumns(alphabet, regionNames, regionChains) {
 		cols = append(cols, c)
 	}
 	return cols
@@ -1219,6 +1387,8 @@ qcColumns := func(sampleIdAxisSpec, hasUmi) {
 
 export {
 	runScopeDomain: runScopeDomain,
+	variantScopeDomain: variantScopeDomain,
+	regionSeqColumns: regionSeqColumns,
 	variantKeyAxisSpec: variantKeyAxisSpec,
 	parentIdAxisSpec: parentIdAxisSpec,
 	positionAxisSpec: positionAxisSpec,
