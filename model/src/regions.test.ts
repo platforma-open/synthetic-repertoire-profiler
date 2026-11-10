@@ -353,6 +353,23 @@ describe("buildRegionChains", () => {
     ).toEqual({});
   });
 
+  test("a region named like an Object prototype key is not a false conflict", () => {
+    // `toString` / `constructor` are inherited on a plain `{}`; the map must have own keys only.
+    const out = buildRegionChains([
+      {
+        parentId: "P1",
+        scheme: "vdj",
+        chain: "IGHeavy",
+        regions: [
+          { name: "toString", length: 3 },
+          { name: "constructor", length: 3 },
+        ],
+      },
+    ]);
+    expect(out.toString).toBe("IGHeavy");
+    expect(out.constructor).toBe("IGHeavy");
+  });
+
   test("rejects the same region name tagged as two different chains", () => {
     expect(() =>
       buildRegionChains([

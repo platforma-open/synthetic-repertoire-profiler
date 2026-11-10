@@ -141,7 +141,10 @@ const CHAIN_RECEPTOR: Record<ChainId, "IG" | "TCRAB" | "TCRGD"> = {
 export function buildRegionChains(
   configs: ParentRegionConfig[] | undefined,
 ): Record<string, ChainId> {
-  const out: Record<string, ChainId> = {};
+  // Region names are user text: a plain `{}` would read `toString`/`constructor` off the
+  // prototype, so the conflict check below sees a phantom prior chain. A null-proto map has
+  // own keys only.
+  const out: Record<string, ChainId> = Object.create(null);
   // Reject two parents that reuse a region name but tag it with different chains: the map is
   // keyed by name, so a silent overwrite would label both parents' columns with one chain.
   const assign = (name: string, chain: ChainId) => {
