@@ -1,5 +1,24 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.model
 
+## 1.6.5
+
+### Patch Changes
+
+- c108b1b: Keep the block subtitle in sync with the chosen input's current label
+
+## 1.6.4
+
+### Patch Changes
+
+- 2047744: Compute the block label without the UI
+
+  The trace label is now the custom block label or "Amplicon Profiling", computed by the
+  model, so it no longer depends on the block having been configured in the UI and a block
+  created without it gets the same label. The input dataset name moves to the subtitle only,
+  written when the user picks the dataset; it was already part of the inherited upstream
+  trace. Existing blocks show as stale once after the update because the arguments change
+  shape.
+
 ## 1.6.3
 
 ## 1.6.2
