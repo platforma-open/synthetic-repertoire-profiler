@@ -55,6 +55,35 @@ TestScfvAutoIgnoresLinker := func() {
 	}
 }
 
+TestScfvAutoKeepsManualGraftChildren := func() {
+	// A run with an auto-detect domain and a manual parent that grafts a region: the manual
+	// region's children must still get columns, and the graft surfaces the per-parent column.
+	scheme := `{"version":1,"parents":{` +
+		`"P1":{"scheme":"custom","regions":[` +
+		`{"name":"VH","begin":0,"end":360,"autoDetect":true}` +
+		`]},` +
+		`"P2":{"scheme":"custom","regions":[` +
+		`{"name":"CDR1","begin":0,"end":30,"children":[` +
+		`{"name":"CDR1_flankL","begin":0,"end":9},` +
+		`{"name":"GRAFT","begin":9,"end":21},` +
+		`{"name":"CDR1_flankR","begin":21,"end":30}` +
+		`]}` +
+		`]}}}`
+	r := rc.scfvAuto(scheme)
+	// The manual parent's container and all three children appear.
+	for n in ["CDR1", "CDR1_flankL", "GRAFT", "CDR1_flankR"] {
+		found := false
+		for m in r.ntRegionNames {
+			if m == n {
+				found = true
+			}
+		}
+		test.isEqual(true, found)
+	}
+	test.isEqual(true, r.showSubdividedRegions)
+	test.isEqual(["CDR1"], r.subdividedByParent["P2"])
+}
+
 TestScfvAutoPassthroughAaDependsOnFrame := func() {
 	// A non-auto region passes through by name; it is aa-eligible only when codon-aligned.
 	scheme := `{"version":1,"parents":{"P1":{"scheme":"custom","regions":[` +

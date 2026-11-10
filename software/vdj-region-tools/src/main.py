@@ -183,10 +183,23 @@ def write_fasta(path, records):
 
 
 def read_scheme(path):
-    """parentId -> list of region dicts (name/begin/end/ignored?/autoDetect?)."""
+    """parentId -> parent dict (regions plus completeFeatureName and any other settings)."""
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
-    return {pid: ps.get("regions", []) for pid, ps in data.get("parents", {}).items()}
+    return data.get("parents", {})
+
+
+def copy_manual_region(r):
+    """A drawn (non-auto) region passed through verbatim, keeping its ignored flag and any
+    sub-regions — dropping them would lose a manual graft's columns in a run that also
+    auto-detects another parent."""
+    span = {"name": r["name"], "begin": int(r["begin"]), "end": int(r["end"])}
+    if r.get("ignored"):
+        span["ignored"] = True
+    children = r.get("children")
+    if children:
+        span["children"] = [copy_manual_region(c) for c in children]
+    return span
 
 
 def cmd_split(args):
@@ -203,11 +216,11 @@ def cmd_split(args):
         scheme = read_scheme(args.scheme)
         by_id = dict(parents)
         n = 0
-        for pid, regions in scheme.items():
+        for pid, ps in scheme.items():
             seq = by_id.get(pid)
             if seq is None:
                 die(f"parent '{pid}': in the region scheme but not in the parents FASTA.")
-            for r in regions:
+            for r in ps.get("regions", []):
                 if not r.get("autoDetect"):
                     continue
                 begin, end = int(r["begin"]), int(r["end"])
@@ -262,9 +275,9 @@ def cmd_assemble(args):
         scheme = read_scheme(args.scheme)
         domain_key = {(s["pid"], s["domain"]): key for key, s in splits.items()}
         parents = {}
-        for pid, regions in scheme.items():
+        for pid, ps in scheme.items():
             out = []
-            for r in regions:
+            for r in ps.get("regions", []):
                 if r.get("autoDetect"):
                     key = domain_key.get((pid, r["name"]))
                     if key is None:
@@ -283,11 +296,14 @@ def cmd_assemble(args):
                                 "begin": children[0]["begin"], "end": children[-1]["end"],
                                 "children": children})
                 else:
-                    span = {"name": r["name"], "begin": int(r["begin"]), "end": int(r["end"])}
-                    if r.get("ignored"):
-                        span["ignored"] = True
-                    out.append(span)
-            parents[pid] = {"scheme": "custom", "regions": out}
+                    out.append(copy_manual_region(r))
+            parent_obj = {"scheme": "custom", "regions": out}
+            # Keep a manual parent's whole-feature name so mitool still emits its whole-variant
+            # column; an scFv parent has none (its two domains span two chains).
+            af = ps.get("completeFeatureName")
+            if af:
+                parent_obj["completeFeatureName"] = af
+            parents[pid] = parent_obj
     else:
         parents = {}
         for pid, split in splits.items():

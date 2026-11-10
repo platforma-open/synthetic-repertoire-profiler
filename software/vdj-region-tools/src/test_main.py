@@ -127,6 +127,46 @@ def test_scheme_overlay_shape():
     assert all(offs[i][1] <= offs[i + 1][0] for i in range(len(offs) - 1)), offs
 
 
+def test_mixed_run_preserves_manual_parent():
+    # A run with one auto-detect parent (P1) and one manual parent (P2) that has a grafted
+    # region and a complete-feature name. Both must survive assemble — the scheme path must not
+    # drop P2's children or its completeFeatureName just because P1 auto-detects.
+    with tempfile.TemporaryDirectory() as tmp:
+        scfv = VDOM + LINK + VDOM
+        write(f"{tmp}/parents.fa", f">P1\n{scfv}\n>P2\n{VDOM}\n")
+        scheme = {"version": 1, "parents": {
+            "P1": {"scheme": "custom", "regions": [
+                {"name": "VH", "begin": 0, "end": 282, "autoDetect": True},
+                {"name": "LINK", "begin": 282, "end": 291, "ignored": True},
+                {"name": "VL", "begin": 291, "end": 573, "autoDetect": True},
+            ]},
+            "P2": {"scheme": "custom", "completeFeatureName": "VDJRegion", "regions": [
+                {"name": "FR1", "begin": 0, "end": 30, "children": [
+                    {"name": "FR1a", "begin": 0, "end": 15},
+                    {"name": "FR1b", "begin": 15, "end": 30},
+                ]},
+            ]},
+        }}
+        write(f"{tmp}/scheme.json", json.dumps(scheme))
+        main.cmd_split(SimpleNamespace(
+            input=f"{tmp}/parents.fa", v_out=f"{tmp}/v.fa", j_out=f"{tmp}/j.fa",
+            splits_out=f"{tmp}/splits.json", scheme=f"{tmp}/scheme.json"))
+        splits = json.load(open(f"{tmp}/splits.json"))
+        keys = {s["domain"]: k for k, s in splits.items()}
+        genes = []
+        for dom in ("VH", "VL"):
+            genes.append({"name": f"{keys[dom]}_Vgene", "anchorPoints": v_anchors()})
+            genes.append({"name": f"{keys[dom]}_Jgene", "anchorPoints": j_anchors()})
+        write(f"{tmp}/lib.json", json.dumps([{"genes": genes}]))
+        main.cmd_assemble(SimpleNamespace(
+            library=f"{tmp}/lib.json", splits=f"{tmp}/splits.json",
+            out=f"{tmp}/overlay.json", scheme=f"{tmp}/scheme.json"))
+        p2 = json.load(open(f"{tmp}/overlay.json"))["parents"]["P2"]
+    assert p2["completeFeatureName"] == "VDJRegion", p2
+    fr1 = next(r for r in p2["regions"] if r["name"] == "FR1")
+    assert [k["name"] for k in fr1["children"]] == ["FR1a", "FR1b"], fr1
+
+
 def test_no_scheme_keeps_whole_parent():
     with tempfile.TemporaryDirectory() as tmp:
         write(f"{tmp}/parents.fa", f">P1\n{VDOM}\n")

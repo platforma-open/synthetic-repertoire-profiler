@@ -953,8 +953,14 @@ perSampleAbundanceColumns := func(hasUmi) {
 // `CDR3`. This lets a chain-tagged region present the same feature VALUE as
 // mixcr-scfv-clonotyping (under `pl7.app/feature`), with the chain held separately in
 // `pl7.app/vdj/chain`.
+CANONICAL_FR_CDR := ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
 canonicalFeature := func(regionName) {
 	canonical := {FR1: true, CDR1: true, FR2: true, CDR2: true, FR3: true, CDR3: true, FR4: true}
+	// A bare canonical name (a manual vdj region, e.g. `FR1`) is canonical as-is. A prefixed
+	// name (auto-detect, e.g. `VH_FR1`) is canonical by its suffix after the last underscore.
+	if !is_undefined(canonical[regionName]) {
+		return regionName
+	}
 	idx := -1
 	for i := 0; i < len(regionName); i++ {
 		if regionName[i] == '_' {
@@ -981,6 +987,21 @@ regionSeqColumns := func(alphabet, regionNames, regionChains) {
 	prefix := (alphabet == "aminoacid") ? "aaSeq" : "nSeq"
 	suffix := (alphabet == "aminoacid") ? " aa" : " nt"
 	cols := []
+	// An auto-detect V-domain container (VH / VL) carries feature `VDJRegion`; it is recognised
+	// by its canonical children (`<name>_FR1`…) sitting in the same list. A custom chain-tagged
+	// region is none of these and keeps its own name as the feature.
+	nameSet := {}
+	for i := 0; i < len(regionNames); i++ {
+		nameSet[regionNames[i]] = true
+	}
+	isWholeDomain := func(rn) {
+		for c in CANONICAL_FR_CDR {
+			if !is_undefined(nameSet[rn + "_" + c]) {
+				return true
+			}
+		}
+		return false
+	}
 	for i := 0; i < len(regionNames); i++ {
 		rn := regionNames[i]
 		cid := is_undefined(regionChains) ? undefined : regionChains[rn]
@@ -1012,7 +1033,7 @@ regionSeqColumns := func(alphabet, regionNames, regionChains) {
 			// and the label shows "Heavy CDR3", "Light VDJRegion". The TSV column id keeps the domain
 			// prefix (`nSeqVH_CDR3`) so the two chains' columns stay distinct in the export.
 			cf := canonicalFeature(rn)
-			feature := is_undefined(cf) ? "VDJRegion" : cf
+			feature := !is_undefined(cf) ? cf : (isWholeDomain(rn) ? "VDJRegion" : rn)
 			anno["pl7.app/label"] = bi.chain + " " + feature + suffix
 			anno["pl7.app/vdj/chain/recombination"] = recomb
 			cols = append(cols, {

@@ -109,6 +109,14 @@ const scfvSeed = (): RegionDef[] => [
   { name: "VL", length: 0, chain: "IGLight" },
 ];
 
+// A saved pair is reusable as an scFv only when both domains already carry distinct chain tags.
+// An untagged two-region custom scheme is not — reusing it would export no heavy/light tags.
+const isScfvPair = (regions: RegionDef[]): boolean =>
+  regions.length === 2 &&
+  regions[0].chain !== undefined &&
+  regions[1].chain !== undefined &&
+  regions[0].chain !== regions[1].chain;
+
 function onScheme(parentId: string, scheme: RegionScheme) {
   const cur = configFor(parentId);
   if (scheme === "none") {
@@ -121,7 +129,7 @@ function onScheme(parentId: string, scheme: RegionScheme) {
       scheme,
       completeFeatureName: undefined,
       linker: cur.linker ?? "",
-      regions: cur.regions.length === 2 ? cur.regions : scfvSeed(),
+      regions: isScfvPair(cur.regions) ? cur.regions : scfvSeed(),
     });
     return;
   }

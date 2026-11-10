@@ -339,6 +339,28 @@ describe("buildRegionChains", () => {
   test("an auto-detect domain with no chain contributes no column", () => {
     expect(buildRegionChains(cfg([{ name: "VH", length: 360, autoDetect: true }]))).toEqual({});
   });
+
+  test("a parent set to none contributes nothing, even with stale tags", () => {
+    expect(
+      buildRegionChains([
+        {
+          parentId: "P1",
+          scheme: "none",
+          chain: "IGHeavy",
+          regions: [{ name: "FR1", length: 3, chain: "IGLight" }],
+        },
+      ]),
+    ).toEqual({});
+  });
+
+  test("rejects the same region name tagged as two different chains", () => {
+    expect(() =>
+      buildRegionChains([
+        { parentId: "P1", scheme: "vdj", chain: "IGHeavy", regions: [{ name: "FR1", length: 3 }] },
+        { parentId: "P2", scheme: "vdj", chain: "IGLight", regions: [{ name: "FR1", length: 3 }] },
+      ]),
+    ).toThrow(/two different chains/);
+  });
 });
 
 describe("expandScfvConfigs", () => {
@@ -397,6 +419,19 @@ describe("expandScfvConfigs", () => {
   test("needs exactly two domains", () => {
     expect(() => expandScfvConfigs(scfv([domains[0]]), seqs)).toThrow(/exactly two domains/);
   });
+
+  test("rejects two domains that are not tagged with distinct chains", () => {
+    const untagged: RegionDef[] = [
+      { name: "VH", length: 0 },
+      { name: "VL", length: 0 },
+    ];
+    expect(() => expandScfvConfigs(scfv(untagged), seqs)).toThrow(/distinct chains/);
+    const sameChain: RegionDef[] = [
+      { name: "VH", length: 0, chain: "IGHeavy" },
+      { name: "VL", length: 0, chain: "IGHeavy" },
+    ];
+    expect(() => expandScfvConfigs(scfv(sameChain), seqs)).toThrow(/distinct chains/);
+  });
 });
 
 describe("hasAutoDetectRegion", () => {
@@ -411,6 +446,14 @@ describe("hasAutoDetectRegion", () => {
     // An ignored region's autoDetect is meaningless and does not activate the path.
     expect(
       hasAutoDetectRegion(cfg([{ name: "LINK", length: 3, ignored: true, autoDetect: true }])),
+    ).toBe(false);
+  });
+
+  test("a none parent's stale auto-detect flag does not activate the path", () => {
+    expect(
+      hasAutoDetectRegion([
+        { parentId: "P1", scheme: "none", regions: [{ name: "VH", length: 3, autoDetect: true }] },
+      ]),
     ).toBe(false);
   });
 });

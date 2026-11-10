@@ -193,7 +193,25 @@ scfvAuto := func(autoSchemeJson) {
 			} else if r.ignored == true {
 				continue
 			} else {
+				// A manual region contributes its own column and, when grafted, each sub-region's —
+				// dropping the children would leave the import without their columns.
 				addName(r.name, int(r.begin) % 3 == 0 && int(r.end) % 3 == 0)
+				kids := r.children
+				if !is_undefined(kids) && len(kids) > 0 {
+					res.hasSubRegions = true
+					res.showSubdividedRegions = true
+					held := res.subdividedByParent[pid]
+					if is_undefined(held) {
+						held = []
+					}
+					res.subdividedByParent[pid] = append(held, r.name)
+					for c in kids {
+						if c.ignored == true {
+							continue
+						}
+						addName(c.name, int(c.begin) % 3 == 0 && int(c.end) % 3 == 0)
+					}
+				}
 			}
 		}
 	}

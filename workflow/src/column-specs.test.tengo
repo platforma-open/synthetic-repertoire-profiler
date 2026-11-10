@@ -89,18 +89,31 @@ TestRegionColumnUntaggedIsGenericSequence := func() {
 }
 
 TestRegionColumnWholeDomainIsVdjRegion := func() {
-	// A chain-tagged region that is not a canonical FR/CDR is the whole V-domain (VH / VL). It
-	// carries feature VDJRegion (the reference's value); both chains share it and are told apart by
-	// pl7.app/vdj/chain. The label shows "Heavy VDJRegion".
-	heavy := cs.regionSeqColumns("aminoacid", ["VH"], { VH: "IGHeavy" })
+	// An auto-detect V-domain container (VH / VL) carries feature VDJRegion (the reference's value).
+	// It is recognised by its canonical children (VH_FR1…) in the same list; both chains share the
+	// feature and are told apart by pl7.app/vdj/chain. The label shows "Heavy VDJRegion".
+	heavy := cs.regionSeqColumns("aminoacid", ["VH", "VH_FR1"], { VH: "IGHeavy", VH_FR1: "IGHeavy" })
 	test.isEqual("pl7.app/sequence", heavy[0].spec.name)
 	test.isEqual("VDJRegion", heavy[0].spec.domain["pl7.app/feature"])
 	test.isEqual("Heavy", heavy[0].spec.domain["pl7.app/vdj/chain"])
 	test.isEqual("Heavy VDJRegion aa", heavy[0].spec.annotations["pl7.app/label"])
-	light := cs.regionSeqColumns("aminoacid", ["VL"], { VL: "IGLight" })
+	test.isEqual("FR1", heavy[1].spec.domain["pl7.app/feature"])
+	light := cs.regionSeqColumns("aminoacid", ["VL", "VL_FR1"], { VL: "IGLight", VL_FR1: "IGLight" })
 	test.isEqual("VDJRegion", light[0].spec.domain["pl7.app/feature"])
 	test.isEqual("Light", light[0].spec.domain["pl7.app/vdj/chain"])
 	test.isEqual("Light VDJRegion aa", light[0].spec.annotations["pl7.app/label"])
+}
+
+TestRegionColumnBareCanonicalKeepsOwnFeature := func() {
+	// A manual vdj parent names its regions with bare canonical names (FR1, CDR1, …) and tags the
+	// parent's chain. Each must keep its own feature, not collapse to VDJRegion, so the columns stay
+	// distinct. A custom chain-tagged name keeps its own name as the feature.
+	cols := cs.regionSeqColumns("nucleotide", ["FR1", "CDR1", "myregion"],
+		{ FR1: "IGHeavy", CDR1: "IGHeavy", myregion: "IGHeavy" })
+	test.isEqual("FR1", cols[0].spec.domain["pl7.app/feature"])
+	test.isEqual("CDR1", cols[1].spec.domain["pl7.app/feature"])
+	test.isEqual("myregion", cols[2].spec.domain["pl7.app/feature"])
+	test.isEqual("Heavy", cols[0].spec.domain["pl7.app/vdj/chain"])
 }
 
 // Finds the whole-variant "sequence" column in an aggregatedColumns result.
