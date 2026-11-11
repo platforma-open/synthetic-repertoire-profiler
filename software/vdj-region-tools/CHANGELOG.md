@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.vdj-region-tools
 
+## 1.2.0
+
+### Minor Changes
+
+- aa6b5c4: Add scFv support. Tag regions with a chain, auto-detect FR/CDR per chain, or pick the scFv scheme and paste the linker. Add a per-region "Ignore mutations" option for linkers and other noise regions. Per-chain sequence columns carry `pl7.app/vdj/chain`, and whole-VH/VL sequences are exported. Downstream blocks read the new column shape.
+
 ## 1.1.3
 
 ### Patch Changes
