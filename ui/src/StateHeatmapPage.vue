@@ -1,11 +1,22 @@
 <script setup lang="ts">
 import type { PredefinedGraphOption } from "@milaboratories/graph-maker";
 import { GraphMaker } from "@milaboratories/graph-maker";
+import { DEFAULT_STATE_HEATMAP_GRAPH_STATE } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
 import type { PColumnSpec } from "@platforma-sdk/model";
 import { computed } from "vue";
 import { useApp } from "./app";
 
 const app = useApp();
+
+// GraphMaker reads its state eagerly, so guarantee a non-undefined object. A project created
+// before this field reached `.init()` has it undefined until the v14 migration backfills it; the
+// fallback keeps the page rendering meanwhile.
+const graphState = computed({
+  get: () => app.model.data.graphStateStateHeatmap ?? { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
+  set: (v) => {
+    app.model.data.graphStateStateHeatmap = v;
+  },
+});
 
 const PARENT_ID_AXIS = "pl7.app/repertoire/parentId";
 const POSITION_AXIS = "pl7.app/repertoire/position";
@@ -114,7 +125,7 @@ const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | undefin
     annotation tracks, not an explicit residue->colour map.
   -->
   <GraphMaker
-    v-model="app.model.data.graphStateStateHeatmap"
+    v-model="graphState"
     chart-type="heatmap"
     :p-frame="app.model.outputs.stateHeatmapPf"
     :default-options="defaultOptions"
