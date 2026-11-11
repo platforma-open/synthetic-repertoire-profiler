@@ -3,6 +3,7 @@ import type { ParentRegionConfig, RegionDef } from "./index";
 import {
   buildParentRegionsJson,
   buildRegionChains,
+  chainSetsByParent,
   duplicateRegionNames,
   expandScfvConfigs,
   featureNameError,
@@ -472,6 +473,47 @@ describe("hasAutoDetectRegion", () => {
         { parentId: "P1", scheme: "none", regions: [{ name: "VH", length: 3, autoDetect: true }] },
       ]),
     ).toBe(false);
+  });
+});
+
+describe("chainSetsByParent", () => {
+  test("an scFv parent carries both chains in one set", () => {
+    expect(
+      chainSetsByParent([
+        {
+          parentId: "P1",
+          scheme: "custom",
+          regions: [
+            { name: "VH", length: 3, chain: "IGHeavy" },
+            { name: "Linker", length: 3, ignored: true },
+            { name: "VL", length: 3, chain: "IGLight" },
+          ],
+        },
+      ]),
+    ).toEqual([["IGHeavy", "IGLight"]]);
+  });
+
+  test("two single-chain parents are two separate one-chain sets", () => {
+    expect(
+      chainSetsByParent([
+        { parentId: "H", scheme: "vdj", chain: "IGHeavy", regions: [{ name: "H_FR1", length: 3 }] },
+        { parentId: "L", scheme: "vdj", chain: "IGLight", regions: [{ name: "L_FR1", length: 3 }] },
+      ]),
+    ).toEqual([["IGHeavy"], ["IGLight"]]);
+  });
+
+  test("untagged and none parents are omitted", () => {
+    expect(
+      chainSetsByParent([
+        { parentId: "P1", scheme: "custom", regions: [{ name: "A", length: 3 }] },
+        {
+          parentId: "P2",
+          scheme: "none",
+          chain: "IGHeavy",
+          regions: [{ name: "FR1", length: 3, chain: "IGHeavy" }],
+        },
+      ]),
+    ).toEqual([]);
   });
 });
 

@@ -117,10 +117,26 @@ const isScfvPair = (regions: RegionDef[]): boolean =>
   regions[1].chain !== undefined &&
   regions[0].chain !== regions[1].chain;
 
+// Per-region chain tags come only from the scFv scheme. Leaving scFv must drop them: Custom and
+// VDJ show no per-region chain control, so a hidden tag the user cannot see would still export a
+// chain and a paired-construct axis.
+const stripChains = (regions: RegionDef[]): RegionDef[] =>
+  regions.map((r) => {
+    if (r.chain === undefined) return r;
+    const rest = { ...r };
+    delete rest.chain;
+    return rest;
+  });
+
 function onScheme(parentId: string, scheme: RegionScheme) {
   const cur = configFor(parentId);
   if (scheme === "none") {
-    setConfig({ ...cur, scheme, completeFeatureName: undefined });
+    setConfig({
+      ...cur,
+      scheme,
+      completeFeatureName: undefined,
+      regions: stripChains(cur.regions),
+    });
     return;
   }
   if (scheme === "scfv") {
@@ -133,9 +149,11 @@ function onScheme(parentId: string, scheme: RegionScheme) {
     });
     return;
   }
+  // Custom / VDJ: strip any per-region chain carried over from scFv — those schemes set the
+  // chain per parent (VDJ) or not at all (Custom), and a hidden region tag would still export one.
   const seeded =
     cur.regions.length > 0
-      ? cur.regions
+      ? stripChains(cur.regions)
       : scheme === "vdj"
         ? vdjSeed()
         : [{ name: "", length: NEW_REGION_LENGTH }];

@@ -186,6 +186,30 @@ export function buildRegionChains(
   return out;
 }
 
+/** Per parent, the distinct chains its non-ignored regions carry. A parent with no chain tag
+ *  and a `none` parent are omitted. Used to tell a real scFv (both chains in one parent) from
+ *  two single-chain parents that merely add up to two chains across the run. */
+export function chainSetsByParent(configs: ParentRegionConfig[] | undefined): ChainId[][] {
+  const out: ChainId[][] = [];
+  for (const c of configs ?? []) {
+    if (c.scheme === "none") continue;
+    const set = new Set<ChainId>();
+    const parentChain = c.scheme === "vdj" ? c.chain : undefined;
+    for (const r of c.regions ?? []) {
+      if (r.ignored) continue;
+      const rc = r.chain ?? parentChain;
+      if (rc) set.add(rc);
+      for (const child of r.children ?? []) {
+        if (child.ignored) continue;
+        const cc = child.chain ?? rc;
+        if (cc) set.add(cc);
+      }
+    }
+    if (set.size > 0) out.push([...set]);
+  }
+  return out;
+}
+
 /** True when any non-ignored region asks for germline auto-detect — an scFv run that
  *  subdivides its V-domains per domain. Distinct from whole-dataset `vdjAutoDetect`. */
 export function hasAutoDetectRegion(configs: ParentRegionConfig[] | undefined): boolean {
@@ -1427,6 +1451,19 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
         ? [runChain]
         : [];
     validateChainSet(effectiveChainIds);
+    // A paired-construct axis (two chains) is only correct when one parent carries both chains —
+    // an scFv. Two single-chain parents are separate molecules, not a construct; labelling the
+    // run as paired would mislead every downstream block that reads the axis instead of the data.
+    const distinctChains = new Set(effectiveChainIds);
+    if (
+      hasRegionChains &&
+      distinctChains.size === 2 &&
+      !chainSetsByParent(resolvedRegions).some((s) => s.length === 2)
+    )
+      throw new Error(
+        "This run has two chains, but no single parent carries both. A paired construct (scFv) " +
+          "has both chains in one parent. Split the parents by chain into separate runs.",
+      );
 
     return {
       input: data.input,
@@ -1520,6 +1557,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     parentSequence: data.parentSequence,
     parentRegions: data.parentRegions,
     vdjAutoDetect: data.vdjAutoDetect,
+    chain: data.chain,
     exportNt: data.exportNt,
     exportOnlyKnown: data.exportOnlyKnown,
     exportStateMatrix: data.exportStateMatrix,
