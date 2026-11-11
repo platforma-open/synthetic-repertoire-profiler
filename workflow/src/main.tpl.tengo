@@ -105,12 +105,16 @@ wf.body(func(args) {
 		knownAaFile = file.importFile(args.knownAaFileHandle).file
 	}
 
-	// Region scheme. Two sources of the mitool `--parent-regions` overlay:
+	// Region scheme. Three sources of the mitool `--parent-regions` overlay:
 	//   - vdjAutoDetect ON: the workflow infers every parent's FR1–FR4 from germline
 	//     (repseqio) and writes the overlay to a FILE; region names are the fixed VDJ
 	//     set (regionConfig.vdjAuto). The manual parentRegions is ignored (model
 	//     suppresses parentRegionsJson in this mode).
-	//   - OFF: the manual overlay JSON string drives both mitool and the region names.
+	//   - autoRegionScheme present (scFv): the workflow subdivides only the drawn
+	//     auto-detect domains by germline and writes the overlay to a FILE; the region
+	//     names are derived from the scheme (regionConfig.scfvAuto). The scheme also
+	//     drives split/assemble.
+	//   - neither: the manual overlay JSON string drives both mitool and the region names.
 	rc := undefined
 	parentRegionsJson := undefined
 	parentRegionsFile := undefined
@@ -118,7 +122,16 @@ wf.body(func(args) {
 		rc = regionConfig.vdjAuto()
 		autoRun := render.create(vdjAutoRegionsTpl, {
 			parentFastaStr: parentFastaStr,
-			parentFile: parentFile
+			parentFile: parentFile,
+			scheme: undefined
+		})
+		parentRegionsFile = autoRun.output("parentRegionsJson", 24 * 60 * 60 * 1000)
+	} else if !is_undefined(args.autoRegionScheme) {
+		rc = regionConfig.scfvAuto(args.autoRegionScheme)
+		autoRun := render.create(vdjAutoRegionsTpl, {
+			parentFastaStr: parentFastaStr,
+			parentFile: parentFile,
+			scheme: args.autoRegionScheme
 		})
 		parentRegionsFile = autoRun.output("parentRegionsJson", 24 * 60 * 60 * 1000)
 	} else {
@@ -138,9 +151,33 @@ wf.body(func(args) {
 	// user stating they are working on a V-domain, so a separate control would ask
 	// the same question twice and could be set to contradict the regions it
 	// describes. A run therefore has exactly one modality, by construction.
-	modality := rc.isVdj ? "vdj" : "amplicon"
+	// The run's chain ids come from the per-region tags when any region carries one
+	// (an scFv construct), otherwise from the single run-level chain. Empty = the
+	// chain is unresolved. The order of chainIds does not matter: the axis derives
+	// receptorChains from the receptor (always VDJ chain first), and the model has
+	// already checked the two chains share one receptor.
+	regionChains := args.regionChains
+	chainIds := []
+	if !is_undefined(regionChains) && len(regionChains) > 0 {
+		seen := {}
+		for rn in maps.getKeys(regionChains) {
+			cid := regionChains[rn]
+			if is_undefined(seen[cid]) {
+				seen[cid] = true
+				chainIds = append(chainIds, cid)
+			}
+		}
+	} else if !is_undefined(args.chain) {
+		chainIds = [args.chain]
+	}
+	// A chain tag declares immune data, so it makes the run vdj even on a custom
+	// region scheme (an scFv with named VH/VL regions).
+	modality := (rc.isVdj || len(chainIds) > 0) ? "vdj" : "amplicon"
 	// Shared by every run-scoped spec below — see runScopeDomain.
 	runScope := columnSpecs.runScopeDomain(blockId, modality)
+	// The variant axis carries identitySource and, under vdj, the chain resolution
+	// built from chainIds (unresolved / chain / receptor).
+	variantScope := columnSpecs.variantScopeDomain(blockId, modality, chainIds)
 
 	params := maps.clone({
 		fileExtension: fileExtension,
@@ -206,8 +243,8 @@ wf.body(func(args) {
 		}
 	}
 
-	ntVariantAxis := columnSpecs.variantKeyAxisSpec(runScope, "nucleotide", "Variant nt")
-	aaVariantAxis := columnSpecs.variantKeyAxisSpec(runScope, "aminoacid", "Variant aa")
+	ntVariantAxis := columnSpecs.variantKeyAxisSpec(variantScope, "nucleotide", "Variant nt")
+	aaVariantAxis := columnSpecs.variantKeyAxisSpec(variantScope, "aminoacid", "Variant aa")
 
 	// Mutation-count axis (X of the mutation-load distribution), per level.
 	ntMutationCountAxis := columnSpecs.mutationCountAxisSpec("nucleotide", "Nt mutations")
@@ -378,7 +415,7 @@ wf.body(func(args) {
 			"tsv",
 			{
 				axes: [axis],
-				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName, hasUmi),
+				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName, hasUmi, regionChains, chainIds),
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
@@ -531,12 +568,13 @@ wf.body(func(args) {
 		ntParentSeqCols = importParentSequence("nucleotide", "ntSequence")
 	}
 
-	// Which regions each parent subdivides, keyed [parentId]. Emitted only when some parent
-	// does, so a run without sub-regions carries no such column at all — its absence is the
-	// spec-level answer to "does this dataset hold non-canonical regions", available to a
-	// downstream model without reading any data.
+	// Which regions each parent subdivides, keyed [parentId]. Emitted only for a user-defined
+	// partition (a graft), so a run without one carries no such column at all — its absence is
+	// the spec-level answer to "does this dataset hold non-canonical regions", available to a
+	// downstream model without reading any data. The scFv path subdivides every V-domain into
+	// FR/CDR, which is uniform rather than notable, so it leaves this flag off (heat-map band on).
 	parentSubRegionCols := undefined
-	if rc.hasSubRegions {
+	if rc.showSubdividedRegions {
 		byParent := {}
 		for pid, names in rc.subdividedByParent {
 			byParent[pid] = text.join(names, ",")
@@ -589,8 +627,8 @@ wf.body(func(args) {
 		ntToAaCols = importLinker(
 			linkersRun.output("ntToAa"),
 			[
-				columnSpecs.variantKeyAxisSpec(runScope, "aminoacid", "Variant aa", "aaKey"),
-				columnSpecs.variantKeyAxisSpec(runScope, "nucleotide", "Variant nt", "ntKey")
+				columnSpecs.variantKeyAxisSpec(variantScope, "aminoacid", "Variant aa", "aaKey"),
+				columnSpecs.variantKeyAxisSpec(variantScope, "nucleotide", "Variant nt", "ntKey")
 			],
 			"pl7.app/repertoire/aaToNt"
 		)
@@ -598,7 +636,7 @@ wf.body(func(args) {
 			linkersRun.output("parentNt"),
 			[
 				columnSpecs.parentIdAxisSpec("Parent"),
-				columnSpecs.variantKeyAxisSpec(runScope, "nucleotide", "Variant nt", "ntKey")
+				columnSpecs.variantKeyAxisSpec(variantScope, "nucleotide", "Variant nt", "ntKey")
 			],
 			"pl7.app/repertoire/parentLink"
 		)
@@ -607,7 +645,7 @@ wf.body(func(args) {
 		linkersRun.output("parentAa"),
 		[
 			columnSpecs.parentIdAxisSpec("Parent"),
-			columnSpecs.variantKeyAxisSpec(runScope, "aminoacid", "Variant aa", "aaKey")
+			columnSpecs.variantKeyAxisSpec(variantScope, "aminoacid", "Variant aa", "aaKey")
 		],
 		"pl7.app/repertoire/parentLink"
 	)
@@ -903,7 +941,7 @@ wf.body(func(args) {
 			if exportNt {
 				knownLinkerNtCols := importKnown(
 					knownRun.output("knownLinkerNt"),
-					[ntKnownAxis, columnSpecs.variantKeyAxisSpec(runScope, "nucleotide", "Variant nt", "ntKey")],
+					[ntKnownAxis, columnSpecs.variantKeyAxisSpec(variantScope, "nucleotide", "Variant nt", "ntKey")],
 					columnSpecs.linkerColumns("pl7.app/repertoire/knownLink")
 				)
 				ntDistanceCols := importKnown(knownRun.output("ntDistance"), [ntVariantAxis], columnSpecs.knownDistanceColumns(false))
@@ -978,7 +1016,7 @@ wf.body(func(args) {
 		// the nt set when only --known is given).
 		knownLinkerAaCols := importKnown(
 			knownRun.output("knownLinkerAa"),
-			[aaKnownAxis, columnSpecs.variantKeyAxisSpec(runScope, "aminoacid", "Variant aa", "aaKey")],
+			[aaKnownAxis, columnSpecs.variantKeyAxisSpec(variantScope, "aminoacid", "Variant aa", "aaKey")],
 			columnSpecs.linkerColumns("pl7.app/repertoire/knownLink")
 		)
 		aaDistanceCols := importKnown(knownRun.output("aaDistance"), [aaVariantAxis], columnSpecs.knownDistanceColumns(true))

@@ -6,6 +6,7 @@ import {
   parseRegionAnnotation,
   regionLengthError,
   VDJ_REGION_NAMES,
+  type ChainId,
   type ParentRegionConfig,
   type RegionDef,
   type RegionScheme,
@@ -15,6 +16,7 @@ import { getRawPlatformaInstance, isImportFileHandleUpload } from "@platforma-sd
 import {
   PlAlert,
   PlBtnGhost,
+  PlCheckbox,
   PlDropdown,
   PlElementList,
   PlFileInput,
@@ -32,6 +34,16 @@ import {
   type ParsedParent,
 } from "./regionScheme";
 
+// Chain options for the per-parent chain select (vdj scheme). Sets the run's receptor and chain.
+const chainOptions: { label: string; value: ChainId }[] = [
+  { label: "IG Heavy", value: "IGHeavy" },
+  { label: "IG Light", value: "IGLight" },
+  { label: "TCR Beta", value: "TCRBeta" },
+  { label: "TCR Alpha", value: "TCRAlpha" },
+  { label: "TCR Delta", value: "TCRDelta" },
+  { label: "TCR Gamma", value: "TCRGamma" },
+];
+
 const app = useApp();
 const reactiveFileContent = ReactiveFileContent.useGlobal();
 
@@ -39,6 +51,12 @@ const schemeOptions = [
   { label: "None", value: "none" as const },
   { label: "VDJ", value: "vdj" as const },
   { label: "Custom regions", value: "custom" as const },
+  { label: "scFv (heavy + linker + light)", value: "scfv" as const },
+];
+
+const scfvOrderOptions = [
+  { label: "Heavy → Light", value: true },
+  { label: "Light → Heavy", value: false },
 ];
 
 // A parent shown in the editor. `missing` marks a saved config whose parent id is not in the
@@ -85,15 +103,57 @@ const vdjSeed = (lengths?: Map<string, number>): RegionDef[] =>
 // One codon: a new region is valid and in frame before the user types a length.
 const NEW_REGION_LENGTH = 3;
 
+// The two scFv domains, 5'→3'. Heavy first by default; the order toggle swaps them.
+const scfvSeed = (): RegionDef[] => [
+  { name: "VH", length: 0, chain: "IGHeavy" },
+  { name: "VL", length: 0, chain: "IGLight" },
+];
+
+// A saved pair is reusable as an scFv only when both domains already carry distinct chain tags.
+// An untagged two-region custom scheme is not — reusing it would export no heavy/light tags.
+const isScfvPair = (regions: RegionDef[]): boolean =>
+  regions.length === 2 &&
+  regions[0].chain !== undefined &&
+  regions[1].chain !== undefined &&
+  regions[0].chain !== regions[1].chain;
+
+// Per-region chain tags come only from the scFv scheme. Leaving scFv must drop them: Custom and
+// VDJ show no per-region chain control, so a hidden tag the user cannot see would still export a
+// chain and a paired-construct axis.
+const stripChains = (regions: RegionDef[]): RegionDef[] =>
+  regions.map((r) => {
+    if (r.chain === undefined) return r;
+    const rest = { ...r };
+    delete rest.chain;
+    return rest;
+  });
+
 function onScheme(parentId: string, scheme: RegionScheme) {
   const cur = configFor(parentId);
   if (scheme === "none") {
-    setConfig({ ...cur, scheme, completeFeatureName: undefined });
+    setConfig({
+      ...cur,
+      scheme,
+      completeFeatureName: undefined,
+      regions: stripChains(cur.regions),
+    });
     return;
   }
+  if (scheme === "scfv") {
+    setConfig({
+      ...cur,
+      scheme,
+      completeFeatureName: undefined,
+      linker: cur.linker ?? "",
+      regions: isScfvPair(cur.regions) ? cur.regions : scfvSeed(),
+    });
+    return;
+  }
+  // Custom / VDJ: strip any per-region chain carried over from scFv — those schemes set the
+  // chain per parent (VDJ) or not at all (Custom), and a hidden region tag would still export one.
   const seeded =
     cur.regions.length > 0
-      ? cur.regions
+      ? stripChains(cur.regions)
       : scheme === "vdj"
         ? vdjSeed()
         : [{ name: "", length: NEW_REGION_LENGTH }];
@@ -105,11 +165,80 @@ function onScheme(parentId: string, scheme: RegionScheme) {
   });
 }
 
+function setLinker(parentId: string, linker: string) {
+  setConfig({ ...configFor(parentId), linker });
+}
+
+// Which chain leads (5' domain). The order toggle rewrites the two-domain list so the
+// chosen chain's domain comes first; names follow the chain (VH = heavy, VL = light).
+function scfvHeavyFirst(parentId: string): boolean {
+  const regions = configFor(parentId).regions;
+  return (regions[0]?.chain ?? "IGHeavy") === "IGHeavy";
+}
+
+function setScfvOrder(parentId: string, heavyFirst: boolean) {
+  const heavy: RegionDef = { name: "VH", length: 0, chain: "IGHeavy" };
+  const light: RegionDef = { name: "VL", length: 0, chain: "IGLight" };
+  setConfig({
+    ...configFor(parentId),
+    regions: heavyFirst ? [heavy, light] : [light, heavy],
+  });
+}
+
+// Validates the scFv linker against the parent: plain nt, present once, and leaving a
+// domain on each side. Without the parent sequence (an uploaded file) only the shape is
+// checked here; the model repeats the full check at run time.
+function scfvLinkerError(p: EditorParent, linker: string): string | undefined {
+  const l = linker.toUpperCase().replace(/\s/g, "");
+  if (!l) return "A linker sequence is required.";
+  if (!/^[ACGT]+$/.test(l)) return "Only A, C, G, T are allowed.";
+  if (p.missing || !p.sequence) return undefined;
+  const seq = p.sequence.toUpperCase();
+  const idx = seq.indexOf(l);
+  if (idx < 0) return "Not found in the parent sequence.";
+  if (seq.indexOf(l, idx + 1) >= 0) return "Occurs more than once — it must be unique.";
+  if (idx === 0 || idx + l.length >= seq.length) return "Leaves no sequence for one domain.";
+  return undefined;
+}
+
+// The located split, shown as feedback once a valid linker is entered.
+function scfvSplitHint(p: EditorParent): string | undefined {
+  const cfg = configFor(p.id);
+  const l = (cfg.linker ?? "").toUpperCase().replace(/\s/g, "");
+  if (!l || p.missing || !p.sequence) return undefined;
+  const seq = p.sequence.toUpperCase();
+  const idx = seq.indexOf(l);
+  if (idx <= 0 || seq.indexOf(l, idx + 1) >= 0) return undefined;
+  const secondLen = seq.length - idx - l.length;
+  if (secondLen <= 0) return undefined;
+  const heavyFirst = scfvHeavyFirst(p.id);
+  return (
+    `Split: ${heavyFirst ? "heavy" : "light"} ${idx} nt, linker ${l.length} nt, ` +
+    `${heavyFirst ? "light" : "heavy"} ${secondLen} nt. FR/CDR detected from germline at run time.`
+  );
+}
+
 function setCompleteFeatureName(parentId: string, name: string) {
   setConfig({ ...configFor(parentId), completeFeatureName: name });
 }
 
-function setRegion(parentId: string, i: number, patch: Partial<{ name: string; length: number }>) {
+// One chain for the whole parent, under the vdj scheme. buildRegionChains applies it to every
+// region of the parent.
+function setParentChain(parentId: string, chain: ChainId | undefined) {
+  setConfig({ ...configFor(parentId), chain: chain ?? undefined });
+}
+
+function setRegion(
+  parentId: string,
+  i: number,
+  patch: Partial<{
+    name: string;
+    length: number;
+    ignored: boolean;
+    chain: ChainId | undefined;
+    autoDetect: boolean;
+  }>,
+) {
   const cfg = configFor(parentId);
   const regions = cfg.regions.map((r, j) => (j === i ? { ...r, ...patch } : r));
   setConfig({ ...cfg, regions });
@@ -229,6 +358,9 @@ function applyRows(parentId: string, rows: (RegionDef & { id: number })[]) {
     regions: rows.map((r) => ({
       name: r.name,
       length: r.length,
+      ...(r.ignored ? { ignored: true } : {}),
+      ...(r.chain ? { chain: r.chain } : {}),
+      ...(r.autoDetect ? { autoDetect: true } : {}),
       ...(r.children && r.children.length > 0 ? { children: r.children } : {}),
     })),
   });
@@ -328,7 +460,8 @@ function previews(p: EditorParent) {
   const allRows = rows.flatMap((r) => [r, ...r.childRows]);
   const total = offs.length > 0 ? offs[offs.length - 1].end : 0;
   const outOfFrame = allRows
-    .filter((r) => r.length > 0 && !r.inFrame)
+    // An ignored span is masked to the parent and carries no aa column, so its frame is moot.
+    .filter((r) => r.length > 0 && !r.inFrame && !r.ignored)
     .map((r) => r.name || "(unnamed)");
   const untiled = rows
     .filter((r) => r.childGap !== 0)
@@ -513,7 +646,54 @@ async function deleteRegions(parentId: string) {
       kept but not used. Pick a scheme to edit and use them again.
     </div>
 
-    <template v-if="configFor(p.id).scheme !== 'none'">
+    <!-- scFv scheme: no region table. The user gives only the domain order and the linker
+         sequence; the block locates the linker, splits heavy | light, and germline-detects
+         each domain's FR/CDR. -->
+    <template v-if="configFor(p.id).scheme === 'scfv'">
+      <PlDropdown
+        :model-value="scfvHeavyFirst(p.id)"
+        :options="scfvOrderOptions"
+        label="Domain order (5′ → 3′)"
+        @update:model-value="(v) => setScfvOrder(p.id, v as boolean)"
+      >
+        <template #tooltip>
+          Which chain comes first in the construct. The block tags the first domain's columns as
+          heavy (or light) accordingly.
+        </template>
+      </PlDropdown>
+
+      <PlTextField
+        :model-value="configFor(p.id).linker ?? ''"
+        label="Linker sequence"
+        placeholder="linker nucleotides, e.g. the (G4S)×3 sequence in your construct"
+        :validate="(v: string) => scfvLinkerError(p, v)"
+        @update:model-value="(v) => setLinker(p.id, v)"
+      >
+        <template #tooltip>
+          The exact linker nucleotides between the two domains, as they appear in the parent. The
+          block finds this in the parent to split heavy from light, then ignores it. The FR/CDR
+          boundaries inside each domain are detected from germline at run time.
+        </template>
+      </PlTextField>
+
+      <div v-if="scfvSplitHint(p)" class="region-hint">{{ scfvSplitHint(p) }}</div>
+    </template>
+
+    <template v-if="configFor(p.id).scheme !== 'none' && configFor(p.id).scheme !== 'scfv'">
+      <PlDropdown
+        v-if="configFor(p.id).scheme === 'vdj'"
+        :model-value="configFor(p.id).chain"
+        :options="chainOptions"
+        label="Chain"
+        clearable
+        @update:model-value="(v) => setParentChain(p.id, (v as ChainId) ?? undefined)"
+      >
+        <template #tooltip>
+          Which immune chain this parent's V-domain is. Sets the run's receptor and chain so
+          downstream blocks can tell it apart. One V-domain is one chain.
+        </template>
+      </PlDropdown>
+
       <PlTextField
         :model-value="configFor(p.id).completeFeatureName ?? ''"
         label="Full sequence name (optional)"
@@ -555,15 +735,29 @@ async function deleteRegions(parentId: string) {
                 @update:model-value="(v) => setRegion(p.id, i, { length: v ?? 0 })"
               />
 
-              <span class="region-row__span">{{ row.begin }}–{{ row.end }}</span>
+              <PlCheckbox
+                class="region-row__ignore"
+                :model-value="row.ignored ?? false"
+                @update:model-value="(v: boolean) => setRegion(p.id, i, { ignored: v })"
+              >
+                Ignore mutations
+                <template #tooltip>
+                  Restores this span to the parent before variants are built. It then produces no
+                  mutation, never splits a variant, and gets no sequence column — for a fixed part
+                  such as an scFv linker or a hinge.
+                </template>
+              </PlCheckbox>
             </div>
 
-            <span
-              class="region-row__aa"
-              :class="{ 'region-row__aa--off': row.length > 0 && !row.inFrame }"
-            >
-              {{ row.inFrame ? row.aa : "out of frame" }}
-            </span>
+            <div class="region-row__meta">
+              <span class="region-row__span">{{ row.begin }}–{{ row.end }}</span>
+              <span
+                class="region-row__aa"
+                :class="{ 'region-row__aa--off': row.length > 0 && !row.inFrame && !row.ignored }"
+              >
+                {{ row.inFrame ? row.aa : "out of frame" }}
+              </span>
+            </div>
           </div>
         </template>
 
@@ -619,7 +813,10 @@ async function deleteRegions(parentId: string) {
             + Add sub-region
           </PlBtnGhost>
 
-          <PlBtnGhost v-if="row.childRows.length === 0" @click.prevent="subdivide(p.id, i, row.id)">
+          <PlBtnGhost
+            v-if="row.childRows.length === 0 && !row.ignored && !row.autoDetect"
+            @click.prevent="subdivide(p.id, i, row.id)"
+          >
             Divide Into Sub-regions
           </PlBtnGhost>
         </template>
@@ -745,35 +942,47 @@ async function deleteRegions(parentId: string) {
   align-items: flex-start;
   gap: 8px;
 }
-/* Fields carry no label: the pair reads as name + length, and a floating label on
-   every row is what made the list tall (and got clipped by the item's overflow).
-   The length field and the offset label are FIXED and the name takes the rest, so the
-   name fills the panel the way every other field on this page does while both columns
-   still line up down the whole list. Fixing the LABEL is what buys the alignment: it is
-   what varies between rows (`0-30` against `120-210`), and while it was flexible the
-   name absorbed that difference and every row landed at a different x.
-
-   The label shrinks before anything else, because PlTextField hard-codes
-   `min-width: 160px` (pl-text-field.scss:17) that a `min-width: 0` here does not beat —
-   so in a narrow sub-region column the name would otherwise refuse to shrink, overflow
-   its flex box and paint over the number field. Letting the label truncate absorbs the
-   squeeze instead. */
+/* The Ignore checkbox shares the name + length line. It centres against the field height (the
+   row top-aligns so the length error can grow below), and never wraps its label. */
+.region-row__ignore {
+  flex: 0 0 auto;
+  height: var(--control-height);
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+/* The offset span and the aa/frame status share a line below the controls. */
+.region-row__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+/* Fields carry no label (placeholder only): a floating label on every row made the list tall
+   and got clipped by the item's overflow. The length and Ignore controls are fixed-width and the
+   name takes the rest, so the columns line up down the list. */
 .region-row__name {
   flex: 1 1 0;
+  min-width: 0;
+}
+/* PlTextField hard-codes min-width: 160px; override it so the name can shrink and leave room for
+   the length field and the Ignore checkbox on one line. */
+.region-row__name :deep(.pl-text-field) {
+  min-width: 72px;
 }
 .region-row__len {
-  flex: 0 0 104px;
+  flex: 0 0 88px;
   min-width: 0;
 }
+/* Keep the length error on one line; it overflows the narrow field into the empty space to its
+   right (below the Ignore checkbox) instead of wrapping. */
+.region-row__len :deep(.pl-number-field__error) {
+  white-space: nowrap;
+}
 .region-row__span {
-  flex: 0 1 72px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 0 0 auto;
   color: var(--txt-03);
   font-size: 12px;
   white-space: nowrap;
-  line-height: var(--control-height);
 }
 .region-row__aa {
   font-family: monospace;

@@ -1,0 +1,96 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+rc := import(":region-config")
+
+SCFV := `{"version":1,"parents":{"P1":{"scheme":"custom","regions":[` +
+	`{"name":"VH","begin":0,"end":360,"autoDetect":true},` +
+	`{"name":"LINK","begin":360,"end":405,"ignored":true},` +
+	`{"name":"VL","begin":405,"end":726,"autoDetect":true}` +
+	`]}}}`
+
+TestScfvAutoExpandsEachDomain := func() {
+	r := rc.scfvAuto(SCFV)
+	// Each domain is a container (the whole VH / VL sequence column) followed by its
+	// seven FR/CDR children.
+	expected := [
+		"VH", "VH_FR1", "VH_CDR1", "VH_FR2", "VH_CDR2", "VH_FR3", "VH_CDR3", "VH_FR4",
+		"VL", "VL_FR1", "VL_CDR1", "VL_FR2", "VL_CDR2", "VL_FR3", "VL_CDR3", "VL_FR4"
+	]
+	// Every container and FR/CDR is codon-aligned by construction, so nt and aa names match.
+	test.isEqual(expected, r.ntRegionNames)
+	test.isEqual(expected, r.aaRegionNames)
+	test.isEqual(true, r.isVdj)
+	test.isEqual(true, r.hasRegions)
+	// The containers make the run subdivided (the heat map keeps its sub-region band)...
+	test.isEqual(true, r.hasSubRegions)
+	test.isEqual(["VH", "VL"], r.subdividedByParent["P1"])
+	// ...but the split is the uniform V-domain -> FR/CDR, so the per-parent "Subdivided
+	// regions" column stays off.
+	test.isEqual(false, r.showSubdividedRegions)
+	// No single complete feature across two chains.
+	test.isEqual(true, is_undefined(r.completeFeatureName))
+}
+
+TestAnalyzeGraftShowsSubdividedColumn := func() {
+	// A user-defined partition (a graft in a CDR slot) does surface the per-parent column.
+	graft := `{"version":1,"parents":{"P1":{"scheme":"vdj","completeFeatureName":"VDJRegion",` +
+		`"regions":[` +
+		`{"name":"FR1","begin":0,"end":30},` +
+		`{"name":"CDR1","begin":30,"end":60,"children":[` +
+		`{"name":"CDR1_flankL","begin":30,"end":39},` +
+		`{"name":"GRAFT","begin":39,"end":51},` +
+		`{"name":"CDR1_flankR","begin":51,"end":60}` +
+		`]}` +
+		`]}}}`
+	r := rc.analyze(graft)
+	test.isEqual(true, r.hasSubRegions)
+	test.isEqual(true, r.showSubdividedRegions)
+	test.isEqual(["CDR1"], r.subdividedByParent["P1"])
+}
+
+TestScfvAutoIgnoresLinker := func() {
+	// The ignored LINK carries no column, so its name appears nowhere.
+	r := rc.scfvAuto(SCFV)
+	for n in r.ntRegionNames {
+		test.isEqual(true, n != "LINK")
+	}
+}
+
+TestScfvAutoKeepsManualGraftChildren := func() {
+	// A run with an auto-detect domain and a manual parent that grafts a region: the manual
+	// region's children must still get columns, and the graft surfaces the per-parent column.
+	scheme := `{"version":1,"parents":{` +
+		`"P1":{"scheme":"custom","regions":[` +
+		`{"name":"VH","begin":0,"end":360,"autoDetect":true}` +
+		`]},` +
+		`"P2":{"scheme":"custom","regions":[` +
+		`{"name":"CDR1","begin":0,"end":30,"children":[` +
+		`{"name":"CDR1_flankL","begin":0,"end":9},` +
+		`{"name":"GRAFT","begin":9,"end":21},` +
+		`{"name":"CDR1_flankR","begin":21,"end":30}` +
+		`]}` +
+		`]}}}`
+	r := rc.scfvAuto(scheme)
+	// The manual parent's container and all three children appear.
+	for n in ["CDR1", "CDR1_flankL", "GRAFT", "CDR1_flankR"] {
+		found := false
+		for m in r.ntRegionNames {
+			if m == n {
+				found = true
+			}
+		}
+		test.isEqual(true, found)
+	}
+	test.isEqual(true, r.showSubdividedRegions)
+	test.isEqual(["CDR1"], r.subdividedByParent["P2"])
+}
+
+TestScfvAutoPassthroughAaDependsOnFrame := func() {
+	// A non-auto region passes through by name; it is aa-eligible only when codon-aligned.
+	scheme := `{"version":1,"parents":{"P1":{"scheme":"custom","regions":[` +
+		`{"name":"ALIGNED","begin":0,"end":30},` +
+		`{"name":"OFFFRAME","begin":30,"end":61}` +
+		`]}}}`
+	r := rc.scfvAuto(scheme)
+	test.isEqual(["ALIGNED", "OFFFRAME"], r.ntRegionNames)
+	test.isEqual(["ALIGNED"], r.aaRegionNames)
+}

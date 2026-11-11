@@ -14,9 +14,21 @@ export type FrameShiftMode = "AA_MISMATCH" | "TRIPLET";
 
 /** Per-parent region scheme. `none` = no regions (default); `vdj` = a V-domain
  *  (antibody/TCR), seeded from the FR1→FR4 partition but free to insert, replace or
- *  rename a region for an engineered scaffold; `custom` = arbitrary named regions.
- *  Only `vdj` declares the run's modality as VDJ. */
-export type RegionScheme = "none" | "vdj" | "custom";
+ *  rename a region for an engineered scaffold; `custom` = arbitrary named regions;
+ *  `scfv` = a two-domain antibody construct (heavy + linker + light), where the user
+ *  gives only the domain order and the linker sequence and the block germline-detects
+ *  each domain's FR/CDR. Only `vdj` and `scfv` declare the run's modality as VDJ. */
+export type RegionScheme = "none" | "vdj" | "custom" | "scfv";
+
+/** A chain id, sharing the string values of mixcr-amplicon-alignment's chain control.
+ *  One id maps to both `vdj/receptor` and `vdj/chain`, plus the recombination:
+ *  `IGHeavy` -> receptor `IG`, chain `Heavy`, `VDJ`.
+ *
+ *  It is used two ways. As a run-level setting it is optional: unset leaves a `vdj`
+ *  run with the chain unresolved. On a region
+ *  it marks that region's chain, so an scFv parent tags its heavy regions `IGHeavy`
+ *  and its light regions `IGLight` (the linker and hinge stay ignored). */
+export type ChainId = "IGHeavy" | "IGLight" | "TCRBeta" | "TCRAlpha" | "TCRDelta" | "TCRGamma";
 
 /** A region in a parent's partition: a name + nucleotide length. Boundary
  *  offsets are derived cumulatively from the lengths (region-first entry).
@@ -25,8 +37,29 @@ export type RegionScheme = "none" | "vdj" | "custom";
  *  graft inside a canonical region (an insert sitting inside CDR2) can be named without
  *  splitting that region away. Nesting is two levels: a child carries none of its own.
  *  Absent or empty = an undivided region, which is how every partition written before
- *  this field existed reads. */
-export type RegionDef = { name: string; length: number; children?: RegionDef[] };
+ *  this field existed reads.
+ *
+ *  `ignored` marks a fixed-scaffold span (an scFv linker, a hinge, a constant flank):
+ *  mitool restores it to the parent before a variant is built, so it produces no mutation,
+ *  never splits a variant, and gets no sequence column. Absent = false.
+ *
+ *  `chain` marks which immune chain the region belongs to. An scFv parent tags its heavy
+ *  regions `IGHeavy` and its light regions `IGLight`. The block reads the set of region
+ *  chains to decide the run's receptor resolution, and tags each region's column with its
+ *  `vdj/chain`. Absent = untagged. An ignored region carries no chain.
+ *
+ *  `autoDetect` marks a V-domain to subdivide by germline: the workflow infers this
+ *  region's FR1–FR4 and replaces it with `<name>_FR1`…`<name>_FR4`. Set only on a
+ *  chain-tagged, non-ignored region, and not together with `children`. Absent = the
+ *  region's own boundaries are used as drawn. */
+export type RegionDef = {
+  name: string;
+  length: number;
+  ignored?: boolean;
+  chain?: ChainId;
+  autoDetect?: boolean;
+  children?: RegionDef[];
+};
 
 /** Per-parent region scheme, keyed by the parent's FASTA id. */
 export type ParentRegionConfig = {
@@ -34,6 +67,13 @@ export type ParentRegionConfig = {
   scheme: RegionScheme;
   /** Optional name for the whole-variant feature (e.g. `VDJRegion`). */
   completeFeatureName?: string;
+  /** The parent's immune chain, for the `vdj` scheme. One V-domain is one chain, so it is set
+   *  per parent rather than per region; every region of the parent inherits it. The `scfv` scheme
+   *  tags its two domains per region instead, and `custom` carries no chain. */
+  chain?: ChainId;
+  /** The linker nucleotide sequence, for the `scfv` scheme only. The block locates it in
+   *  the parent to split the heavy and light domains. Ignored for other schemes. */
+  linker?: string;
   regions: RegionDef[];
 };
 
@@ -71,6 +111,7 @@ export type BlockParams = {
   parentSequence?: string;
   parentRegions?: ParentRegionConfig[];
   vdjAutoDetect?: boolean;
+  chain?: ChainId;
 
   exportNt?: boolean;
   exportOnlyKnown?: boolean;
@@ -99,7 +140,15 @@ export type BlockParams = {
 
 const PARENT_INPUT_MODES: readonly ParentInputMode[] = ["fastaSequence", "fastaFile"];
 const FRAME_SHIFT_MODES: readonly FrameShiftMode[] = ["AA_MISMATCH", "TRIPLET"];
-const REGION_SCHEMES: readonly RegionScheme[] = ["none", "vdj", "custom"];
+const REGION_SCHEMES: readonly RegionScheme[] = ["none", "vdj", "custom", "scfv"];
+const CHAIN_IDS: readonly ChainId[] = [
+  "IGHeavy",
+  "IGLight",
+  "TCRBeta",
+  "TCRAlpha",
+  "TCRDelta",
+  "TCRGamma",
+];
 
 /**
  * The same contract at runtime, for params that arrive from a template file
@@ -127,6 +176,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     parentSequence,
     parentRegions,
     vdjAutoDetect,
+    chain,
     exportNt,
     exportOnlyKnown,
     exportStateMatrix,
@@ -156,6 +206,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     parentSequence: optionalString(parentSequence, "parentSequence"),
     parentRegions: optionalParentRegions(parentRegions),
     vdjAutoDetect: optionalBoolean(vdjAutoDetect, "vdjAutoDetect"),
+    chain: optionalEnum(chain, CHAIN_IDS, "chain"),
 
     exportNt: optionalBoolean(exportNt, "exportNt"),
     exportOnlyKnown: optionalBoolean(exportOnlyKnown, "exportOnlyKnown"),
@@ -253,7 +304,7 @@ function optionalParentRegions(value: unknown): ParentRegionConfig[] | undefined
 function parseParentRegionConfig(value: unknown, at: string): ParentRegionConfig {
   assertObjectAt(value, at);
 
-  const { parentId, scheme, completeFeatureName, regions } = value;
+  const { parentId, scheme, completeFeatureName, chain, linker, regions } = value;
 
   if (typeof parentId !== "string")
     throw new Error(`'${at}.parentId' is required, and must be a string.`);
@@ -261,12 +312,18 @@ function parseParentRegionConfig(value: unknown, at: string): ParentRegionConfig
   if (parsedScheme === undefined) throw new Error(`'${at}.scheme' is required.`);
   if (!Array.isArray(regions)) throw new Error(`'${at}.regions' is required, and must be a list.`);
 
-  return {
+  const base: ParentRegionConfig = {
     parentId,
     scheme: parsedScheme,
     completeFeatureName: optionalString(completeFeatureName, `${at}.completeFeatureName`),
     regions: regions.map((region, i) => parseRegionDef(region, `${at}.regions[${i}]`, true)),
   };
+  // Each field is added only when set, so a config written before it stays byte-identical.
+  const parsedChain = optionalEnum(chain, CHAIN_IDS, `${at}.chain`);
+  if (parsedChain !== undefined) base.chain = parsedChain;
+  const linkerStr = optionalString(linker, `${at}.linker`);
+  if (linkerStr !== undefined) base.linker = linkerStr;
+  return base;
 }
 
 /** `allowChildren` is false one level down, which is what makes nesting two levels
@@ -278,20 +335,29 @@ function parseParentRegionConfig(value: unknown, at: string): ParentRegionConfig
 function parseRegionDef(value: unknown, at: string, allowChildren: boolean): RegionDef {
   assertObjectAt(value, at);
 
-  const { name: regionName, length, children } = value;
+  const { name: regionName, length, children, ignored, chain, autoDetect } = value;
   if (typeof regionName !== "string")
     throw new Error(`'${at}.name' is required, and must be a string.`);
   if (typeof length !== "number" || !Number.isFinite(length))
     throw new Error(`'${at}.length' is required, and must be a finite number.`);
 
-  if (children === undefined) return { name: regionName, length };
+  // Each field is added only when present, so a region written before the field
+  // existed stays byte-identical and cached runs still match.
+  const base: RegionDef = { name: regionName, length };
+  const ignoredFlag = optionalBoolean(ignored, `${at}.ignored`);
+  if (ignoredFlag !== undefined) base.ignored = ignoredFlag;
+  const chainId = optionalEnum(chain, CHAIN_IDS, `${at}.chain`);
+  if (chainId !== undefined) base.chain = chainId;
+  const autoDetectFlag = optionalBoolean(autoDetect, `${at}.autoDetect`);
+  if (autoDetectFlag !== undefined) base.autoDetect = autoDetectFlag;
+
+  if (children === undefined) return base;
   if (!allowChildren)
     throw new Error(`'${at}.children' is not allowed — region nesting is two levels deep.`);
   if (!Array.isArray(children)) throw new Error(`'${at}.children' must be a list.`);
 
   return {
-    name: regionName,
-    length,
+    ...base,
     children: children.map((child, i) => parseRegionDef(child, `${at}.children[${i}]`, false)),
   };
 }

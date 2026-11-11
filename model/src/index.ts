@@ -24,6 +24,7 @@ import type {
   ParentRegionConfig,
   RegionDef,
   RegionScheme,
+  ChainId,
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
 import { kind } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
 import type { PatternParts, UmiSpec } from "./pattern";
@@ -38,7 +39,14 @@ export type { ParsedParent } from "./parentFasta";
 // The parent-input and region shapes are part of the kind's init-params
 // contract, so the kind declares them. Re-exported here because the UI reads
 // them from the model, and only the model is on its import path.
-export type { FrameShiftMode, ParentInputMode, ParentRegionConfig, RegionDef, RegionScheme };
+export type {
+  FrameShiftMode,
+  ParentInputMode,
+  ParentRegionConfig,
+  RegionDef,
+  RegionScheme,
+  ChainId,
+};
 
 // Same reason: the settings panel parses an imported region-annotation file.
 export { parseRegionAnnotation } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
@@ -104,15 +112,200 @@ export function duplicateRegionNames(
  * fields, and re-checked by `.args(...)`.
  */
 export function regionLengthError(length: number | undefined): string | undefined {
-  if (length === undefined || !Number.isInteger(length) || length <= 0)
-    return "Length must be a whole number greater than 0.";
+  if (length === undefined || !Number.isInteger(length) || length <= 0) return "Whole number > 0";
   return undefined;
+}
+
+/** The seven canonical FR/CDR region names, in order. Germline auto-detect subdivides
+ *  each V-domain into these. An scFv domain's columns are the domain name prefixed onto
+ *  each — `VH_FR1`…`VH_FR4`. The Python `assemble` step and the workflow's `scfvAuto`
+ *  region config expand the same list, so all three must stay in step. */
+const CANONICAL_VDJ_REGIONS = ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"] as const;
+
+/** The receptor each chain id belongs to (variant-key doc, section 4). */
+const CHAIN_RECEPTOR: Record<ChainId, "IG" | "TCRAB" | "TCRGD"> = {
+  IGHeavy: "IG",
+  IGLight: "IG",
+  TCRBeta: "TCRAB",
+  TCRAlpha: "TCRAB",
+  TCRDelta: "TCRGD",
+  TCRGamma: "TCRGD",
+};
+
+/** Region name -> chain id, for every chain-tagged region. A region's chain is its own, else
+ *  the parent's (`vdj` sets one chain for the whole parent; `scfv` tags its two domains per
+ *  region). A sub-region inherits its region's chain. An auto-detect V-domain becomes a
+ *  container (the whole-domain `VH` / `VL` sequence column) holding its seven FR/CDR children, so
+ *  the domain name and each `<domain>_FR1`…`<domain>_FR4` take the domain's chain. Empty when no
+ *  chain is set — the run then falls back to the single run-level chain. */
+export function buildRegionChains(
+  configs: ParentRegionConfig[] | undefined,
+): Record<string, ChainId> {
+  // Region names are user text: a plain `{}` would read `toString`/`constructor` off the
+  // prototype, so the conflict check below sees a phantom prior chain. A null-proto map has
+  // own keys only.
+  const out: Record<string, ChainId> = Object.create(null);
+  // Reject two parents that reuse a region name but tag it with different chains: the map is
+  // keyed by name, so a silent overwrite would label both parents' columns with one chain.
+  const assign = (name: string, chain: ChainId) => {
+    const prev = out[name];
+    if (prev !== undefined && prev !== chain)
+      throw new Error(
+        `Region '${name}' is tagged as two different chains (${prev} and ${chain}). ` +
+          "Give the regions distinct names, or split the parents into separate runs.",
+      );
+    out[name] = chain;
+  };
+  for (const c of configs ?? []) {
+    // A parent set to `none` contributes no columns; skip it so a stale chain or auto-detect
+    // flag left from a previous scheme does not reach the run.
+    if (c.scheme === "none") continue;
+    // The parent chain is a vdj-scheme control; ignore a value left over from a scheme switch
+    // (custom carries no chain; an scfv-expanded config tags its domains per region instead).
+    const parentChain = c.scheme === "vdj" ? c.chain : undefined;
+    for (const r of c.regions ?? []) {
+      // An ignored region (linker, hinge) carries no column, so its chain is
+      // meaningless and must not count toward the run's chain set.
+      if (r.ignored) continue;
+      const rc = r.chain ?? parentChain;
+      if (r.autoDetect) {
+        if (rc) {
+          assign(r.name, rc); // whole-domain container column
+          for (const canonical of CANONICAL_VDJ_REGIONS) assign(`${r.name}_${canonical}`, rc);
+        }
+        continue;
+      }
+      if (rc) assign(r.name, rc);
+      for (const child of r.children ?? []) {
+        if (child.ignored) continue;
+        const cc = child.chain ?? rc;
+        if (cc) assign(child.name, cc);
+      }
+    }
+  }
+  return out;
+}
+
+/** Per parent, the distinct chains its non-ignored regions carry. A parent with no chain tag
+ *  and a `none` parent are omitted. Used to tell a real scFv (both chains in one parent) from
+ *  two single-chain parents that merely add up to two chains across the run. */
+export function chainSetsByParent(configs: ParentRegionConfig[] | undefined): ChainId[][] {
+  const out: ChainId[][] = [];
+  for (const c of configs ?? []) {
+    if (c.scheme === "none") continue;
+    const set = new Set<ChainId>();
+    const parentChain = c.scheme === "vdj" ? c.chain : undefined;
+    for (const r of c.regions ?? []) {
+      if (r.ignored) continue;
+      const rc = r.chain ?? parentChain;
+      if (rc) set.add(rc);
+      for (const child of r.children ?? []) {
+        if (child.ignored) continue;
+        const cc = child.chain ?? rc;
+        if (cc) set.add(cc);
+      }
+    }
+    if (set.size > 0) out.push([...set]);
+  }
+  return out;
+}
+
+/** True when any non-ignored region asks for germline auto-detect — an scFv run that
+ *  subdivides its V-domains per domain. Distinct from whole-dataset `vdjAutoDetect`. */
+export function hasAutoDetectRegion(configs: ParentRegionConfig[] | undefined): boolean {
+  return (configs ?? []).some(
+    (c) =>
+      // A `none` parent's regions are inactive; a stale auto-detect flag must not activate.
+      c.scheme !== "none" && (c.regions ?? []).some((r) => r.autoDetect === true && !r.ignored),
+  );
+}
+
+/** Expands every `scfv` config into the equivalent auto-detect `custom` config: the two
+ *  domains flanking the located linker, each germline-auto-detected and chain-tagged, with
+ *  the linker ignored. The rest of the pipeline then treats it like any auto-detect run.
+ *  Non-scfv configs pass through unchanged. Needs each scFv parent's pasted sequence to
+ *  find the linker, so the scFv scheme requires a pasted parent. */
+export function expandScfvConfigs(
+  configs: ParentRegionConfig[] | undefined,
+  parentSeqs: Map<string, string>,
+): ParentRegionConfig[] | undefined {
+  if (!configs) return configs;
+  return configs.map((c) => (c.scheme === "scfv" ? expandOneScfv(c, parentSeqs) : c));
+}
+
+function expandOneScfv(c: ParentRegionConfig, parentSeqs: Map<string, string>): ParentRegionConfig {
+  const linker = (c.linker ?? "").toUpperCase().replace(/\s/g, "");
+  if (!linker) throw new Error(`scFv parent ${c.parentId}: a linker sequence is required.`);
+  if (!/^[ACGT]+$/.test(linker))
+    throw new Error(`scFv parent ${c.parentId}: the linker must be plain nucleotides (A/C/G/T).`);
+  if (c.regions.length !== 2)
+    throw new Error(`scFv parent ${c.parentId}: needs exactly two domains (heavy and light).`);
+  const seq = parentSeqs.get(c.parentId);
+  if (seq === undefined)
+    throw new Error(
+      `scFv parent ${c.parentId}: paste the parent sequence — the scFv scheme locates the linker in it.`,
+    );
+  const idx = seq.indexOf(linker);
+  if (idx < 0)
+    throw new Error(`scFv parent ${c.parentId}: the linker was not found in the parent sequence.`);
+  if (seq.indexOf(linker, idx + 1) >= 0)
+    throw new Error(
+      `scFv parent ${c.parentId}: the linker occurs more than once — it must be unique in the parent.`,
+    );
+  const firstLen = idx;
+  const secondLen = seq.length - idx - linker.length;
+  if (firstLen <= 0 || secondLen <= 0)
+    throw new Error(
+      `scFv parent ${c.parentId}: the linker leaves no sequence for one of the two domains.`,
+    );
+  const [first, second] = c.regions;
+  // Both domains must be chain-tagged with distinct chains, else the run exports no heavy/light
+  // tags and no paired-receptor identity. The chain-set validity (one receptor) is checked later.
+  if (!first.chain || !second.chain || first.chain === second.chain)
+    throw new Error(
+      `scFv parent ${c.parentId}: tag the two domains with distinct chains (for example IG Heavy and IG Light).`,
+    );
+  return {
+    parentId: c.parentId,
+    scheme: "custom",
+    regions: [
+      { name: first.name, length: firstLen, chain: first.chain, autoDetect: true },
+      { name: "Linker", length: linker.length, ignored: true },
+      { name: second.name, length: secondLen, chain: second.chain, autoDetect: true },
+    ],
+  };
+}
+
+/** Refuses a chain set that is neither one chain nor one two-chain receptor. A
+ *  profiler vdj run keys one chain (`resolution: chain`) or one paired receptor
+ *  such as an scFv (`resolution: receptor`). Two chains must share a receptor. */
+export function validateChainSet(chainIds: ChainId[]): void {
+  const ids = [...new Set(chainIds)];
+  if (ids.length <= 1) return;
+  if (ids.length > 2)
+    throw new Error(
+      `A run keys one chain or one paired receptor, but its regions span ${ids.length} chains. ` +
+        "Split the parents by chain into separate runs.",
+    );
+  const receptors = new Set(ids.map((id) => CHAIN_RECEPTOR[id]));
+  if (receptors.size > 1)
+    throw new Error(
+      "A paired run's two chains must belong to one receptor " +
+        "(for example IG Heavy and IG Light). Split the parents by receptor.",
+    );
 }
 
 /** A resolved span in the parent's own nucleotide frame. `children`, when present,
  *  tile the span exactly; their offsets are absolute in the same frame, so every span
  *  in the overlay is read the same way. */
-type Span = { name: string; begin: number; end: number; children?: Span[] };
+type Span = {
+  name: string;
+  begin: number;
+  end: number;
+  ignored?: boolean;
+  autoDetect?: boolean;
+  children?: Span[];
+};
 
 /** Builds the `--parent-regions` overlay JSON (offsets cumulative from region
  *  lengths) consumed by mitool and re-parsed by the workflow. Returns undefined
@@ -155,8 +348,27 @@ export function buildParentRegionsJson(
       const begin = pos;
       pos += r.length;
       const end = pos;
-      if (!r.children?.length) return { name, begin, end };
+      // `ignored` / `autoDetect` are emitted only when true, so an existing config without
+      // either produces a byte-identical overlay and its cached run still matches.
+      const span: Span = { name, begin, end };
+      if (r.ignored) span.ignored = true;
+      if (r.autoDetect) {
+        if (r.ignored)
+          throw new Error(
+            `Region '${name}' (parent ${c.parentId}) is ignored and cannot be auto-detected.`,
+          );
+        if (r.children?.length)
+          throw new Error(
+            `Region '${name}' (parent ${c.parentId}) is auto-detected and cannot have sub-regions.`,
+          );
+        span.autoDetect = true;
+      }
+      if (!r.children?.length) return span;
 
+      if (r.ignored)
+        throw new Error(
+          `Region '${name}' (parent ${c.parentId}) is ignored and cannot have sub-regions.`,
+        );
       // Sub-regions run on the same cumulative rule, seeded at their region's begin.
       // Tiling then reduces to one check: the lengths must add up to the region's own.
       let childPos = begin;
@@ -164,14 +376,17 @@ export function buildParentRegionsJson(
         const childName = checked(child);
         const childBegin = childPos;
         childPos += child.length;
-        return { name: childName, begin: childBegin, end: childPos };
+        const childSpan: Span = { name: childName, begin: childBegin, end: childPos };
+        if (child.ignored) childSpan.ignored = true;
+        return childSpan;
       });
       if (childPos !== end)
         throw new Error(
           `Sub-regions of '${name}' (parent ${c.parentId}) must tile it exactly: they total ` +
             `${childPos - begin} nt, but '${name}' is ${end - begin} nt.`,
         );
-      return { name, begin, end, children };
+      span.children = children;
+      return span;
     });
 
     // `vdj` and `custom` both carry a free region list, so both need at least one region.
@@ -235,6 +450,12 @@ export type BlockData = {
   // workflow (repseqio) — the manual per-parent region editor is hidden and
   // `parentRegions` is not projected. All-or-nothing; no mixing with manual schemes.
   vdjAutoDetect?: boolean;
+
+  // The immune chain the run's variants belong to, under the `vdj` scheme. Optional:
+  // unset = `vdj` with the chain unresolved (the behaviour before this field existed).
+  // Set = the variant axis carries vdj/chain, with the receptor and recombination
+  // derived from it. Ignored under `amplicon`. See variantScopeDomain in the workflow.
+  chain?: ChainId;
 
   // Optional known-variant set(s) — TSV with arbitrary headers, nt and/or aa.
   // May supply one, both, or neither. The columns are user-mapped (the format
@@ -379,6 +600,20 @@ export type BlockArgs = {
   // parent's FR1–FR4 from germline (repseqio) and builds the `--parent-regions`
   // overlay itself. Absent/false = use the manual `parentRegionsJson`.
   vdjAutoDetect?: boolean;
+  // Per-domain germline auto-detect (an scFv run): the overlay JSON built from
+  // parentRegions, carrying each region's `autoDetect` flag. The workflow's split/assemble
+  // subdivide the flagged V-domains by germline and write the real mitool overlay. Absent
+  // unless a region asks for auto-detect. Mutually exclusive with vdjAutoDetect.
+  autoRegionScheme?: string;
+  // The run's chain under the vdj scheme; undefined = unresolved. The workflow
+  // turns it into the vdj axis tree (variantScopeDomain). Ignored under amplicon.
+  // Superseded by regionChains when any region carries a chain (an scFv run).
+  chain?: ChainId;
+  // Per-region chain ids for an scFv construct: region name -> chain id. The
+  // workflow reads it to build the receptor axis and to tag each region column with
+  // its vdj/chain. Absent when no region is chain-tagged. Not in the mitool overlay
+  // (mitool would reject an unknown field) — a separate channel.
+  regionChains?: Record<string, ChainId>;
   knownNtFileHandle?: ImportFileHandle;
   knownAaFileHandle?: ImportFileHandle;
   // User-mapped known-set columns. ID/Sequence names go to mitool's
@@ -443,8 +678,16 @@ type BlockDataV10 = Omit<BlockDataV12, "filterNonProductive">;
  *  discrete chart reads. */
 type BlockDataV11 = BlockDataV12;
 type BlockDataV12 = Omit<BlockData, "subtitleLabel"> & { defaultBlockLabel?: string };
+// The shape v14 reads. These three fields reached `.init()` after some projects were created, so a
+// project carried up to v13 can still lack them; mark them optional here so the v14 migration can
+// backfill them.
+type LateInitFields =
+  | "graphStateMutationHistogram"
+  | "graphStateStateHeatmap"
+  | "knownVariantsNtTableState";
+type BlockDataV13 = Omit<BlockData, LateInitFields> & Partial<Pick<BlockData, LateInitFields>>;
 
-const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
+export const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
   template: "bar",
   currentTab: null,
@@ -461,7 +704,7 @@ const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   },
 };
 
-const DEFAULT_STATE_HEATMAP_GRAPH_STATE: GraphMakerState = {
+export const DEFAULT_STATE_HEATMAP_GRAPH_STATE: GraphMakerState = {
   // Fuller than the sidebar label ("Residue Composition"): this one shows on the
   // chart itself and in exports, where "per-position" is what stops a pooled
   // marginal being read as a per-mutation effect map.
@@ -577,9 +820,21 @@ const dataModel = new DataModelBuilder({ kind })
   })
   // `defaultBlockLabel` held only the selected dataset's name, so it carries over
   // to the subtitle unchanged.
-  .migrate<BlockData>("v13", ({ defaultBlockLabel, ...rest }) => ({
+  .migrate<BlockDataV13>("v13", ({ defaultBlockLabel, ...rest }) => ({
     ...rest,
     subtitleLabel: defaultBlockLabel,
+  }))
+  // The graph/table fields were added to `.init()` after some projects were created. Such a
+  // project is stamped at an earlier version with them absent, and a project already at the
+  // latest version runs no migration until a newer one exists — so GraphMaker was handed an
+  // undefined state and threw. Backfill here; a project that already has them keeps its values.
+  .migrate<BlockData>("v14", (v13) => ({
+    ...v13,
+    graphStateMutationHistogram: v13.graphStateMutationHistogram ?? {
+      ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE,
+    },
+    graphStateStateHeatmap: v13.graphStateStateHeatmap ?? { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
+    knownVariantsNtTableState: v13.knownVariantsNtTableState ?? createPlDataTableStateV2(),
   }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
@@ -594,6 +849,7 @@ const dataModel = new DataModelBuilder({ kind })
     parentSequence: params?.parentSequence,
     parentRegions: params?.parentRegions,
     vdjAutoDetect: params?.vdjAutoDetect ?? false,
+    chain: params?.chain,
     exportNt: params?.exportNt ?? false,
     exportOnlyKnown: params?.exportOnlyKnown,
     exportStateMatrix: params?.exportStateMatrix ?? true,
@@ -1173,6 +1429,62 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
         : candidates;
     };
 
+    // Parent sequences (pasted FASTA only; an uploaded file is read at run time). The scFv
+    // scheme needs them to locate its linker, and they also give the parent lengths that
+    // bound the region offsets.
+    const parentSeqs = new Map(
+      data.parentInputMode === "fastaSequence"
+        ? parseParentFasta(data.parentSequence).map((p) => [p.id, p.sequence])
+        : [],
+    );
+    const parentLengths =
+      parentSeqs.size > 0 ? new Map([...parentSeqs].map(([id, s]) => [id, s.length])) : undefined;
+    // The scFv scheme is sugar: expand it into the equivalent auto-detect config (heavy +
+    // ignored linker + light, each germline-detected) and run everything else unchanged.
+    // Whole-dataset auto-detect ignores manual schemes, so skip expansion then — a saved scFv
+    // config with a stale linker must not throw after the user hides the manual editor.
+    const resolvedRegions = data.vdjAutoDetect
+      ? undefined
+      : expandScfvConfigs(data.parentRegions, parentSeqs);
+    // Whole-dataset `vdjAutoDetect` suppresses the overlay entirely (the workflow infers
+    // every parent). Otherwise the overlay is built from the resolved regions, and serves
+    // either mitool directly (manual) or the Python split/assemble as the germline scheme.
+    const parentRegionsOverlay = data.vdjAutoDetect
+      ? undefined
+      : buildParentRegionsJson(resolvedRegions, parentLengths);
+    // Per-domain germline auto-detect (an scFv run), distinct from whole-dataset vdjAutoDetect.
+    const autoDetectActive = !data.vdjAutoDetect && hasAutoDetectRegion(resolvedRegions);
+
+    // scFv / chain tags. Region tags supersede the single run-level chain. Whole-dataset
+    // germline auto-detect carries none; per-domain auto-detect expands each tagged domain
+    // to its seven FR/CDR column names. Validate the chain set here so an invalid
+    // combination disables Run with a message (the O2 gate).
+    const regionChains = data.vdjAutoDetect ? {} : buildRegionChains(resolvedRegions);
+    const hasRegionChains = Object.keys(regionChains).length > 0;
+    // The run-level chain belongs to whole-dataset auto-detect only; its control is hidden
+    // otherwise. A manual run sets the chain per parent (regionChains). Ignore a stale value so
+    // a plain custom or amplicon run never picks up an immune chain from a hidden setting.
+    const runChain = data.vdjAutoDetect ? data.chain : undefined;
+    const effectiveChainIds = hasRegionChains
+      ? Object.values(regionChains)
+      : runChain
+        ? [runChain]
+        : [];
+    validateChainSet(effectiveChainIds);
+    // A paired-construct axis (two chains) is only correct when one parent carries both chains —
+    // an scFv. Two single-chain parents are separate molecules, not a construct; labelling the
+    // run as paired would mislead every downstream block that reads the axis instead of the data.
+    const distinctChains = new Set(effectiveChainIds);
+    if (
+      hasRegionChains &&
+      distinctChains.size === 2 &&
+      !chainSetsByParent(resolvedRegions).some((s) => s.length === 2)
+    )
+      throw new Error(
+        "This run has two chains, but no single parent carries both. A paired construct (scFv) " +
+          "has both chains in one parent. Split the parents by chain into separate runs.",
+      );
+
     return {
       input: data.input,
       tagPattern,
@@ -1185,17 +1497,21 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       // Suppress the inactive mode's field so the staleness gate ignores it.
       parentSequence: data.parentInputMode === "fastaSequence" ? data.parentSequence : undefined,
       parentFileHandle: data.parentInputMode === "fastaFile" ? data.parentFileHandle : undefined,
-      // vdjAutoDetect overrides the manual overlay: the workflow infers all parents'
-      // regions from germline, so the manual parentRegions projection is suppressed.
-      parentRegionsJson: data.vdjAutoDetect
-        ? undefined
-        : buildParentRegionsJson(
-            data.parentRegions,
-            data.parentInputMode === "fastaSequence"
-              ? new Map(parseParentFasta(data.parentSequence).map((p) => [p.id, p.sequence.length]))
-              : undefined,
-          ),
+      // The overlay mitool reads directly. Suppressed when the workflow builds it: both
+      // whole-dataset vdjAutoDetect and per-domain scFv auto-detect produce it at run time.
+      parentRegionsJson: autoDetectActive ? undefined : parentRegionsOverlay,
+      // The germline scheme for the per-domain scFv path. It is the same overlay JSON, but
+      // carries the autoDetect flags the workflow's split/assemble read; the workflow then
+      // writes the real mitool overlay. Suppressed otherwise, so a non-scFv run is byte-identical.
+      autoRegionScheme: autoDetectActive ? parentRegionsOverlay : undefined,
       vdjAutoDetect: data.vdjAutoDetect ? true : undefined,
+      // The workflow applies chain only under modality vdj; it is ignored under
+      // amplicon. undefined = the vdj run leaves the chain unresolved. Suppressed when
+      // region tags are present (an scFv run), which supersede it.
+      chain: hasRegionChains ? undefined : runChain,
+      // Per-region chain tags (scFv). Emitted only when a region is tagged, so a
+      // non-scFv run's args stay byte-identical to before this field.
+      regionChains: hasRegionChains ? regionChains : undefined,
       knownNtFileHandle: data.knownNtFileHandle,
       knownAaFileHandle: data.knownAaFileHandle,
       // Column mapping per level — suppressed when the level's file is absent.
@@ -1261,6 +1577,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     parentSequence: data.parentSequence,
     parentRegions: data.parentRegions,
     vdjAutoDetect: data.vdjAutoDetect,
+    chain: data.chain,
     exportNt: data.exportNt,
     exportOnlyKnown: data.exportOnlyKnown,
     exportStateMatrix: data.exportStateMatrix,

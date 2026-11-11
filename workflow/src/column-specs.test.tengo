@@ -1,0 +1,146 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+cs := import(":column-specs")
+
+BLOCK := "block-7a2e"
+
+TestVariantScopeAmpliconHasNoVdjTree := func() {
+	d := cs.variantScopeDomain(BLOCK, "amplicon", [])
+	test.isEqual(BLOCK, d["pl7.app/blockId"])
+	test.isEqual("amplicon", d["pl7.app/modality"])
+	test.isEqual("derived", d["pl7.app/identitySource"])
+	test.isEqual(true, is_undefined(d["pl7.app/vdj/resolution"]))
+}
+
+TestVariantScopeVdjUnresolvedWhenNoChain := func() {
+	d := cs.variantScopeDomain(BLOCK, "vdj", [])
+	test.isEqual("unresolved", d["pl7.app/vdj/resolution"])
+	test.isEqual("VDJRegion~", d["pl7.app/vdj/identityComponents"])
+	test.isEqual(true, is_undefined(d["pl7.app/vdj/receptor"]))
+	test.isEqual(true, is_undefined(d["pl7.app/vdj/chain"]))
+}
+
+TestVariantScopeSingleChain := func() {
+	d := cs.variantScopeDomain(BLOCK, "vdj", ["IGHeavy"])
+	test.isEqual("chain", d["pl7.app/vdj/resolution"])
+	test.isEqual("Heavy", d["pl7.app/vdj/chain"])
+	test.isEqual("IG", d["pl7.app/vdj/receptor"])
+	test.isEqual("VDJRegion~", d["pl7.app/vdj/identityComponents"])
+	test.isEqual(true, is_undefined(d["pl7.app/vdj/pairing"]))
+}
+
+TestVariantScopeScFvReceptor := func() {
+	d := cs.variantScopeDomain(BLOCK, "vdj", ["IGHeavy", "IGLight"])
+	test.isEqual("receptor", d["pl7.app/vdj/resolution"])
+	test.isEqual("construct", d["pl7.app/vdj/pairing"])
+	test.isEqual("IG", d["pl7.app/vdj/receptor"])
+	test.isEqual("Heavy+Light", d["pl7.app/vdj/receptorChains"])
+	test.isEqual("VDJRegion~;VDJRegion~", d["pl7.app/vdj/identityComponents"])
+	// The whole receptor is one key, so no single chain sits on the axis.
+	test.isEqual(true, is_undefined(d["pl7.app/vdj/chain"]))
+}
+
+TestReceptorFollowsFromChainId := func() {
+	test.isEqual("TCRAB", cs.variantScopeDomain(BLOCK, "vdj", ["TCRBeta"])["pl7.app/vdj/receptor"])
+	test.isEqual("TCRGD", cs.variantScopeDomain(BLOCK, "vdj", ["TCRDelta"])["pl7.app/vdj/receptor"])
+}
+
+TestRecombinationOnSingleChainAxis := func() {
+	heavy := cs.variantKeyAxisSpec(cs.variantScopeDomain(BLOCK, "vdj", ["IGHeavy"]), "nucleotide", "V")
+	test.isEqual("VDJ", heavy.spec.annotations["pl7.app/vdj/chain/recombination"])
+	light := cs.variantKeyAxisSpec(cs.variantScopeDomain(BLOCK, "vdj", ["IGLight"]), "nucleotide", "V")
+	test.isEqual("VJ", light.spec.annotations["pl7.app/vdj/chain/recombination"])
+}
+
+TestNoRecombinationOnReceptorAxis := func() {
+	a := cs.variantKeyAxisSpec(cs.variantScopeDomain(BLOCK, "vdj", ["IGHeavy", "IGLight"]), "nucleotide", "V")
+	test.isEqual(true, is_undefined(a.spec.annotations["pl7.app/vdj/chain/recombination"]))
+}
+
+TestRegionColumnScFvUsesAmpliconNamespaceWithChain := func() {
+	// An scFv auto-detect domain names its columns <domain>_<canonical>. The column stays in the
+	// amplicon namespace (pl7.app/sequence) with the canonical feature VALUE (CDR3); both chains
+	// carry the same feature and are told apart by pl7.app/vdj/chain. The label shows "Heavy CDR3".
+	cols := cs.regionSeqColumns("aminoacid", ["VH_CDR3", "VL_CDR3"], { VH_CDR3: "IGHeavy", VL_CDR3: "IGLight" })
+	vh := cols[0].spec
+	vl := cols[1].spec
+	test.isEqual("pl7.app/sequence", vh.name)
+	test.isEqual("CDR3", vh.domain["pl7.app/feature"])
+	test.isEqual("Heavy", vh.domain["pl7.app/vdj/chain"])
+	test.isEqual("VDJ", vh.annotations["pl7.app/vdj/chain/recombination"])
+	test.isEqual("Heavy CDR3 aa", vh.annotations["pl7.app/label"])
+	test.isEqual("pl7.app/sequence", vl.name)
+	test.isEqual("CDR3", vl.domain["pl7.app/feature"])
+	test.isEqual("Light", vl.domain["pl7.app/vdj/chain"])
+	test.isEqual("Light CDR3 aa", vl.annotations["pl7.app/label"])
+	// Both chains share the feature; pl7.app/vdj/chain is the distinguisher. No scClonotypeChain.
+	test.isEqual(true, vh.domain["pl7.app/vdj/chain"] != vl.domain["pl7.app/vdj/chain"])
+	test.isEqual(true, is_undefined(vh.domain["pl7.app/vdj/scClonotypeChain"]))
+}
+
+TestRegionColumnUntaggedIsGenericSequence := func() {
+	// An untagged (amplicon) region keeps the generic convention: pl7.app/sequence keyed
+	// by pl7.app/feature = the region name, with no chain.
+	cols := cs.regionSeqColumns("nucleotide", ["CDR3"], undefined)
+	s := cols[0].spec
+	test.isEqual("pl7.app/sequence", s.name)
+	test.isEqual("CDR3", s.domain["pl7.app/feature"])
+	test.isEqual(true, is_undefined(s.domain["pl7.app/vdj/chain"]))
+	test.isEqual(true, is_undefined(s.domain["pl7.app/vdj/scClonotypeChain"]))
+}
+
+TestRegionColumnWholeDomainIsVdjRegion := func() {
+	// An auto-detect V-domain container (VH / VL) carries feature VDJRegion (the reference's value).
+	// It is recognised by its canonical children (VH_FR1…) in the same list; both chains share the
+	// feature and are told apart by pl7.app/vdj/chain. The label shows "Heavy VDJRegion".
+	heavy := cs.regionSeqColumns("aminoacid", ["VH", "VH_FR1"], { VH: "IGHeavy", VH_FR1: "IGHeavy" })
+	test.isEqual("pl7.app/sequence", heavy[0].spec.name)
+	test.isEqual("VDJRegion", heavy[0].spec.domain["pl7.app/feature"])
+	test.isEqual("Heavy", heavy[0].spec.domain["pl7.app/vdj/chain"])
+	test.isEqual("Heavy VDJRegion aa", heavy[0].spec.annotations["pl7.app/label"])
+	test.isEqual("FR1", heavy[1].spec.domain["pl7.app/feature"])
+	light := cs.regionSeqColumns("aminoacid", ["VL", "VL_FR1"], { VL: "IGLight", VL_FR1: "IGLight" })
+	test.isEqual("VDJRegion", light[0].spec.domain["pl7.app/feature"])
+	test.isEqual("Light", light[0].spec.domain["pl7.app/vdj/chain"])
+	test.isEqual("Light VDJRegion aa", light[0].spec.annotations["pl7.app/label"])
+}
+
+TestRegionColumnBareCanonicalKeepsOwnFeature := func() {
+	// A manual vdj parent names its regions with bare canonical names (FR1, CDR1, …) and tags the
+	// parent's chain. Each must keep its own feature, not collapse to VDJRegion, so the columns stay
+	// distinct. A custom chain-tagged name keeps its own name as the feature.
+	cols := cs.regionSeqColumns("nucleotide", ["FR1", "CDR1", "myregion"],
+		{ FR1: "IGHeavy", CDR1: "IGHeavy", myregion: "IGHeavy" })
+	test.isEqual("FR1", cols[0].spec.domain["pl7.app/feature"])
+	test.isEqual("CDR1", cols[1].spec.domain["pl7.app/feature"])
+	test.isEqual("myregion", cols[2].spec.domain["pl7.app/feature"])
+	test.isEqual("Heavy", cols[0].spec.domain["pl7.app/vdj/chain"])
+}
+
+// Finds the whole-variant "sequence" column in an aggregatedColumns result.
+seqCol := func(cols) {
+	for c in cols {
+		if c.id == "sequence" {
+			return c
+		}
+	}
+	return undefined
+}
+
+TestWholeSequenceLabelScFv := func() {
+	// A two-chain IG construct names the whole-variant sequence "scFv sequence", matching
+	// mixcr-scfv-clonotyping.
+	cols := cs.aggregatedColumns("aminoacid", true, [], undefined, false, {}, ["IGHeavy", "IGLight"])
+	test.isEqual("scFv sequence aa", seqCol(cols).spec.annotations["pl7.app/label"])
+}
+
+TestWholeSequenceLabelCompleteFeatureWins := func() {
+	// A per-parent complete feature (a single V-domain) wins over the scFv fallback.
+	cols := cs.aggregatedColumns("nucleotide", false, [], "VDJRegion", false, {}, ["IGHeavy"])
+	test.isEqual("VDJRegion nt", seqCol(cols).spec.annotations["pl7.app/label"])
+}
+
+TestWholeSequenceLabelGeneric := func() {
+	// No complete feature and not a two-chain construct → the generic "Sequence".
+	cols := cs.aggregatedColumns("aminoacid", true, [], undefined, false, {}, [])
+	test.isEqual("Sequence aa", seqCol(cols).spec.annotations["pl7.app/label"])
+}

@@ -2,8 +2,8 @@
 
 Two file-content steps that bracket repseqio (which does the germline inference):
 
-  split    parent FASTA -> per-parent V-half / J-half FASTA (+ split offsets),
-           cutting each parent at mid-CDR3. Mirrors the mixcr-amplicon-alignment
+  split    parent FASTA -> per-domain V-half / J-half FASTA (+ split offsets),
+           cutting each domain at mid-CDR3. Mirrors the mixcr-amplicon-alignment
            client-side `parseFasta.ts` split so repseqio sees clean V and J genes.
 
   assemble repseqio's compiled library (anchor points) + the split offsets ->
@@ -11,8 +11,24 @@ Two file-content steps that bracket repseqio (which does the germline inference)
            whole parent (V anchors as-is; J anchors shifted by the split offset;
            CDR3 = the span between the V-side CDR3Begin and the shifted FR4Begin).
 
-Fail-fast (per-parent, named) when a parent's CDR3 motif isn't found or repseqio
-did not place the required anchors — the run stops rather than mis-annotating.
+Two modes:
+
+  No `--scheme`: the whole parent is one V-domain. The overlay names its regions
+  FR1..FR4 on the `vdj` scheme with a `VDJRegion` complete feature. This is the
+  whole-dataset `vdjAutoDetect` path.
+
+  With `--scheme` (per-parent region list, each region's `autoDetect` / `ignored`
+  flagged): only the auto-detect V-domains are subdivided by germline. Each one becomes
+  a container region (the whole-domain VH / VL sequence column) whose FR/CDR children,
+  reassembled inside that domain's own span (anchors shifted by the domain's parent
+  offset) and prefixed with the domain name (`VH_FR1`…), tile it exactly. Non-auto
+  regions (manual spans, ignored linkers/hinges) pass through as drawn. The overlay uses
+  the `custom` scheme with no complete feature — an scFv construct spans two chains, so
+  there is no single whole-variant feature. This is the per-domain scFv path. Chain is
+  not in the overlay (mitool's reader rejects unknown fields); the model carries it.
+
+Fail-fast (per-domain, named) when a CDR3 motif isn't found or repseqio did not place
+the required anchors — the run stops rather than mis-annotating.
 """
 
 import argparse
@@ -46,6 +62,11 @@ SEARCH_START_AA = 80
 # germline-contribution markers we don't need for the region partition.
 V_REQUIRED = ["FR1Begin", "CDR1Begin", "FR2Begin", "CDR2Begin", "FR3Begin", "CDR3Begin"]
 J_REQUIRED = ["FR4Begin", "FR4End"]
+
+# The seven canonical FR/CDR names, in order. The model (buildRegionChains) and the
+# workflow (region-config scfvAuto) expand the same list with the same `<domain>_<name>`
+# prefix, so the scFv column names, their chain tags and this overlay all agree.
+VDJ_REGIONS_NAMES = ["FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
 
 
 def die(msg):
@@ -85,7 +106,7 @@ def parse_fasta(text):
     return records
 
 
-def split_parent(pid, seq):
+def split_domain(label, seq):
     """Return (v_seq, j_seq, split_offset). Raise on a missing/short CDR3 motif."""
     clean = re.sub(r"[^ACGT]", "N", seq.upper().replace(" ", ""))  # IUPAC/unknown -> N
     # repseqio fromFasta rejects wildcard nucleotides, so N -> A for the gene sequences
@@ -94,7 +115,7 @@ def split_parent(pid, seq):
     aa = translate(clean)
     m = MOTIF.search(aa[SEARCH_START_AA:])
     if not m:
-        die(f"parent '{pid}': CDR3 motif not found (not a canonical V-domain?). "
+        die(f"{label}: CDR3 motif not found (not a canonical V-domain?). "
             f"Turn off VDJ auto-detect and annotate this dataset manually.")
     pattern_start = SEARCH_START_AA + m.start()
     cdr3_aa_len = len(m.group(1)) + 1  # include leading Cys
@@ -104,10 +125,81 @@ def split_parent(pid, seq):
     return no_n[:v_end], no_n[v_end:], v_end
 
 
+# An anchor is "placed" only if present AND non-negative: repseqio inferPoints run with
+# --force leaves a key present with value -1 when it can't confidently place that point,
+# which would otherwise slip past a bare presence check and surface later as a misleading
+# "not codon-aligned" error.
+def placed(anchors, keys):
+    return anchors is not None and all(k in anchors and int(anchors[k]) >= 0 for k in keys)
+
+
+def missing(anchors, keys):
+    if anchors is None:
+        return list(keys)
+    return [k for k in keys if k not in anchors or int(anchors[k]) < 0]
+
+
+def domain_regions(label, v, j, v_len, shift):
+    """FR1..FR4 for one V-domain, in parent coordinates. [v]/[j] are the domain's V/J
+    anchor maps (J in the J-half frame, so offset by [v_len]); [shift] moves the whole
+    domain into the parent frame. Every region must be codon-aligned at frame 0 — mitool
+    emits aaSeq{region} only then, and the block declares all FR/CDR aa columns
+    statically — so a misframed span fails here rather than dropping a column at import."""
+    if not placed(v, V_REQUIRED) or not placed(j, J_REQUIRED):
+        # Name the anchors, so the cause is readable. A missing V anchor usually means the
+        # domain really is an engineered scaffold. A missing J anchor more often means the
+        # J half scored below the inferPoints threshold, which is easy to retune.
+        gaps = ([f"V:{k}" for k in missing(v, V_REQUIRED)]
+                + [f"J:{k}" for k in missing(j, J_REQUIRED)])
+        die(f"{label}: germline inference did not place {', '.join(gaps)} "
+            f"(engineered scaffold, or the half scored below the inferPoints threshold). "
+            f"Turn off VDJ auto-detect and annotate manually.")
+    # V anchors start at 0 of the V-half; J anchors shift by the V length. CDR3 spans
+    # CDR3Begin (V) -> FR4Begin (J). Then the whole domain shifts into the parent frame.
+    cdr3_end = v_len + int(j["FR4Begin"])
+    regions = [
+        {"name": "FR1", "begin": int(v["FR1Begin"]), "end": int(v["CDR1Begin"])},
+        {"name": "CDR1", "begin": int(v["CDR1Begin"]), "end": int(v["FR2Begin"])},
+        {"name": "FR2", "begin": int(v["FR2Begin"]), "end": int(v["CDR2Begin"])},
+        {"name": "CDR2", "begin": int(v["CDR2Begin"]), "end": int(v["FR3Begin"])},
+        {"name": "FR3", "begin": int(v["FR3Begin"]), "end": int(v["CDR3Begin"])},
+        {"name": "CDR3", "begin": int(v["CDR3Begin"]), "end": cdr3_end},
+        {"name": "FR4", "begin": cdr3_end, "end": v_len + int(j["FR4End"])},
+    ]
+    for r in regions:
+        r["begin"] += shift
+        r["end"] += shift
+        if r["begin"] % 3 != 0 or r["end"] % 3 != 0:
+            die(f"{label}: region {r['name']} is not codon-aligned "
+                f"([{r['begin']},{r['end']})); VDJ auto-detect needs in-frame parents. "
+                f"Turn it off and annotate this dataset manually.")
+    return regions
+
+
 def write_fasta(path, records):
     with open(path, "w", encoding="utf-8") as fh:
         for name, seq in records:
             fh.write(f">{name}\n{seq}\n")
+
+
+def read_scheme(path):
+    """parentId -> parent dict (regions plus completeFeatureName and any other settings)."""
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return data.get("parents", {})
+
+
+def copy_manual_region(r):
+    """A drawn (non-auto) region passed through verbatim, keeping its ignored flag and any
+    sub-regions — dropping them would lose a manual graft's columns in a run that also
+    auto-detects another parent."""
+    span = {"name": r["name"], "begin": int(r["begin"]), "end": int(r["end"])}
+    if r.get("ignored"):
+        span["ignored"] = True
+    children = r.get("children")
+    if children:
+        span["children"] = [copy_manual_region(c) for c in children]
+    return span
 
 
 def cmd_split(args):
@@ -115,24 +207,49 @@ def cmd_split(args):
         parents = parse_fasta(fh.read())
     if not parents:
         die("no parent sequences found in the input FASTA.")
+
     v_records, j_records, splits = [], [], {}
-    for pid, seq in parents:
-        v_seq, j_seq, offset = split_parent(pid, seq)
-        v_records.append((f"{pid}_Vgene", v_seq))
-        j_records.append((f"{pid}_Jgene", j_seq))
-        splits[pid] = {"vLen": offset}
+    if args.scheme:
+        # scFv: subdivide only the auto-detect domains, each within its own drawn span.
+        # Gene keys are sequential (`g0`, `g1`…) so a parent id with odd characters cannot
+        # collide with repseqio's gene-name parsing; splits.json maps each key back.
+        scheme = read_scheme(args.scheme)
+        by_id = dict(parents)
+        n = 0
+        for pid, ps in scheme.items():
+            seq = by_id.get(pid)
+            if seq is None:
+                die(f"parent '{pid}': in the region scheme but not in the parents FASTA.")
+            for r in ps.get("regions", []):
+                if not r.get("autoDetect"):
+                    continue
+                begin, end = int(r["begin"]), int(r["end"])
+                label = f"parent '{pid}' domain '{r['name']}'"
+                v_seq, j_seq, offset = split_domain(label, seq[begin:end])
+                key = f"g{n}"
+                n += 1
+                v_records.append((f"{key}_Vgene", v_seq))
+                j_records.append((f"{key}_Jgene", j_seq))
+                splits[key] = {"pid": pid, "domain": r["name"], "domainBegin": begin, "vLen": offset}
+        if not splits:
+            die("the region scheme marks no domain for auto-detect.")
+    else:
+        for pid, seq in parents:
+            v_seq, j_seq, offset = split_domain(f"parent '{pid}'", seq)
+            v_records.append((f"{pid}_Vgene", v_seq))
+            j_records.append((f"{pid}_Jgene", j_seq))
+            splits[pid] = {"vLen": offset}
+
     write_fasta(args.v_out, v_records)
     write_fasta(args.j_out, j_records)
     with open(args.splits_out, "w", encoding="utf-8") as fh:
         json.dump(splits, fh)
 
 
-def cmd_assemble(args):
-    with open(args.library, encoding="utf-8") as fh:
+def load_anchors(path):
+    """Compiled library -> (v_anchors, j_anchors), each gene key -> anchor-point map."""
+    with open(path, encoding="utf-8") as fh:
         library = json.load(fh)
-    with open(args.splits, encoding="utf-8") as fh:
-        splits = json.load(fh)
-
     v_anchors, j_anchors = {}, {}
     for entry in library:
         for gene in entry.get("genes", []):
@@ -142,61 +259,62 @@ def cmd_assemble(args):
                 v_anchors[name[:-len("_Vgene")]] = ap
             elif name.endswith("_Jgene"):
                 j_anchors[name[:-len("_Jgene")]] = ap
+    return v_anchors, j_anchors
 
-    # An anchor is "placed" only if present AND non-negative: repseqio inferPoints run
-    # with --force leaves a key present with value -1 when it can't confidently place
-    # that point, which would otherwise slip past a bare presence check and surface
-    # later as a misleading "not codon-aligned" error.
-    def placed(anchors, keys):
-        return anchors is not None and all(k in anchors and int(anchors[k]) >= 0 for k in keys)
 
-    def missing(anchors, keys):
-        if anchors is None:
-            return list(keys)
-        return [k for k in keys if k not in anchors or int(anchors[k]) < 0]
+def cmd_assemble(args):
+    v_anchors, j_anchors = load_anchors(args.library)
+    with open(args.splits, encoding="utf-8") as fh:
+        splits = json.load(fh)
 
-    parents = {}
-    for pid, split in splits.items():
-        offset = int(split["vLen"])
-        v = v_anchors.get(pid)
-        j = j_anchors.get(pid)
-        if not placed(v, V_REQUIRED) or not placed(j, J_REQUIRED):
-            # Name the anchors, so the cause is readable. A missing V anchor usually means the
-            # parent really is an engineered scaffold. A missing J anchor more often means the
-            # J half scored below the inferPoints threshold, which is easy to retune and does
-            # not need the user to give up on auto-detect.
-            gaps = ([f"V:{k}" for k in missing(v, V_REQUIRED)]
-                    + [f"J:{k}" for k in missing(j, J_REQUIRED)])
-            die(f"parent '{pid}': germline inference did not place {', '.join(gaps)} "
-                f"(engineered scaffold, or the half scored below the inferPoints threshold). "
-                f"Turn off VDJ auto-detect and annotate manually.")
-        # V anchors are already in parent coordinates (the V-half starts at 0);
-        # J anchors shift by the split offset. CDR3 spans CDR3Begin (V) -> FR4Begin (J).
-        cdr3_end = offset + int(j["FR4Begin"])
-        regions = [
-            {"name": "FR1", "begin": int(v["FR1Begin"]), "end": int(v["CDR1Begin"])},
-            {"name": "CDR1", "begin": int(v["CDR1Begin"]), "end": int(v["FR2Begin"])},
-            {"name": "FR2", "begin": int(v["FR2Begin"]), "end": int(v["CDR2Begin"])},
-            {"name": "CDR2", "begin": int(v["CDR2Begin"]), "end": int(v["FR3Begin"])},
-            {"name": "FR3", "begin": int(v["FR3Begin"]), "end": int(v["CDR3Begin"])},
-            {"name": "CDR3", "begin": int(v["CDR3Begin"]), "end": cdr3_end},
-            {"name": "FR4", "begin": cdr3_end, "end": offset + int(j["FR4End"])},
-        ]
-        # Every region must be codon-aligned (frame 0): mitool emits aaSeq{region}
-        # only when begin%3==0 && end%3==0, and the block declares all seven aa
-        # region columns statically (it can't see these offsets at graph-build time).
-        # A non-aligned region (out-of-frame parent / junction) would make mitool
-        # drop that aaSeq column and crash the block's import — so fail cleanly here.
-        for r in regions:
-            if r["begin"] % 3 != 0 or r["end"] % 3 != 0:
-                die(f"parent '{pid}': region {r['name']} is not codon-aligned "
-                    f"([{r['begin']},{r['end']})); VDJ auto-detect needs in-frame parents. "
-                    f"Turn it off and annotate this dataset manually.")
-        parents[pid] = {
-            "scheme": "vdj",
-            "completeFeatureName": "VDJRegion",
-            "regions": regions,
-        }
+    if args.scheme:
+        # scFv: each auto-detect domain's FR/CDR reassembled inside its own span (prefixed
+        # with the domain name); every other region passes through as drawn. The `custom`
+        # scheme tolerates the gaps between a germline FR4 and the next drawn region, and
+        # there is no single complete feature across two chains.
+        scheme = read_scheme(args.scheme)
+        domain_key = {(s["pid"], s["domain"]): key for key, s in splits.items()}
+        parents = {}
+        for pid, ps in scheme.items():
+            out = []
+            for r in ps.get("regions", []):
+                if r.get("autoDetect"):
+                    key = domain_key.get((pid, r["name"]))
+                    if key is None:
+                        die(f"parent '{pid}' domain '{r['name']}': no split record "
+                            f"(the split step did not emit this domain).")
+                    s = splits[key]
+                    label = f"parent '{pid}' domain '{r['name']}'"
+                    sub = domain_regions(label, v_anchors.get(key), j_anchors.get(key),
+                                         int(s["vLen"]), int(s["domainBegin"]))
+                    # The domain is one container region (the whole-domain VH / VL sequence
+                    # column) holding its FR/CDR as children, prefixed and unique across the
+                    # parent. The children tile the container exactly, which mitool requires.
+                    children = [{"name": f"{r['name']}_{g['name']}",
+                                 "begin": g["begin"], "end": g["end"]} for g in sub]
+                    out.append({"name": r["name"],
+                                "begin": children[0]["begin"], "end": children[-1]["end"],
+                                "children": children})
+                else:
+                    out.append(copy_manual_region(r))
+            parent_obj = {"scheme": "custom", "regions": out}
+            # Keep a manual parent's whole-feature name so mitool still emits its whole-variant
+            # column; an scFv parent has none (its two domains span two chains).
+            af = ps.get("completeFeatureName")
+            if af:
+                parent_obj["completeFeatureName"] = af
+            parents[pid] = parent_obj
+    else:
+        parents = {}
+        for pid, split in splits.items():
+            regions = domain_regions(f"parent '{pid}'", v_anchors.get(pid), j_anchors.get(pid),
+                                     int(split["vLen"]), 0)
+            parents[pid] = {
+                "scheme": "vdj",
+                "completeFeatureName": "VDJRegion",
+                "regions": regions,
+            }
+
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump({"version": 1, "parents": parents}, fh)
 
@@ -210,12 +328,14 @@ def main():
     p_split.add_argument("--v-out", dest="v_out", required=True)
     p_split.add_argument("--j-out", dest="j_out", required=True)
     p_split.add_argument("--splits-out", dest="splits_out", required=True)
+    p_split.add_argument("--scheme", help="scFv region scheme; subdivide only its auto-detect domains")
     p_split.set_defaults(func=cmd_split)
 
     p_asm = sub.add_parser("assemble", help="compiled library + splits -> mitool overlay JSON")
     p_asm.add_argument("--library", required=True)
     p_asm.add_argument("--splits", required=True)
     p_asm.add_argument("--out", required=True)
+    p_asm.add_argument("--scheme", help="scFv region scheme; pass through non-auto regions")
     p_asm.set_defaults(func=cmd_assemble)
 
     args = parser.parse_args()

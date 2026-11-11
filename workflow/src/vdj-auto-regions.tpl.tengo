@@ -1,17 +1,20 @@
-// VDJ region auto-detection (whole-dataset `vdjAutoDetect`).
+// VDJ region auto-detection. Two callers, one flow:
+//   - whole-dataset `vdjAutoDetect`: no scheme; the whole parent is one V-domain.
+//   - per-domain scFv auto-detect: a `scheme` (the autoRegionScheme JSON) marks which
+//     drawn domains to subdivide; split/assemble read it and leave the rest as drawn.
 //
-// Reuses the mixcr-amplicon-alignment germline flow to infer each parent's FR1–FR4
+// Reuses the mixcr-amplicon-alignment germline flow to infer each domain's FR1–FR4
 // boundaries, then emits the mitool `--parent-regions` overlay JSON:
 //
-//   split (python)   parents.fa            -> vGenes.fasta / jGenes.fasta + splits.json
-//                                             (each parent cut at mid-CDR3)
+//   split (python)   parents.fa (+scheme)  -> vGenes.fasta / jGenes.fasta + splits.json
+//                                             (each domain cut at mid-CDR3)
 //   repseqio         fromFasta V / J -> merge -> inferPoints V(150) / J(20) -> compile
 //                                          -> referenceLibrary.json (with anchor points)
-//   assemble (python) library + splits    -> parents.regions.json (FR1..FR4, VDJRegion)
+//   assemble (python) library + splits (+scheme) -> parents.regions.json
 //
 // Chain is a fixed placeholder (`IGH`, taxon 1111): repseqio inferPoints aligns
 // against the whole built-in reference regardless of chain (finding F1), so the
-// tag never restricts inference. Fail-fast (per parent) lives in the python glue.
+// tag never restricts inference. Fail-fast (per domain) lives in the python glue.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -25,9 +28,12 @@ self.defineOutputs("parentRegionsJson")
 self.body(func(inputs) {
 	parentFastaStr := inputs.parentFastaStr
 	parentFile := inputs.parentFile
+	// scFv path: the drawn region scheme, marking which domains to subdivide. Absent for
+	// the whole-dataset path, where the whole parent is one V-domain.
+	scheme := inputs.scheme
 
-	// 1) Split each parent at mid-CDR3 into a V-half and a J-half; record the
-	//    split offset per parent id (splits.json).
+	// 1) Split each V-domain at mid-CDR3 into a V-half and a J-half; record the
+	//    split offset per domain (splits.json).
 	splitBuilder := exec.builder().
 		name("vdj-region-tools split").
 		software(vdjToolsSw).
@@ -45,6 +51,9 @@ self.body(func(inputs) {
 		splitBuilder = splitBuilder.writeFile("parents.fa", parentFastaStr)
 	} else {
 		splitBuilder = splitBuilder.addFile("parents.fa", parentFile)
+	}
+	if !is_undefined(scheme) {
+		splitBuilder = splitBuilder.writeFile("scheme.json", scheme).arg("--scheme").arg("scheme.json")
 	}
 	splitRes := splitBuilder.run()
 	vGenesFasta := splitRes.getFile("vGenes.fasta")
@@ -136,8 +145,9 @@ self.body(func(inputs) {
 		addFile("jGenes.fasta", jGenesFasta).
 		cpu(1).mem("4GiB").run()
 
-	// 3) Reassemble the anchor points onto the whole parent -> mitool overlay JSON.
-	assembleRes := exec.builder().
+	// 3) Reassemble the anchor points onto the parent -> mitool overlay JSON. With a
+	//    scheme, each domain's FR/CDR land inside its drawn span and other regions pass through.
+	assembleBuilder := exec.builder().
 		name("vdj-region-tools assemble").
 		software(vdjToolsSw).
 		arg("assemble").
@@ -148,7 +158,11 @@ self.body(func(inputs) {
 		addFile("splits.json", splitsJson).
 		saveFile("parents.regions.json").
 		printErrStreamToStdout().
-		cpu(1).mem("2GiB").run()
+		cpu(1).mem("2GiB")
+	if !is_undefined(scheme) {
+		assembleBuilder = assembleBuilder.writeFile("scheme.json", scheme).arg("--scheme").arg("scheme.json")
+	}
+	assembleRes := assembleBuilder.run()
 
 	return {
 		parentRegionsJson: assembleRes.getFile("parents.regions.json")
