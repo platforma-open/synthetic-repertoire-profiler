@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.block
 
+## 1.7.1
+
+### Patch Changes
+
+- 5925a19: Update software version
+
 ## 1.7.0
 
 ### Minor Changes

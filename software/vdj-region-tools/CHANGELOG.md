@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.vdj-region-tools
 
+## 1.2.1
+
+### Patch Changes
+
+- 5925a19: Update software version
+
 ## 1.2.0
 
 ### Minor Changes

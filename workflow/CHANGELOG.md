@@ -1,5 +1,12 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.workflow
 
+## 1.7.1
+
+### Patch Changes
+
+- Updated dependencies [5925a19]
+  - @platforma-open/milaboratories.synthetic-repertoire-profiler.vdj-region-tools@1.2.1
+
 ## 1.7.0
 
 ### Minor Changes

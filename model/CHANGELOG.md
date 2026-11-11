@@ -1,5 +1,7 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.model
 
+## 1.7.1
+
 ## 1.7.0
 
 ### Minor Changes
