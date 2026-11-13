@@ -842,6 +842,7 @@ const dataModel = new DataModelBuilder({ kind })
   // optional — a block may be created without a template — so every field keeps
   // its own default.
   .init(({ params }) => ({
+    input: params?.input,
     // Paired-end default; the UI refits it to the dataset's read structure when a
     // dataset is picked (see onSelectInput in SettingsPanel).
     tagPattern: params?.tagPattern ?? DEFAULT_TAG_PATTERN_PAIRED,
@@ -1570,8 +1571,10 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   }))
 
   // The inverse of `init` above: the same fields, so a project exported as a
-  // template and re-applied comes back with the run recipe it went out with.
+  // template and re-applied comes back with the dataset and the run recipe it
+  // went out with.
   .templateParams((data) => ({
+    input: data.input,
     tagPattern: data.tagPattern,
     parentInputMode: data.parentInputMode,
     parentSequence: data.parentSequence,
