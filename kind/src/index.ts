@@ -1,4 +1,6 @@
 import { assertParamsObject, defineBlockKind } from "@platforma-sdk/block-kind";
+import type { PlRef } from "@platforma-sdk/model";
+import { isPlRef } from "@platforma-sdk/model";
 import { name, version } from "../package.json" with { type: "json" };
 
 /** How the user supplies the parent (alignment-reference) sequences. Both modes
@@ -81,10 +83,16 @@ export type ParentRegionConfig = {
  * This block's init-params contract — what a creator or a project template
  * supplies to seed a new instance. A subset of the model's `BlockData`.
  *
- * The subset is the run recipe: the tag pattern, the parent (reference) setup,
- * the export toggles, the mutation and quality gates, the UMI consensus settings,
- * and the per-process resource overrides. A lab that re-profiles the same designed library run after
- * run can pin all of that in a template and only pick the dataset afterwards.
+ * The subset is the dataset the block reads and the run recipe: the tag pattern,
+ * the parent (reference) setup, the export toggles, the mutation and quality gates,
+ * the UMI consensus settings, and the per-process resource overrides.
+ *
+ * `input` is a reference to a dataset of an upstream block. A project template
+ * names its blocks, and a block created from one receives the reference pointing
+ * at the block made from the same entry, so a project made from a template reads
+ * the dataset the original one did. A template written for a library that is
+ * re-profiled run after run may leave `input` out and have the dataset picked
+ * afterwards.
  *
  * Three groups of `BlockData` fields are deliberately left out.
  *
@@ -97,14 +105,16 @@ export type ParentRegionConfig = {
  *   (`known{Nt,Aa}Columns`, the id / sequence / metadata picks, the import
  *   errors) are discovered by reading the uploaded TSV. Without the file there
  *   is nothing for them to refer to.
- * - **View state.** The input ref, the two block labels, the table grid states
- *   and the two graph states. `input` is a `PlRef` into one project's result
- *   pool; the rest exist for the UI alone.
+ * - **View state.** The two block labels, the table grid states and the two
+ *   graph states. They exist for the UI alone.
  *
  * Every field is optional, because a block may be created without a template at
  * all — the model's `init` keeps its own default for each.
  */
 export type BlockParams = {
+  /** The FASTQ dataset to profile: a reference to an upstream block's dataset. */
+  input?: PlRef;
+
   tagPattern?: string;
 
   parentInputMode?: ParentInputMode;
@@ -171,6 +181,7 @@ function parseInitializationParams(value: unknown): BlockParams {
   assertParamsObject(value);
 
   const {
+    input,
     tagPattern,
     parentInputMode,
     parentSequence,
@@ -200,6 +211,8 @@ function parseInitializationParams(value: unknown): BlockParams {
   } = value;
 
   return {
+    input: optionalRef(input, "input"),
+
     tagPattern: optionalString(tagPattern, "tagPattern"),
 
     parentInputMode: optionalEnum(parentInputMode, PARENT_INPUT_MODES, "parentInputMode"),
@@ -240,6 +253,15 @@ function parseInitializationParams(value: unknown): BlockParams {
 function assertObjectAt(value: unknown, at: string): asserts value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new Error(`'${at}' must be an object.`);
+}
+
+function optionalRef(value: unknown, field: string): PlRef | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlRef(value))
+    throw new Error(
+      `'${field}' must be a reference to an upstream dataset, written as { block, name }.`,
+    );
+  return value;
 }
 
 function optionalString(value: unknown, field: string): string | undefined {
