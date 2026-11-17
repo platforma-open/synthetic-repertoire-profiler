@@ -997,7 +997,7 @@ self.body(func(inputs) {
 		ntParentResiduesTsv: exportNtStateMatrix ? analyzeCmd.getFile("out.nt-parent-residues.tsv") : ptResult.getFile("emptyNtParentResidues.tsv"),
 		parentsTsv: analyzeCmd.getFile("out.parents.tsv"),
 		qcRow: ptResult.getFile("qcRow.parquet"),
-		// No sampleId column — processColumn supplies the sample key from the partition.
+		// No sampleId column: the cross-sample concat stamps it from the sample key.
 		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),
 		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet"),
 		aaStateComposition: smResult.getFile("aaStateComposition.parquet"),

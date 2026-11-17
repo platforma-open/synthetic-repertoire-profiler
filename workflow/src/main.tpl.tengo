@@ -34,6 +34,7 @@ aggregateLinkersTpl := assets.importTemplate(":aggregate-linkers")
 aggregateKnownTpl := assets.importTemplate(":aggregate-known")
 processKnownSetTpl := assets.importTemplate(":process-known-set")
 computeQcTpl := assets.importTemplate(":compute-qc")
+concatPerSampleTableTpl := assets.importTemplate(":concat-per-sample-table")
 
 // The per-sample mitool steps take their CPU and memory from :resources; the user
 // overrides perProcessMemGB / perProcessCPUs replace them. Xsv imports carry no
@@ -254,48 +255,27 @@ wf.body(func(args) {
 	ntKnownAxis := columnSpecs.knownVariantKeyAxisSpec(runScope, "nucleotide", "Known variant nt")
 	aaKnownAxis := columnSpecs.knownVariantKeyAxisSpec(runScope, "aminoacid", "Known variant aa")
 
-	// Per-sample Xsv target: axes are the data axes; processColumn prepends the
-	// sampleId partition, yielding [sampleId, …] PARTITIONED by sampleId — the
-	// shape downstream blocks (clonotype-browser) split on. No mem/cpu override —
-	// the import runs an unsized pt.workflow() and is sized from input volume
-	// (see aggregate-sizing).
-	xsvTarget := func(name, path, axes, columns) {
-		return {
-			type: "Xsv",
-			xsvType: "parquet",
-			settings: {
-				axes: axes,
-				columns: columns,
-				storageFormat: "Parquet",
-				partitionKeyLength: 0
-			},
-			name: name,
-			path: [path]
-		}
+	// Per-sample tables, imported once across samples as [sampleId, …] partitioned by
+	// sampleId — the shape downstream blocks (clonotype-browser) split on. Each entry
+	// names the per-sample parquet output and its data axes and columns.
+	perSampleTables := {
+		// Per-variant abundance (nt + aa).
+		ntAbundance: { axes: [ntVariantAxis], columns: columnSpecs.perSampleAbundanceColumns(hasUmi) },
+		aaAbundance: { axes: [aaVariantAxis], columns: columnSpecs.perSampleAbundanceColumns(hasUmi) },
+		// Known-level abundance and synonymous spread. The per-sample parquets are empty
+		// when nothing is assigned; imported only when a known set was supplied.
+		knownNtAbundance: { axes: [ntKnownAxis], columns: columnSpecs.knownAbundanceColumns(hasUmi) },
+		knownAaAbundance: { axes: [aaKnownAxis], columns: columnSpecs.knownAbundanceColumns(hasUmi) },
+		// Declared-member synonymous spread, keyed by the known-aa entity.
+		aaConvergence: { axes: [aaKnownAxis], columns: columnSpecs.convergenceColumns() },
+		// Mutation-load histogram — feeds the in-block plot, not exported.
+		ntMutationHistogram: { axes: [ntMutationCountAxis], columns: columnSpecs.mutationHistogramColumns("nucleotide", hasUmi) },
+		aaMutationHistogram: { axes: [aaMutationCountAxis], columns: columnSpecs.mutationHistogramColumns("aminoacid", hasUmi) },
+		// Residue composition [parentId, position, state] — feeds the in-block heat map,
+		// not exported. Present only when its level's matrix is on.
+		aaStateComposition: { axes: [columnSpecs.parentIdAxisSpec("Parent"), columnSpecs.positionAxisSpec("aminoacid", "Position aa"), columnSpecs.stateAxisSpec("aminoacid")], columns: columnSpecs.stateHeatmapPerSampleColumns("aminoacid", hasUmi) },
+		ntStateComposition: { axes: [columnSpecs.parentIdAxisSpec("Parent"), columnSpecs.positionAxisSpec("nucleotide", "Position nt"), columnSpecs.stateAxisSpec("nucleotide")], columns: columnSpecs.stateHeatmapPerSampleColumns("nucleotide", hasUmi) }
 	}
-	// Per-variant abundance (nt + aa).
-	ntAbundanceXsv := xsvTarget("ntAbundanceXsv", "ntAbundance", [ntVariantAxis], columnSpecs.perSampleAbundanceColumns(hasUmi))
-	aaAbundanceXsv := xsvTarget("aaAbundanceXsv", "aaAbundance", [aaVariantAxis], columnSpecs.perSampleAbundanceColumns(hasUmi))
-	// Known-level per-sample abundance + synonymous spread (always declared;
-	// the per-sample parquets are empty when nothing is assigned — added to the
-	// frame below only when a known set was supplied).
-	knownNtAbundanceXsv := xsvTarget("knownNtAbundanceXsv", "knownNtAbundance", [ntKnownAxis], columnSpecs.knownAbundanceColumns(hasUmi))
-	knownAaAbundanceXsv := xsvTarget("knownAaAbundanceXsv", "knownAaAbundance", [aaKnownAxis], columnSpecs.knownAbundanceColumns(hasUmi))
-	// Declared-member synonymous spread, keyed by the known-aa entity.
-	aaConvergenceXsv := xsvTarget("aaConvergenceXsv", "aaConvergence", [aaKnownAxis], columnSpecs.convergenceColumns())
-	// Per-sample mutation-load histogram — feeds the in-block plot, not exported.
-	ntMutationHistogramXsv := xsvTarget("ntMutationHistogramXsv", "ntMutationHistogram", [ntMutationCountAxis], columnSpecs.mutationHistogramColumns("nucleotide", hasUmi))
-	aaMutationHistogramXsv := xsvTarget("aaMutationHistogramXsv", "aaMutationHistogram", [aaMutationCountAxis], columnSpecs.mutationHistogramColumns("aminoacid", hasUmi))
-	// Per-sample residue composition — feeds the in-block heat map, not exported.
-	compositionXsv := func(level, alphabet, posLabel) {
-		return xsvTarget(level + "StateCompositionXsv", level + "StateComposition", [
-			columnSpecs.parentIdAxisSpec("Parent"),
-			columnSpecs.positionAxisSpec(alphabet, posLabel),
-			columnSpecs.stateAxisSpec(alphabet)
-		], columnSpecs.stateHeatmapPerSampleColumns(alphabet, hasUmi))
-	}
-	aaStateCompositionXsv := compositionXsv("aa", "aminoacid", "Position aa")
-	ntStateCompositionXsv := compositionXsv("nt", "nucleotide", "Position nt")
 
 	// Per-sample step reports (ResourceMap keyed [step, format]; processColumn
 	// prepends sampleId). Feeds the sample report panel (json charts + txt views)
@@ -353,25 +333,24 @@ wf.body(func(args) {
 		fileOutput("paramsJson"),
 		fileOutput("ntAbundance"),
 		fileOutput("aaAbundance"),
-		// Raw per-sample composition files, summed into the pooled heat map.
-		fileOutput("aaStateComposition"),
-		fileOutput("ntStateComposition"),
 		fileOutput("knownDesignedNt"),
 		fileOutput("knownDesignedAa"),
 		fileOutput("aaConvergence"),
 		fileOutput("qcRow"),
 		reportsOutput,
-		ntAbundanceXsv,
-		aaAbundanceXsv,
-		ntMutationHistogramXsv,
-		aaMutationHistogramXsv,
-		aaStateCompositionXsv,
-		ntStateCompositionXsv,
-		knownNtAbundanceXsv,
-		knownAaAbundanceXsv,
-		aaConvergenceXsv,
+		fileOutput("knownNtAbundance"),
+		fileOutput("knownAaAbundance"),
+		fileOutput("ntMutationHistogram"),
+		fileOutput("aaMutationHistogram"),
 		stepLogsOutput
 	]
+	// Residue composition, summed into the pooled heat map: for each level that is on.
+	if exportStateMatrix {
+		targetOutputs = append(targetOutputs, fileOutput("aaStateComposition"))
+	}
+	if exportNtStateMatrix {
+		targetOutputs = append(targetOutputs, fileOutput("ntStateComposition"))
+	}
 	// State matrix, split by position chunk inside the per-sample job: one plain File
 	// output per level per chunk key (see state-matrix-chunks outputName).
 	for chunkKey in smChunks.keys() {
@@ -411,6 +390,26 @@ wf.body(func(args) {
 			metaExtra: { resources: mitoolResources }
 		}
 	)
+
+	// One concat job and one import job per table, whatever the sample count.
+	importPerSampleTable := func(name) {
+		table := perSampleTables[name]
+		concatRun := render.createEphemeral(concatPerSampleTableTpl, {
+			aggMemGB: aggMemGB,
+			tableData: perSampleResults.outputData(name)
+		})
+		return xsv.importFile(
+			concatRun.output("table"),
+			"parquet",
+			{
+				axes: [{ column: "sampleId", spec: inputSpec.axesSpec[0] }] + table.axes,
+				columns: table.columns,
+				storageFormat: "Parquet",
+				partitionKeyLength: 1
+			},
+			{ splitDataAndSpec: true, mem: aggMem }
+		)
+	}
 
 	// Cross-sample / cross-variant properties (nt + aa): one ephemeral reads the
 	// per-sample abundance parquets (totals) + raw variant TSVs (sample-independent
@@ -679,20 +678,12 @@ wf.body(func(args) {
 	// Per-sample abundance ([sampleId, variantKey], partitioned by sampleId) — the
 	// downstream anchor. nt (gated by exportNt) + aa (always).
 	if exportNt {
-		for columnName in perSampleResults.listXsvColumns("ntAbundanceXsv") {
-			variantsPfBuilder.add(
-				"perSampleNt/" + columnName,
-				ntTrace.inject(perSampleResults.outputSpec("ntAbundanceXsv", columnName)),
-				perSampleResults.outputData("ntAbundanceXsv", columnName)
-			)
+		for k, v in importPerSampleTable("ntAbundance") {
+			variantsPfBuilder.add("perSampleNt/" + k, ntTrace.inject(v.spec), v.data)
 		}
 	}
-	for columnName in perSampleResults.listXsvColumns("aaAbundanceXsv") {
-		variantsPfBuilder.add(
-			"perSampleAa/" + columnName,
-			aaTrace.inject(perSampleResults.outputSpec("aaAbundanceXsv", columnName)),
-			perSampleResults.outputData("aaAbundanceXsv", columnName)
-		)
+	for k, v in importPerSampleTable("aaAbundance") {
+		variantsPfBuilder.add("perSampleAa/" + k, aaTrace.inject(v.spec), v.data)
 	}
 	// Per-variant cross-sample columns ([variantKey]): label, sequence, totals,
 	// (aa) ntVariantCount. nt gated by exportNt.
@@ -767,20 +758,16 @@ wf.body(func(args) {
 
 	// --- Mutation-histogram plot frame ----------------------------------------
 	mutationHistogramPfBuilder := pframes.pFrameBuilder()
-	addMutationHistogram := func(prefix, xsvName, trace) {
-		for columnName in perSampleResults.listXsvColumns(xsvName) {
-			mutationHistogramPfBuilder.add(
-				prefix + columnName,
-				trace.inject(perSampleResults.outputSpec(xsvName, columnName)),
-				perSampleResults.outputData(xsvName, columnName)
-			)
+	addMutationHistogram := func(prefix, tableName, trace) {
+		for k, v in importPerSampleTable(tableName) {
+			mutationHistogramPfBuilder.add(prefix + k, trace.inject(v.spec), v.data)
 		}
 	}
 	// aa always; nt only when nt export is on (same gating as the rest of the block).
 	if exportNt {
-		addMutationHistogram("nt/", "ntMutationHistogramXsv", ntTrace)
+		addMutationHistogram("nt/", "ntMutationHistogram", ntTrace)
 	}
-	addMutationHistogram("aa/", "aaMutationHistogramXsv", aaTrace)
+	addMutationHistogram("aa/", "aaMutationHistogram", aaTrace)
 	mutationHistogramPf := mutationHistogramPfBuilder.build()
 
 	// --- Per-position residue composition heat-map frame ----------------------
@@ -832,20 +819,16 @@ wf.body(func(args) {
 	// Per-sample composition cells, [sampleId, parentId, position, state], computed
 	// in each sample's own job. Axes 1-3 match the aggregate map's, so these share the
 	// parent-residue and region tracks added above.
-	addStateComposition := func(prefix, xsvName, trace) {
-		for columnName in perSampleResults.listXsvColumns(xsvName) {
-			stateHeatmapPfBuilder.add(
-				prefix + columnName,
-				trace.inject(perSampleResults.outputSpec(xsvName, columnName)),
-				perSampleResults.outputData(xsvName, columnName)
-			)
+	addStateComposition := func(prefix, tableName, trace) {
+		for k, v in importPerSampleTable(tableName) {
+			stateHeatmapPfBuilder.add(prefix + k, trace.inject(v.spec), v.data)
 		}
 	}
 	if exportStateMatrix {
-		addStateComposition("aaPerSample/", "aaStateCompositionXsv", aaTrace)
+		addStateComposition("aaPerSample/", "aaStateComposition", aaTrace)
 	}
 	if exportNtStateMatrix {
-		addStateComposition("ntPerSample/", "ntStateCompositionXsv", ntTrace)
+		addStateComposition("ntPerSample/", "ntStateComposition", ntTrace)
 	}
 	// Region membership as a second [parentId, position] track. The cross-sample
 	// region table is aa-positioned, so it rides the aa map only. Imported here a
@@ -1000,12 +983,8 @@ wf.body(func(args) {
 				}
 
 				// Known nt× sample abundance.
-				for columnName in perSampleResults.listXsvColumns("knownNtAbundanceXsv") {
-					variantsPfBuilder.add(
-						"knownAbundanceNt/" + columnName,
-						ntTrace.inject(perSampleResults.outputSpec("knownNtAbundanceXsv", columnName)),
-						perSampleResults.outputData("knownNtAbundanceXsv", columnName)
-					)
+				for k, v in importPerSampleTable("knownNtAbundance") {
+					variantsPfBuilder.add("knownAbundanceNt/" + k, ntTrace.inject(v.spec), v.data)
 				}
 			}
 
@@ -1059,19 +1038,11 @@ wf.body(func(args) {
 		}
 		// Known aa× sample abundance + synonymous-spread QC ([sampleId,
 		// variantKey(aa)]).
-		for columnName in perSampleResults.listXsvColumns("knownAaAbundanceXsv") {
-			variantsPfBuilder.add(
-				"knownAbundanceAa/" + columnName,
-				aaTrace.inject(perSampleResults.outputSpec("knownAaAbundanceXsv", columnName)),
-				perSampleResults.outputData("knownAaAbundanceXsv", columnName)
-			)
+		for k, v in importPerSampleTable("knownAaAbundance") {
+			variantsPfBuilder.add("knownAbundanceAa/" + k, aaTrace.inject(v.spec), v.data)
 		}
-		for columnName in perSampleResults.listXsvColumns("aaConvergenceXsv") {
-			variantsPfBuilder.add(
-				"convergence/" + columnName,
-				aaTrace.inject(perSampleResults.outputSpec("aaConvergenceXsv", columnName)),
-				perSampleResults.outputData("aaConvergenceXsv", columnName)
-			)
+		for k, v in importPerSampleTable("aaConvergence") {
+			variantsPfBuilder.add("convergence/" + k, aaTrace.inject(v.spec), v.data)
 		}
 
 		// Declared synonymous count + cross-sample convergence summary, both keyed
