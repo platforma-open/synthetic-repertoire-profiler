@@ -56,7 +56,10 @@ _ROWS := [
 	{ step: "consensus", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 4 },
 
 	// Sized from the .mic analyze reads: the parsed one, or the consensus one on a UMI run.
-	{ step: "analyze", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 9 }
+	// Floor 12, not 8: reads that differ little compress into a small .mic, so the data term
+	// stays under the floor while the variant count is high. 4M distinct variants in a .mic
+	// below 0.5 GiB peaked at 7.1 GiB and one run in eight was killed at 8.
+	{ step: "analyze", cpu: 8, memFloor: 12, memIntercept: 4, memSlope: 9 }
 ]
 
 _byStep := {}
