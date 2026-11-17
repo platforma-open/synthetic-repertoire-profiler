@@ -25,6 +25,7 @@ import type {
   RegionDef,
   RegionScheme,
   ChainId,
+  RunMode,
 } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
 import { kind } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.kind";
 import type { PatternParts, UmiSpec } from "./pattern";
@@ -569,7 +570,7 @@ export type BlockData = {
 
   // Preview run. `full` suppresses limitInput in args, so leaving preview
   // reproduces the unlimited recipe exactly.
-  runMode: "dry" | "full";
+  runMode: RunMode;
   limitInput?: number; // reads (pairs, when paired-end) per sample; required in preview
 
   // Per-page table grid state (sort, column visibility, etc.).
@@ -868,15 +869,16 @@ const dataModel = new DataModelBuilder({ kind })
     minVariantReads: params?.minVariantReads,
     minReadsPerConsensus: params?.minReadsPerConsensus ?? UMI_DEFAULTS.minReadsPerConsensus,
     minUmiQuality: params?.minUmiQuality ?? UMI_DEFAULTS.minUmiQuality,
+    // A template may ask for a preview. One that names no read limit leaves the
+    // block on the panel's "Read limit is required" until a number is entered.
+    runMode: params?.runMode ?? "full",
+    limitInput: params?.limitInput,
     perProcessMemGB: params?.perProcessMemGB,
     aggregationMemGB: params?.aggregationMemGB,
     perProcessCPUs: params?.perProcessCPUs,
 
     // Not init params: uploaded files, what the UI discovers by reading them, and
     // view state. See the kind for why each group stays out of the contract.
-    // Also `runMode`: a template is a recipe for a real run, so a saved preview
-    // would hand every block made from it a partial answer.
-    runMode: "full" as const,
     subtitleLabel: "",
     knownNtMetadataColumns: [],
     knownAaMetadataColumns: [],
@@ -1598,6 +1600,10 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     minVariantReads: data.minVariantReads,
     minReadsPerConsensus: data.minReadsPerConsensus,
     minUmiQuality: data.minUmiQuality,
+    // As stored, not as `args` resolves them: a full run still carries the read
+    // limit last typed, which `args` leaves out.
+    runMode: data.runMode,
+    limitInput: data.limitInput,
     perProcessMemGB: data.perProcessMemGB,
     aggregationMemGB: data.aggregationMemGB,
     perProcessCPUs: data.perProcessCPUs,

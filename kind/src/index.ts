@@ -32,6 +32,10 @@ export type RegionScheme = "none" | "vdj" | "custom" | "scfv";
  *  and its light regions `IGLight` (the linker and hinge stay ignored). */
 export type ChainId = "IGHeavy" | "IGLight" | "TCRBeta" | "TCRAlpha" | "TCRDelta" | "TCRGamma";
 
+/** `dry` is the settings panel's Preview: each sample is cut to `limitInput` reads
+ *  for a quick look at the settings. `full` runs every read. */
+export type RunMode = "dry" | "full";
+
 /** A region in a parent's partition: a name + nucleotide length. Boundary
  *  offsets are derived cumulatively from the lengths (region-first entry).
  *
@@ -85,7 +89,8 @@ export type ParentRegionConfig = {
  *
  * The subset is the dataset the block reads and the run recipe: the tag pattern,
  * the parent (reference) setup, the export toggles, the mutation and quality gates,
- * the UMI consensus settings, and the per-process resource overrides.
+ * the UMI consensus settings, the run mode with its read limit, and the
+ * per-process resource overrides.
  *
  * `input` is a reference to a dataset of an upstream block. A project template
  * names its blocks, and a block created from one receives the reference pointing
@@ -143,6 +148,13 @@ export type BlockParams = {
   minReadsPerConsensus?: number;
   minUmiQuality?: number;
 
+  /** Absent = a full run. `dry` starts the block in Preview, so a template can
+   *  describe a pipeline that is tried out on a part of the reads. */
+  runMode?: RunMode;
+  /** Reads (pairs, when paired-end) per sample a preview takes. Kept in a full run
+   *  too, where nothing reads it: it is the number the panel shows on a switch back. */
+  limitInput?: number;
+
   perProcessMemGB?: number;
   aggregationMemGB?: number;
   perProcessCPUs?: number;
@@ -150,6 +162,7 @@ export type BlockParams = {
 
 const PARENT_INPUT_MODES: readonly ParentInputMode[] = ["fastaSequence", "fastaFile"];
 const FRAME_SHIFT_MODES: readonly FrameShiftMode[] = ["AA_MISMATCH", "TRIPLET"];
+const RUN_MODES: readonly RunMode[] = ["dry", "full"];
 const REGION_SCHEMES: readonly RegionScheme[] = ["none", "vdj", "custom", "scfv"];
 const CHAIN_IDS: readonly ChainId[] = [
   "IGHeavy",
@@ -205,6 +218,8 @@ function parseInitializationParams(value: unknown): BlockParams {
     minVariantReads,
     minReadsPerConsensus,
     minUmiQuality,
+    runMode,
+    limitInput,
     perProcessMemGB,
     aggregationMemGB,
     perProcessCPUs,
@@ -240,6 +255,9 @@ function parseInitializationParams(value: unknown): BlockParams {
 
     minReadsPerConsensus: optionalNumber(minReadsPerConsensus, "minReadsPerConsensus"),
     minUmiQuality: optionalNumber(minUmiQuality, "minUmiQuality"),
+
+    runMode: optionalEnum(runMode, RUN_MODES, "runMode"),
+    limitInput: optionalNumber(limitInput, "limitInput"),
 
     perProcessMemGB: optionalNumber(perProcessMemGB, "perProcessMemGB"),
     aggregationMemGB: optionalNumber(aggregationMemGB, "aggregationMemGB"),
