@@ -1,0 +1,47 @@
+// Cross-sample concat of one per-sample table (ephemeral).
+//
+// Reads a resource map of per-sample parquets keyed [sampleId], stamps each with its
+// sampleId and writes one parquet. The caller imports it partitioned by sampleId, so
+// one import job serves every sample.
+//
+// A sample whose table has no rows contributes no partition.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+aggSizing := import(":aggregate-sizing")
+json := import("json")
+
+self.awaitState("InputsLocked")
+self.awaitState("tableData", "ResourceReady")
+
+self.body(func(inputs) {
+	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+
+	rmMap := inputs.tableData.inputs()
+	frames := []
+	for sKey in maps.getKeys(rmMap) {
+		key := json.decode(sKey)
+		ll.assert(is_array(key) && len(key) == 1, "expected a [sampleId] key, got %v", sKey)
+		frames = append(frames, wf.frame({
+			file: rmMap[sKey],
+			xsvType: "parquet"
+		}, { id: "t_" + string(len(frames)) }).withColumns(
+			pt.lit(string(key[0])).alias("sampleId")
+		))
+	}
+	ll.assert(len(frames) > 0, "no per-sample tables to concat")
+
+	merged := frames[0]
+	if len(frames) > 1 {
+		merged = pt.concat(frames)
+	}
+	merged.save("table.parquet")
+
+	result := wf.run()
+
+	return {
+		table: result.getFile("table.parquet")
+	}
+})
