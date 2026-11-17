@@ -1,5 +1,12 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.ui
 
+## 1.7.3
+
+### Patch Changes
+
+- Updated dependencies [9dd5566]
+  - @platforma-open/milaboratories.synthetic-repertoire-profiler.model@1.7.3
+
 ## 1.7.2
 
 ### Patch Changes
