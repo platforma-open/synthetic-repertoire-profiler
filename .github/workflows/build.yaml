@@ -53,6 +53,9 @@ jobs:
             }
           }
         }
+
+      env: |
+        { "PL_DOCKER_RELAYER": "chunkah" }
     secrets:
       env: |
         { "PL_LICENSE": ${{ toJSON(secrets.MI_LICENSE) }},
