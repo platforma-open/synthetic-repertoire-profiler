@@ -28,7 +28,6 @@ computeStateHeatmapTpl := assets.importTemplate(":compute-state-heatmap")
 aggregateRegionAnnotationTpl := assets.importTemplate(":aggregate-region-annotation")
 aggregateParentTablesTpl := assets.importTemplate(":aggregate-parent-tables")
 parentSubRegionsTpl := assets.importTemplate(":parent-subregions")
-aggregateLinkersTpl := assets.importTemplate(":aggregate-linkers")
 aggregateKnownTpl := assets.importTemplate(":aggregate-known")
 processKnownSetTpl := assets.importTemplate(":process-known-set")
 computeQcTpl := assets.importTemplate(":compute-qc")
@@ -195,6 +194,8 @@ wf.body(func(args) {
 		parentRegionsJson: parentRegionsJson,
 		parentRegionsFile: parentRegionsFile,
 		emitRegionAnnotation: rc.hasRegions,
+		ntRegionCols: rc.ntRegionNames,
+		aaRegionCols: rc.aaRegionNames,
 		knownNtFile: knownNtFile,
 		knownAaFile: knownAaFile,
 		knownNtIdColumn: args.knownNtIdColumn,
@@ -318,6 +319,10 @@ wf.body(func(args) {
 		fileOutput("parsedMic"),
 		fileOutput("variantsTsv"),
 		fileOutput("aaVariantsTsv"),
+		fileOutput("ntKeys"),
+		fileOutput("ntWide"),
+		fileOutput("aaKeys"),
+		fileOutput("aaWide"),
 		fileOutput("regionAnnotationTsv"),
 		fileOutput("aaParentResiduesTsv"),
 		fileOutput("ntParentResiduesTsv"),
@@ -398,18 +403,25 @@ wf.body(func(args) {
 		)
 	}
 
-	// Cross-sample / cross-variant properties (nt + aa): one ephemeral reads the
-	// per-sample abundance parquets (totals) + raw variant TSVs (sample-independent
-	// metadata) and emits per-variant property tables.
+	// Cross-sample / cross-variant properties (nt + aa) and the linkers: one ephemeral
+	// reads the per-sample abundance parquets (totals) and the per-sample variant
+	// metadata parquets, and emits per-variant property tables and the linker tables.
 	aggVarsRun := render.createEphemeral(aggregateVariantsTpl, {
 		aggMemGB: aggMemGB,
 		ntAbundanceData: perSampleResults.outputData("ntAbundance"),
 		aaAbundanceData: perSampleResults.outputData("aaAbundance"),
-		variantsTsvData: perSampleResults.outputData("variantsTsv"),
-		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
+		ntKeysData: perSampleResults.outputData("ntKeys"),
+		ntWideData: perSampleResults.outputData("ntWide"),
+		aaKeysData: perSampleResults.outputData("aaKeys"),
+		aaWideData: perSampleResults.outputData("aaWide"),
 		ntRegionCols: rc.ntRegionNames,
 		aaRegionCols: rc.aaRegionNames,
-		hasUmi: hasUmi
+		hasUmi: hasUmi,
+		// The nt property table feeds the nt export and the nt composition heat map.
+		needNt: exportNt || exportNtStateMatrix,
+		exportNt: exportNt,
+		exportOnlyKnown: exportOnlyKnown,
+		hasNtKnown: hasNtKnown
 	})
 	importProps := func(file, axis, isAa, regionNames) {
 		return xsv.importFile(
@@ -598,16 +610,8 @@ wf.body(func(args) {
 		)
 	}
 
-	// Linkers (nt→aa, parent→nt, parent→aa). One-side leads in the axes.
-	linkersRun := render.createEphemeral(aggregateLinkersTpl, {
-		aggMemGB: aggMemGB,
-		variantsTsvData: perSampleResults.outputData("variantsTsv"),
-		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
-		// Export-only-matched filter: nt linkers keep assignStatus == ASSIGNED
-		// (empty when no nt known set), aa linkers keep rows with a knownAaKey.
-		exportOnlyKnown: exportOnlyKnown,
-		hasNtKnown: hasNtKnown
-	})
+	// Linkers (nt→aa, parent→nt, parent→aa), built by the variant aggregate. One-side
+	// leads in the axes.
 	importLinker := func(file, axes, name) {
 		return xsv.importFile(
 			file,
@@ -627,7 +631,7 @@ wf.body(func(args) {
 	parentNtCols := undefined
 	if exportNt {
 		ntToAaCols = importLinker(
-			linkersRun.output("ntToAa"),
+			aggVarsRun.output("ntToAa"),
 			[
 				columnSpecs.variantKeyAxisSpec(variantScope, "aminoacid", "Variant aa", "aaKey"),
 				columnSpecs.variantKeyAxisSpec(variantScope, "nucleotide", "Variant nt", "ntKey")
@@ -635,7 +639,7 @@ wf.body(func(args) {
 			"pl7.app/repertoire/aaToNt"
 		)
 		parentNtCols = importLinker(
-			linkersRun.output("parentNt"),
+			aggVarsRun.output("parentNt"),
 			[
 				columnSpecs.parentIdAxisSpec("Parent"),
 				columnSpecs.variantKeyAxisSpec(variantScope, "nucleotide", "Variant nt", "ntKey")
@@ -644,7 +648,7 @@ wf.body(func(args) {
 		)
 	}
 	parentAaCols := importLinker(
-		linkersRun.output("parentAa"),
+		aggVarsRun.output("parentAa"),
 		[
 			columnSpecs.parentIdAxisSpec("Parent"),
 			columnSpecs.variantKeyAxisSpec(variantScope, "aminoacid", "Variant aa", "aaKey")
