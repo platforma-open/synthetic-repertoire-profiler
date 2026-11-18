@@ -18,7 +18,7 @@ times := import("times")
 
 // The state matrix leaves this template as mitool wrote it, one File per level, next to
 // the residue composition built from it; a null resource for a level that is off.
-outputNames := ["analyzeLogStream", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv"]
+outputNames := ["analyzeLogStream", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv", "ntKeys", "ntWide", "aaKeys", "aaWide"]
 self.defineOutputs(outputNames)
 
 // Progress marker prefix — mitool emits `[==PROGRESS==]<stage>: <pct>% ETA: …`
@@ -793,6 +793,47 @@ self.body(func(inputs) {
 		withColumns(qcCols...).
 		save("qcRow.parquet")
 
+	// --- Variant metadata for the cross-sample aggregate ----------------------
+	// Two files per level: the keys every aggregate step groups on, and the wide columns,
+	// which are the same in every sample a variant appears in. They are separate files so
+	// the wide one has a single reader in the aggregate. inferSchema:false -> every column
+	// String, so an empty and a populated sample share one schema.
+	ntRegionCols := is_undefined(params.ntRegionCols) ? [] : params.ntRegionCols
+	aaRegionCols := is_undefined(params.aaRegionCols) ? [] : params.aaRegionCols
+	ntMetaDf := ptWf.frame({
+		file: variantsFile,
+		xsvType: "tsv"
+	}, { id: "variantsMeta", inferSchema: false })
+	ntMetaDf.select(
+		pt.col("variantKey"),
+		pt.col("parentId"),
+		pt.col("aaVariantKey"),
+		pt.col("frameShift"),
+		pt.col("assignStatus")
+	).save("ntKeys.parquet")
+	ntWideSelect := [pt.col("variantKey"), pt.col("ntSequence"), pt.col("mutations"), pt.col("mutationCount")]
+	for rn in ntRegionCols {
+		ntWideSelect = append(ntWideSelect, pt.col("nSeq" + rn))
+	}
+	ntMetaDf.select(ntWideSelect...).save("ntWide.parquet")
+
+	aaMetaDf := ptWf.frame({
+		file: aaVariantsFile,
+		xsvType: "tsv"
+	}, { id: "aaVariantsMeta", inferSchema: false })
+	aaMetaDf.select(
+		pt.col("aaVariantKey"),
+		pt.col("parentId"),
+		pt.col("knownAaKey"),
+		pt.when(pt.col("aaSequence").strContains("*", { literal: true })).
+			then(pt.lit("true")).otherwise(pt.lit("false")).alias("hasStop")
+	).save("aaKeys.parquet")
+	aaWideSelect := [pt.col("aaVariantKey"), pt.col("aaSequence"), pt.col("mutations"), pt.col("mutationCount")]
+	for rn in aaRegionCols {
+		aaWideSelect = append(aaWideSelect, pt.col("aaSeq" + rn))
+	}
+	aaMetaDf.select(aaWideSelect...).save("aaWide.parquet")
+
 	// --- Per-sample residue composition (its own pt workflow) ----------------
 	// Separate from the table workflow above: it reads the matrix, which is dense — one
 	// row per variant per parent position — so on a large repertoire it dwarfs every
@@ -938,6 +979,10 @@ self.body(func(inputs) {
 		// (properties, linkers, known overlay) sees the same variants as the tables.
 		variantsTsv: variantsFile,
 		aaVariantsTsv: aaVariantsFile,
+		ntKeys: ptResult.getFile("ntKeys.parquet"),
+		ntWide: ptResult.getFile("ntWide.parquet"),
+		aaKeys: ptResult.getFile("aaKeys.parquet"),
+		aaWide: ptResult.getFile("aaWide.parquet"),
 		regionAnnotationTsv: emitRegionAnnotation ? analyzeCmd.getFile("out.region-annotation.tsv") : ptResult.getFile("emptyRegionAnnotation.tsv"),
 		qcJson: analyzeCmd.getFile("out.qc.json"),
 		reports: reportsMap.build(),

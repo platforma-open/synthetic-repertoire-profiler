@@ -21,7 +21,7 @@ pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 json := import("json")
 
 // Outputs produced by downstream.tpl and passed straight through.
-passthroughNames := ["variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv"]
+passthroughNames := ["variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv", "ntKeys", "ntWide", "aaKeys", "aaWide"]
 
 outputNames := ["parsedMic", "stepLogs"]
 for n in passthroughNames { outputNames = append(outputNames, n) }

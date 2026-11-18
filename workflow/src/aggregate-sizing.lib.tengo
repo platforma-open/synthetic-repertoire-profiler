@@ -1,4 +1,4 @@
-// Memory of the cross-sample ptabler steps: the variant, linker and known-set aggregates, the
+// Memory of the cross-sample ptabler steps: the variant and known-set aggregates, the
 // state-matrix dedup, the composition heat map, and the variant-keyed imports.
 //
 // On a backend that reports blob sizes, each step keeps pt's input-size rule, 4 GiB + slope x
@@ -12,8 +12,9 @@
 //
 // Measured peak RSS per stored input byte, polars 1.33.1, 8 threads, 1 to 6 samples:
 //
-//   aggregate-variants        1.1 to 2.1; 2.0 on 9 GiB of input; runs at slope 5
-//   aggregate-linkers         0.4 to 1.0; runs at slope 3
+//   aggregate-variants        per byte of parquet input: 4.5 without the nt tables and 13 with them, locally
+//                             under a hard limit; 200 samples without them peaked at 17 GiB in a 40 GiB
+//                             grant; runs at slope 10 and 30
 //   state-matrix dedup        0.3 on 3 samples, 31 GiB of matrix, in a 12 GiB limit; runs at slope 1
 //   heat map                  2.0 to 6.2 below 1 GiB; a 25 GiB matrix ran in a 12 GiB limit; runs at slope 1
 //   xsv import                2.0 to 5.7 below 1 GiB; 1.1 on a 25 GiB matrix in a 54 GiB grant; the matrix import runs at slope 3
