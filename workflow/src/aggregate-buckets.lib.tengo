@@ -5,14 +5,15 @@
 // goes to bucket 0. A key maps to one bucket, so each group is complete inside its bucket.
 //
 // Labels split into L label buckets by the first letter of the label prefix. The 26 letters
-// are dealt round-robin; an empty prefix goes to label bucket 0.
+// are dealt round-robin; a prefix not starting with A-Z, including an empty one, goes to label
+// bucket 0.
 //
 // K is the smallest power of two with totalBytes / K <= TARGET_BUCKET_BYTES, at most
 // MAX_KEY_BUCKETS. Without blob sizes, totalBytes is samples x EST_SAMPLE_BYTES. L = min(K, 26).
 //
 // Bucket job need: 2 GiB + 16 MiB x samples + 6 x totalBytes / K. Every bucket scans all
 // samples, so the per-sample term does not shrink with K. Request: max(floor, 2 x need,
-// aggMemGB GiB).
+// aggMemGB GiB); the caller passes aggMemGB only on a backend without blob sizes.
 
 ll := import("@platforma-sdk/workflow-tengo:ll")
 units := import("@platforma-sdk/workflow-tengo:units")
@@ -22,6 +23,7 @@ variantLabel := import(":variant-label")
 
 TARGET_BUCKET_BYTES := 1 * units.GiB
 EST_SAMPLE_BYTES := 42 * units.MiB
+PREFIX_COUNT := 256
 MAX_KEY_BUCKETS := 256
 LABEL_LETTERS := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -32,13 +34,18 @@ NEED_MULTIPLIER := 2
 
 HEX := "0123456789abcdef"
 
+ALL_LETTERS := []
+for i := 0; i < len(LABEL_LETTERS); i++ {
+	ALL_LETTERS = append(ALL_LETTERS, LABEL_LETTERS[i:i + 1])
+}
+
 // hexPrefix returns p (0..255) as 2 lowercase hex chars.
 hexPrefix := func(p) {
 	return HEX[p / 16:p / 16 + 1] + HEX[p % 16:p % 16 + 1]
 }
 
 ALL_PREFIXES := []
-for p := 0; p < MAX_KEY_BUCKETS; p++ {
+for p := 0; p < PREFIX_COUNT; p++ {
 	ALL_PREFIXES = append(ALL_PREFIXES, hexPrefix(p))
 }
 
@@ -83,7 +90,7 @@ keyBucketPrefixes := func(k) {
 	for i := 0; i < k; i++ {
 		lists = append(lists, [])
 	}
-	for p := 0; p < MAX_KEY_BUCKETS; p++ {
+	for p := 0; p < PREFIX_COUNT; p++ {
 		lists[p % k] = append(lists[p % k], ALL_PREFIXES[p])
 	}
 	return lists
@@ -113,7 +120,8 @@ labelLetters := func(l) {
 }
 
 // labelPredicate returns the filter selecting rows whose label prefix starts with one of
-// `letters` (a string of letters). With catchAll it also selects an empty or null prefix.
+// `letters` (a string of letters). With catchAll it also selects a prefix whose first char is
+// outside A-Z, including an empty or null prefix.
 labelPredicate := func(pt, hashCol, letters, catchAll) {
 	first := variantLabel.labelPrefixExpr(pt, hashCol).strSlice(0, 1).fillNull("")
 	set := []
@@ -122,7 +130,7 @@ labelPredicate := func(pt, hashCol, letters, catchAll) {
 	}
 	pred := first.inSet(set...)
 	if catchAll {
-		pred = pred.or(first.eq(""))
+		pred = pred.or(first.inSet(ALL_LETTERS...).not())
 	}
 	return pred
 }

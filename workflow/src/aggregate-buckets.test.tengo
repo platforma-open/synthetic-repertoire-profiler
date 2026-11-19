@@ -152,9 +152,13 @@ TestLabelPredicate := func() {
 	plain := buckets.labelPredicate(pt, "_seqHash", "AE", false)._getExpression({})
 	test.isEqual({ type: "in_set", value: first, set: ["A", "E"] }, plain)
 
+	letters := []
+	for i := 0; i < 26; i++ {
+		letters = append(letters, "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[i:i + 1])
+	}
 	caught := buckets.labelPredicate(pt, "_seqHash", "AE", true)._getExpression({})
 	test.isEqual({
 		type: "or",
-		operands: [plain, { type: "eq", lhs: first, rhs: { type: "const", value: "" } }]
+		operands: [plain, { type: "not", value: { type: "in_set", value: first, set: letters } }]
 	}, caught)
 }

@@ -421,20 +421,42 @@ wf.body(func(args) {
 		needNt: exportNt || exportNtStateMatrix,
 		exportNt: exportNt,
 		exportOnlyKnown: exportOnlyKnown,
-		hasNtKnown: hasNtKnown
+		hasNtKnown: hasNtKnown,
+		aggBuckets: args.aggBuckets
 	})
-	importProps := func(file, axis, isAa, regionNames) {
-		return xsv.importFile(
-			file,
-			"tsv",
-			{
-				axes: [axis],
-				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName, hasUmi, regionChains, chainIds),
-				storageFormat: "Parquet",
-				partitionKeyLength: 0
-			},
-			{ splitDataAndSpec: true, mem: aggMem }
-		)
+	// The variant label comes from its own TSV (variantKey, variantLabel); the other
+	// per-variant columns from the properties TSV. One result map holds both.
+	importProps := func(file, labelFile, axis, isAa, regionNames) {
+		propCols := []
+		labelCols := []
+		for c in columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName, hasUmi, regionChains, chainIds) {
+			if c.column == "variantLabel" {
+				labelCols = append(labelCols, c)
+			} else {
+				propCols = append(propCols, c)
+			}
+		}
+		importCols := func(f, cols) {
+			return xsv.importFile(
+				f,
+				"tsv",
+				{
+					axes: [axis],
+					columns: cols,
+					storageFormat: "Parquet",
+					partitionKeyLength: 0
+				},
+				{ splitDataAndSpec: true, mem: aggMem }
+			)
+		}
+		merged := {}
+		for k, v in importCols(file, propCols) {
+			merged[k] = v
+		}
+		for k, v in importCols(labelFile, labelCols) {
+			merged[k] = v
+		}
+		return merged
 	}
 	// The properties TSVs are also read by the composition heat map below (for the
 	// cross-sample per-variant read total), so hold the file handles.
@@ -444,9 +466,9 @@ wf.body(func(args) {
 	// entirely otherwise — nothing downstream consumes them).
 	ntPropsCols := undefined
 	if exportNt {
-		ntPropsCols = importProps(ntPropsTsv, ntVariantAxis, false, rc.ntRegionNames)
+		ntPropsCols = importProps(ntPropsTsv, aggVarsRun.output("ntLabels"), ntVariantAxis, false, rc.ntRegionNames)
 	}
-	aaPropsCols := importProps(aaPropsTsv, aaVariantAxis, true, rc.aaRegionNames)
+	aaPropsCols := importProps(aaPropsTsv, aggVarsRun.output("aaLabels"), aaVariantAxis, true, rc.aaRegionNames)
 
 	// State matrix [variantKey, parentId, position] -> state, deduped cross-sample.
 	// aa always; nt only when nt export is enabled (its per-sample TSV is an empty
