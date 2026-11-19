@@ -1,23 +1,25 @@
 // Memory of the cross-sample ptabler steps: the variant, linker and known-set aggregates, the
 // state-matrix dedup, the composition heat map, and the variant-keyed imports.
 //
-// On a backend that reports blob sizes, each step keeps pt's input-size rule, 4 GiB + 10 x
-// input, with no upper limit, and a floor of FLOOR_GIB. The "Memory for aggregation" setting
-// does not apply there: the grant already covers the measured need, so a user number could
-// only shrink how many steps the queue admits at once.
+// On a backend that reports blob sizes, each step keeps pt's input-size rule, 4 GiB + slope x
+// input, with no upper limit, and a floor of FLOOR_GIB. The slope is pt's 10 unless a step sets
+// its own below. The "Memory for aggregation" setting does not apply there: the grant already
+// covers the measured need, so a user number could only shrink how many steps the queue admits
+// at once.
 //
 // A backend without blob sizes cannot evaluate the rule. There each step gets a flat
 // FLOOR_GIB, and the setting raises it. Same rule as mixcr-clonotyping's shard plan.
 //
 // Measured peak RSS per stored input byte, polars 1.33.1, 8 threads, 1 to 6 samples:
 //
-//   aggregate-variants        1.1 to 2.1
-//   aggregate-linkers         1.0
-//   state-matrix dedup        1.0 on 57 samples, 2 GiB of matrix; holds the variant list, not the matrix
-//   heat map                  2.0 to 6.2
-//   xsv import                2.0 to 5.7
+//   aggregate-variants        1.1 to 2.1; 2.0 on 9 GiB of input; runs at slope 5
+//   aggregate-linkers         0.4 to 1.0; runs at slope 3
+//   state-matrix dedup        0.3 on 3 samples, 31 GiB of matrix, in a 12 GiB limit; runs at slope 1
+//   heat map                  2.0 to 6.2 below 1 GiB; a 25 GiB matrix ran in a 12 GiB limit; runs at slope 1
+//   xsv import                2.0 to 5.7 below 1 GiB; 1.1 on a 25 GiB matrix in a 54 GiB grant; the matrix import runs at slope 3
 //
-// So 10 x input covers every step by 1.6x or more.
+// So each slope covers its step by 2.0x or more, except the matrix import, whose peak follows
+// its grant (1.65x at slope 3).
 
 feats := import("@platforma-sdk/workflow-tengo:feats")
 units := import("@platforma-sdk/workflow-tengo:units")

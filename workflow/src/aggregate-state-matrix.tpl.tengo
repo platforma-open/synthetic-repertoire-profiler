@@ -40,7 +40,9 @@ self.body(func(inputs) {
 	// The variants tables name the key column after the level.
 	keyCol := inputs.variantsKeyColumn
 
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+	// Slope 1, not pt's 10: the input is every sample's raw matrix, and the job streams it.
+	// On 31 GiB of matrix it ran in a 12 GiB limit with a 9 GiB peak.
+	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB).memSlope(1)
 
 	keyFrames := []
 	smFrames := []

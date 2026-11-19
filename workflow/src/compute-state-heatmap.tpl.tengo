@@ -28,7 +28,9 @@ self.awaitState("stateMatrixTsv", "ResourceReady")
 self.awaitState("propertiesTsv", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+	// Slope 1, not pt's 10: the job streams the matrix. On a 25 GiB matrix it ran in a
+	// 12 GiB limit.
+	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB).memSlope(1)
 
 	// inferSchema:false → every column read as String, matching the sibling
 	// aggregates (the position axis is String, see column-specs positionAxisSpec).

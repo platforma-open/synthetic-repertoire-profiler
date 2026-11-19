@@ -469,7 +469,8 @@ wf.body(func(args) {
 					storageFormat: "Parquet",
 					partitionKeyLength: 0
 				},
-				{ splitDataAndSpec: true, mem: aggMem }
+				// Slope 3, not the default 10: on a 25 GiB matrix the import peaked at 28 GiB.
+				{ splitDataAndSpec: true, mem: aggMem, memSlope: 3 }
 			)
 		}
 	}
