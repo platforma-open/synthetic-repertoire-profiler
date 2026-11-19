@@ -30,7 +30,6 @@ LABEL_LETTERS := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 NEED_BASE_BYTES := 2 * units.GiB
 NEED_PER_SAMPLE_BYTES := 16 * units.MiB
 NEED_PER_INPUT_BYTE := 6
-NEED_MULTIPLIER := 2
 
 HEX := "0123456789abcdef"
 
@@ -137,14 +136,14 @@ labelPredicate := func(pt, hashCol, letters, catchAll) {
 
 // flatJobBytes returns max(floor, aggMemGB GiB) in bytes; aggMemGB may be undefined or a float.
 flatJobBytes := func(aggMemGB) {
-	return aggSizing.fallbackGiB(aggMemGB) * units.GiB
+	return aggSizing.requestBytes(0, aggMemGB)
 }
 
 // bucketJobBytes returns the request of one key bucket job, in bytes.
 bucketJobBytes := func(samples, totalBytes, k, aggMemGB) {
 	inputTerm := (NEED_PER_INPUT_BYTE * totalBytes + k - 1) / k
 	need := NEED_BASE_BYTES + NEED_PER_SAMPLE_BYTES * samples + inputTerm
-	return int(math.max(NEED_MULTIPLIER * need, flatJobBytes(aggMemGB)))
+	return aggSizing.requestBytes(need, aggMemGB)
 }
 
 export {

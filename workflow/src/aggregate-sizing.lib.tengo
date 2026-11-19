@@ -28,11 +28,17 @@
 // its grant (1.65x at slope 3). aggregate-variants has no slope; its bucket law grants 2.0x
 // its need.
 
+ll := import("@platforma-sdk/workflow-tengo:ll")
 feats := import("@platforma-sdk/workflow-tengo:feats")
 units := import("@platforma-sdk/workflow-tengo:units")
 math := import("math")
 
 FLOOR_GIB := 16
+
+// Need of each sample-count-sized step: baseGiB + perSampleMiB x samples.
+STEP_NEED := {
+	dedup: { baseGiB: 4, perSampleMiB: 60 }
+}
 
 // fallbackGiB returns the flat grant on a backend without blob sizes.
 fallbackGiB := func(aggMemGB) {
@@ -73,11 +79,68 @@ importMem := func(aggMemGB) {
 	return fallbackGiB(aggMemGB) * units.GiB
 }
 
+// requestBytes returns max(FLOOR_GIB GiB, 2 x needBytes, ceil(settingGiB) GiB) as an integer.
+// settingGiB may be undefined.
+requestBytes := func(needBytes, settingGiB) {
+	bytes := FLOOR_GIB * units.GiB
+	doubled := 2 * needBytes
+	if is_float(doubled) {
+		doubled = int(math.ceil(doubled))
+	}
+	if doubled > bytes {
+		bytes = doubled
+	}
+	if !is_undefined(settingGiB) {
+		setting := int(math.ceil(settingGiB)) * units.GiB
+		if setting > bytes {
+			bytes = setting
+		}
+	}
+	return bytes
+}
+
+// settingFor returns the "Memory for aggregation" setting on a backend without blob sizes,
+// else undefined.
+settingFor := func(aggMemGB) {
+	if feats.hasBlobSize {
+		return undefined
+	}
+	return aggMemGB
+}
+
+// stepNeedBytes returns the need of `step` (a STEP_NEED key) for `samples` samples, in bytes.
+stepNeedBytes := func(step, samples) {
+	need := STEP_NEED[step]
+	ll.assert(!is_undefined(need), "no STEP_NEED entry for step %v", step)
+	return perSampleIntercept(need.baseGiB, need.perSampleMiB, samples)
+}
+
+stepRequestBytes := func(step, samples, aggMemGB) {
+	return requestBytes(stepNeedBytes(step, samples), settingFor(aggMemGB))
+}
+
+// applyStep puts `wf` on the heavy queue and requests the sized need of `step`.
+applyStep := func(wf, step, samples, aggMemGB) {
+	return applyComputed(wf, stepRequestBytes(step, samples, aggMemGB))
+}
+
+// importOpts returns the memory options of a sized xsv.importFile; no `mem` key, so the
+// intercept is the request with or without blob sizes.
+importOpts := func(step, samples, aggMemGB) {
+	return { memSlope: 0, memIntercept: stepRequestBytes(step, samples, aggMemGB) }
+}
+
 export {
 	FLOOR_GIB: FLOOR_GIB,
+	STEP_NEED: STEP_NEED,
 	fallbackGiB: fallbackGiB,
 	apply: apply,
 	applyComputed: applyComputed,
 	perSampleIntercept: perSampleIntercept,
-	importMem: importMem
+	importMem: importMem,
+	requestBytes: requestBytes,
+	settingFor: settingFor,
+	stepNeedBytes: stepNeedBytes,
+	applyStep: applyStep,
+	importOpts: importOpts
 }

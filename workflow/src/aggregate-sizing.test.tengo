@@ -1,5 +1,9 @@
 test := import("@platforma-sdk/workflow-tengo:test")
+units := import("@platforma-sdk/workflow-tengo:units")
 aggSizing := import(":aggregate-sizing")
+
+GiB := units.GiB
+MiB := units.MiB
 
 TestFallbackDefaultsTo16GiB := func() {
 	test.isEqual(16, aggSizing.fallbackGiB(undefined))
@@ -15,4 +19,28 @@ TestPerSampleInterceptGrowsWithSamples := func() {
 	gib := 1024 * 1024 * 1024
 	test.isEqual(6 * gib + 3 * 60 * 1024 * 1024, aggSizing.perSampleIntercept(6, 60, 3))
 	test.isEqual(6 * gib + 200 * 60 * 1024 * 1024, aggSizing.perSampleIntercept(6, 60, 200))
+}
+
+TestRequestBytesFloor := func() {
+	test.isEqual(16 * GiB, aggSizing.requestBytes(1 * GiB, undefined))
+}
+
+TestRequestBytesDoublesNeed := func() {
+	test.isEqual(24 * GiB, aggSizing.requestBytes(12 * GiB, undefined))
+}
+
+TestRequestBytesHonoursSettingWithoutBlobSizes := func() {
+	test.isEqual(100 * GiB, aggSizing.requestBytes(12 * GiB, 100))
+	test.isEqual(33 * GiB, aggSizing.requestBytes(12 * GiB, 32.5))
+}
+
+TestStepNeedDedup := func() {
+	test.isEqual(4 * GiB + 200 * 60 * MiB, aggSizing.stepNeedBytes("dedup", 200))
+}
+
+TestImportOptsHasNoMem := func() {
+	opts := aggSizing.importOpts("dedup", 3, undefined)
+	test.isTrue(is_undefined(opts.mem))
+	test.isEqual(0, opts.memSlope)
+	test.isEqual(16 * GiB, opts.memIntercept)
 }
