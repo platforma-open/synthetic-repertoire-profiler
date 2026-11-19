@@ -304,11 +304,9 @@ self.body(func(inputs) {
 	// --- Per-sample tables (ptabler) --------------------------------------
 	// One pt workflow produces the nt/aa per-sample abundance (keyed by mitool's
 	// content-hash variantKey / aaVariantKey) and the per-sample QC row.
-	// Left unsized on purpose: pt sizes CPU/RAM from input volume when neither is
-	// set. Under exportOnlyKnown this workflow also joins the per-sample state
-	// matrices (one row per variant per position), so a fixed budget under-sizes it
-	// on large repertoires. See aggregate-sizing.
-	ptWf := pt.workflow()
+	// Sized from input volume at slope 3, not pt's 10: the peak was 0.9 x input
+	// on a sample of 4M variants.
+	ptWf := pt.workflow().memSlope(3)
 
 	// Abundance. variants.tsv is already ~one row per variantKey; group
 	// defensively to fold the rare same-sequence/two-parent duplicate, and sum nt

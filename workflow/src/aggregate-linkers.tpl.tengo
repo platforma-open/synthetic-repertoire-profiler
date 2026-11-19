@@ -22,7 +22,8 @@ self.awaitState("variantsTsvData", "ResourceReady")
 self.awaitState("aaVariantsTsvData", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+	// Slope 3, not pt's 10: the peak was 0.4 to 1.0 x input.
+	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB).memSlope(3)
 
 	loadConcat := func(rmData, idPrefix) {
 		frames := []

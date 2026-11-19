@@ -30,7 +30,8 @@ self.awaitState("variantsTsvData", "ResourceReady")
 self.awaitState("aaVariantsTsvData", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+	// Slope 5, not pt's 10: the peak was 2.0 x input on 9 GiB of input.
+	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB).memSlope(5)
 
 	// TSV reads disable per-file type inference (`inferSchema: false` → every
 	// column read as String). Per-sample TSVs vary: an empty one (header only)
