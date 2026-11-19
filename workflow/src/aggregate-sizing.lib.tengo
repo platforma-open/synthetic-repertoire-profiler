@@ -10,17 +10,23 @@
 // A backend without blob sizes cannot evaluate the rule. There each step gets a flat
 // FLOOR_GIB, and the setting raises it. Same rule as mixcr-clonotyping's shard plan.
 //
+// aggregate-variants follows neither rule; see its row below.
+//
 // Measured peak RSS per stored input byte, polars 1.33.1, 8 threads, 1 to 6 samples:
 //
-//   aggregate-variants        per byte of parquet input: 4.5 without the nt tables and 13 with them, locally
-//                             under a hard limit; 200 samples without them peaked at 17 GiB in a 40 GiB
-//                             grant; runs at slope 10 and 30
+//   aggregate-variants        no slope, no input-size rule, on both backends: each job requests
+//                             a fixed amount (applyComputed) from aggregate-buckets.lib.tengo:
+//                             a key-bucket job 2 x the bucket law on samples and input bytes
+//                             per bucket, a label or concat job FLOOR_GIB, each at least
+//                             FLOOR_GIB; without blob sizes the input bytes are estimated from
+//                             the sample count and the setting raises each request
 //   state-matrix dedup        0.3 on 3 samples, 31 GiB of matrix, in a 12 GiB limit; sized by sample count
 //   heat map                  2.0 to 6.2 below 1 GiB; a 25 GiB matrix ran in a 12 GiB limit; runs at slope 1
 //   xsv import                2.0 to 5.7 below 1 GiB; 1.1 on a 25 GiB matrix in a 54 GiB grant; the matrix import runs at slope 3
 //
 // So each slope covers its step by 2.0x or more, except the matrix import, whose peak follows
-// its grant (1.65x at slope 3).
+// its grant (1.65x at slope 3). aggregate-variants has no slope; its bucket law grants 2.0x
+// its need.
 
 feats := import("@platforma-sdk/workflow-tengo:feats")
 units := import("@platforma-sdk/workflow-tengo:units")
