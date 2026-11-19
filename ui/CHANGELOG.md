@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.ui
 
+## 1.8.1
+
+### Patch Changes
+
+- f654e2e: Residue Composition heatmaps (pooled and per sample) keep their axes and annotations pinned while the chart is scrolled.
+- Updated dependencies [f654e2e]
+  - @platforma-open/milaboratories.synthetic-repertoire-profiler.model@1.8.1
+
 ## 1.8.0
 
 ### Minor Changes
