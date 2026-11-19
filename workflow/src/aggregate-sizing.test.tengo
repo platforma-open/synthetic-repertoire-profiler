@@ -10,3 +10,9 @@ TestSettingOnlyRaisesTheFallback := func() {
 	test.isEqual(100, aggSizing.fallbackGiB(100))
 	test.isEqual(33, aggSizing.fallbackGiB(32.5))
 }
+
+TestPerSampleInterceptGrowsWithSamples := func() {
+	gib := 1024 * 1024 * 1024
+	test.isEqual(6 * gib + 3 * 60 * 1024 * 1024, aggSizing.perSampleIntercept(6, 60, 3))
+	test.isEqual(6 * gib + 200 * 60 * 1024 * 1024, aggSizing.perSampleIntercept(6, 60, 200))
+}
