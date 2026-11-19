@@ -17,8 +17,8 @@ TestSettingOnlyRaisesTheFallback := func() {
 
 TestPerSampleInterceptGrowsWithSamples := func() {
 	gib := 1024 * 1024 * 1024
-	test.isEqual(6 * gib + 3 * 60 * 1024 * 1024, aggSizing.perSampleIntercept(6, 60, 3))
-	test.isEqual(6 * gib + 200 * 60 * 1024 * 1024, aggSizing.perSampleIntercept(6, 60, 200))
+	test.isEqual(4 * gib + 3 * 60 * 1024 * 1024, aggSizing.perSampleIntercept(4, 60, 3))
+	test.isEqual(4 * gib + 200 * 60 * 1024 * 1024, aggSizing.perSampleIntercept(4, 60, 200))
 }
 
 TestRequestBytesFloor := func() {
@@ -34,13 +34,67 @@ TestRequestBytesHonoursSettingWithoutBlobSizes := func() {
 	test.isEqual(33 * GiB, aggSizing.requestBytes(12 * GiB, 32.5))
 }
 
+TestRequestBytesDoublesAboveFloor := func() {
+	test.isEqual(40 * GiB, aggSizing.requestBytes(20 * GiB, 32))
+}
+
 TestStepNeedDedup := func() {
-	test.isEqual(4 * GiB + 200 * 60 * MiB, aggSizing.stepNeedBytes("dedup", 200))
+	test.isEqual(3 * GiB + 200 * 30 * MiB, aggSizing.stepNeedBytes("dedup", 200))
+}
+
+// Request of `step` at 3, 200 and 4000 samples; `base` GiB + `perSample` MiB x N is the request
+// intercept of the sizing constants, so the request is max(16 GiB, that).
+checkStepRequest := func(step, base, perSample) {
+	for n in [3, 200, 4000] {
+		want := base * GiB + perSample * MiB * n
+		if want < 16 * GiB {
+			want = 16 * GiB
+		}
+		test.isEqual(want, aggSizing.importOpts(step, n, undefined).memIntercept)
+	}
+}
+
+TestStepRequestDedup := func() {
+	checkStepRequest("dedup", 6, 60)
+}
+
+TestStepRequestHeatmap := func() {
+	checkStepRequest("heatmap", 11, 31)
+}
+
+TestStepRequestMatrixImport := func() {
+	checkStepRequest("matrixImport", 24, 28)
+}
+
+TestStepRequestPropertyImport := func() {
+	checkStepRequest("propertyImport", 7, 28)
+}
+
+TestStepRequestKnownImport := func() {
+	checkStepRequest("knownImport", 7, 28)
+}
+
+TestStepRequestLabelImport := func() {
+	checkStepRequest("labelImport", 8, 7)
+}
+
+TestStepRequestLinkerImport := func() {
+	checkStepRequest("linkerImport", 8, 7)
+}
+
+TestStepRequestPerSampleTableImport := func() {
+	checkStepRequest("perSampleTableImport", 8, 11)
 }
 
 TestImportOptsHasNoMem := func() {
-	opts := aggSizing.importOpts("dedup", 3, undefined)
+	opts := aggSizing.importOpts("labelImport", 3, undefined)
 	test.isTrue(is_undefined(opts.mem))
 	test.isEqual(0, opts.memSlope)
 	test.isEqual(16 * GiB, opts.memIntercept)
+}
+
+TestCountSamplesCountsDistinctFirstKeys := func() {
+	keys := ["[\"s1\",\"L1\",\"R1\"]", "[\"s1\",\"L1\",\"R2\"]", "[\"s2\",\"L1\",\"R1\"]"]
+	test.isEqual(2, aggSizing.countSamples(keys))
+	test.isEqual(0, aggSizing.countSamples([]))
 }

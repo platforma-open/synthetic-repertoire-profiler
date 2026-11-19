@@ -1,43 +1,57 @@
 // Memory of the cross-sample ptabler steps: the variant and known-set aggregates, the
-// state-matrix dedup, the composition heat map, and the variant-keyed imports.
+// per-sample table concats, the state-matrix dedup, the composition heat maps, and the
+// cross-sample imports.
 //
-// On a backend that reports blob sizes, each step keeps pt's input-size rule, 4 GiB + slope x
-// input, with no upper limit, and a floor of FLOOR_GIB. The slope is pt's 10 unless a step sets
-// its own below. The "Memory for aggregation" setting does not apply there: the grant already
-// covers the measured need, so a user number could only shrink how many steps the queue admits
-// at once.
+// Input-size rule (apply): aggregate-known and the per-sample table concats. On a backend that
+// reports blob sizes, pt's 4 GiB + 10 x input, with no upper limit, and a floor of FLOOR_GIB;
+// the "Memory for aggregation" setting does not apply there. A backend without blob sizes
+// cannot evaluate the rule: a flat FLOOR_GIB, raised by the setting. Same rule as
+// mixcr-clonotyping's shard plan.
 //
-// A backend without blob sizes cannot evaluate the rule. There each step gets a flat
-// FLOOR_GIB, and the setting raises it. Same rule as mixcr-clonotyping's shard plan.
+// Sample-count rule (applyStep, importOpts): the steps in STEP_NEED. Each requests
+// max(FLOOR_GIB, 2 x need, the setting on a backend without blob sizes), need = baseGiB +
+// perSampleMiB x samples. These jobs stream their input, so input bytes do not track the need.
 //
-// aggregate-variants follows neither rule; see its row below.
+// aggregate-variants follows neither rule: each job requests a fixed amount (applyComputed)
+// from aggregate-buckets.lib.tengo: a key-bucket job 2 x the bucket law on samples and input
+// bytes per bucket, a label or concat job FLOOR_GIB, each at least FLOOR_GIB; without blob
+// sizes the input bytes are estimated from the sample count and the setting raises each request.
 //
-// Measured peak RSS per stored input byte, polars 1.33.1, 8 threads, 1 to 6 samples:
+// Smallest passing hard limit at 50 / 100 / 200 samples, 8 threads; the larger of aa and nt.
+// Each need is at or above it at every point:
 //
-//   aggregate-variants        no slope, no input-size rule, on both backends: each job requests
-//                             a fixed amount (applyComputed) from aggregate-buckets.lib.tengo:
-//                             a key-bucket job 2 x the bucket law on samples and input bytes
-//                             per bucket, a label or concat job FLOOR_GIB, each at least
-//                             FLOOR_GIB; without blob sizes the input bytes are estimated from
-//                             the sample count and the setting raises each request
-//   state-matrix dedup        0.3 on 3 samples, 31 GiB of matrix, in a 12 GiB limit; sized by sample count
-//   heat map                  2.0 to 6.2 below 1 GiB; a 25 GiB matrix ran in a 12 GiB limit; runs at slope 1
-//   xsv import                2.0 to 5.7 below 1 GiB; 1.1 on a 25 GiB matrix in a 54 GiB grant; the matrix import runs at slope 3
+//   dedup                  4 / 4 / 8 GiB (aa; nt 8 GiB at 200)
+//   heatmap                6 / 6 / 6 GiB; slope from aa, fine bisect 2.0 GiB at 50, 4.25 GiB at 200
+//   matrixImport           8 / 8 / 12 GiB; slope 13.65 MiB per sample (aa ladder = nt fine)
+//   propertyImport         4 / 4 / 6 GiB
+//   knownImport            not measured; propertyImport's need (its rows are a subset)
+//   labelImport            4 / 4 / 4 GiB; slope from fine bisect
+//   linkerImport           4 / 4 / 4 GiB (ntToAa, parentNt, parentAa); slope from fine bisect
+//   perSampleTableImport   4 / 4 / 4 GiB (abundance concats); slope from fine bisect
 //
-// So each slope covers its step by 2.0x or more, except the matrix import, whose peak follows
-// its grant (1.65x at slope 3). aggregate-variants has no slope; its bucket law grants 2.0x
-// its need.
+// The matrix import's DuckDB budget is the limit minus the plan's Polars stage; with the input
+// hot in page cache it needs more (see its STEP_NEED entry).
 
 ll := import("@platforma-sdk/workflow-tengo:ll")
 feats := import("@platforma-sdk/workflow-tengo:feats")
 units := import("@platforma-sdk/workflow-tengo:units")
 math := import("math")
+json := import("json")
 
 FLOOR_GIB := 16
 
-// Need of each sample-count-sized step: baseGiB + perSampleMiB x samples.
+// Need of each sample-count-sized step: baseGiB + perSampleMiB x samples. The request is 2 x need.
 STEP_NEED := {
-	dedup: { baseGiB: 4, perSampleMiB: 60 }
+	dedup: { baseGiB: 3, perSampleMiB: 30 },
+	heatmap: { baseGiB: 5.5, perSampleMiB: 15.5 },
+	// Base 2.5 GiB above the fit: ptabler's DuckDB budget shrinks when the input is already in
+	// page cache; a hot-input run needed 24 GiB at 100 samples.
+	matrixImport: { baseGiB: 12, perSampleMiB: 14 },
+	propertyImport: { baseGiB: 3.5, perSampleMiB: 14 },
+	knownImport: { baseGiB: 3.5, perSampleMiB: 14 },
+	labelImport: { baseGiB: 4, perSampleMiB: 3.5 },
+	linkerImport: { baseGiB: 4, perSampleMiB: 3.5 },
+	perSampleTableImport: { baseGiB: 4, perSampleMiB: 5.5 }
 }
 
 // fallbackGiB returns the flat grant on a backend without blob sizes.
@@ -57,26 +71,26 @@ apply := func(wf, aggMemGB) {
 	return wf.mem(fallbackGiB(aggMemGB) * units.GiB)
 }
 
+// countSamples returns the number of distinct first elements of `keys`, JSON-encoded key tuples
+// of a sample-keyed dataset.
+countSamples := func(keys) {
+	seen := {}
+	for k in keys {
+		seen[string(json.decode(k)[0])] = true
+	}
+	return len(seen)
+}
+
 // applyComputed puts `wf` on the heavy queue and requests `bytes`, an integer of at least 4 GiB.
 // Slope 0 makes pt request max(memFloor, memIntercept) with or without blob sizes.
 applyComputed := func(wf, bytes) {
 	return wf.inHeavyQueue().memSlope(0).memIntercept(bytes)
 }
 
-// perSampleIntercept returns baseGiB + perSampleMiB x samples, in bytes, for .memIntercept().
-// With .memSlope(0) the request then grows with the sample count instead of input bytes.
+// perSampleIntercept returns baseGiB + perSampleMiB x samples, in bytes; a float when either
+// constant is fractional.
 perSampleIntercept := func(baseGiB, perSampleMiB, samples) {
 	return baseGiB * units.GiB + perSampleMiB * units.MiB * samples
-}
-
-// importMem returns the `mem` option of a variant-keyed xsv.importFile: undefined, which
-// leaves the SDK's input-size rule in charge, or the flat grant on a backend without blob
-// sizes.
-importMem := func(aggMemGB) {
-	if feats.hasBlobSize {
-		return undefined
-	}
-	return fallbackGiB(aggMemGB) * units.GiB
 }
 
 // requestBytes returns max(FLOOR_GIB GiB, 2 x needBytes, ceil(settingGiB) GiB) as an integer.
@@ -115,6 +129,7 @@ stepNeedBytes := func(step, samples) {
 	return perSampleIntercept(need.baseGiB, need.perSampleMiB, samples)
 }
 
+// stepRequestBytes returns the request of `step` for `samples` samples, in bytes.
 stepRequestBytes := func(step, samples, aggMemGB) {
 	return requestBytes(stepNeedBytes(step, samples), settingFor(aggMemGB))
 }
@@ -132,12 +147,11 @@ importOpts := func(step, samples, aggMemGB) {
 
 export {
 	FLOOR_GIB: FLOOR_GIB,
-	STEP_NEED: STEP_NEED,
 	fallbackGiB: fallbackGiB,
 	apply: apply,
 	applyComputed: applyComputed,
 	perSampleIntercept: perSampleIntercept,
-	importMem: importMem,
+	countSamples: countSamples,
 	requestBytes: requestBytes,
 	settingFor: settingFor,
 	stepNeedBytes: stepNeedBytes,

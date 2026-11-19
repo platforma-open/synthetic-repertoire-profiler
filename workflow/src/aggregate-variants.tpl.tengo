@@ -92,7 +92,7 @@ self.body(func(inputs) {
 	p := buckets.plan(totalBytes, len(sampleKeys), inputs.aggBuckets)
 	ll.print("aggregate-variants plan: k=" + string(p.k) + " l=" + string(p.l) + " totalBytes=" + string(p.totalBytes))
 
-	aggMemGB := feats.hasBlobSize ? undefined : inputs.aggMemGB
+	aggMemGB := aggSizing.settingFor(inputs.aggMemGB)
 	bucketBytes := buckets.bucketJobBytes(len(sampleKeys), p.totalBytes, p.k, aggMemGB)
 	flatBytes := buckets.flatJobBytes(aggMemGB)
 

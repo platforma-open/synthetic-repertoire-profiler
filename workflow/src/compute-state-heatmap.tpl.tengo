@@ -26,9 +26,8 @@ self.awaitState("InputsLocked")
 self.awaitState("compositionData", "ResourceReady")
 
 self.body(func(inputs) {
-	// Slope 1, not pt's 10: the inputs are the per-sample composition files, one row
-	// per (parent, position, state), so the floor covers the job.
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB).memSlope(1)
+	// Sized by sample count: heatmap step.
+	wf := aggSizing.applyStep(pt.workflow(), "heatmap", inputs.samples, inputs.aggMemGB)
 
 	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
 
