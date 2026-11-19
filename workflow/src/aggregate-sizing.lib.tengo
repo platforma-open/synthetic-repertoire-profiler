@@ -45,6 +45,12 @@ apply := func(wf, aggMemGB) {
 	return wf.mem(fallbackGiB(aggMemGB) * units.GiB)
 }
 
+// applyComputed puts `wf` on the heavy queue and requests `bytes`, an integer of at least 4 GiB.
+// Slope 0 makes pt request max(memFloor, memIntercept) with or without blob sizes.
+applyComputed := func(wf, bytes) {
+	return wf.inHeavyQueue().memSlope(0).memIntercept(bytes)
+}
+
 // perSampleIntercept returns baseGiB + perSampleMiB x samples, in bytes, for .memIntercept().
 // With .memSlope(0) the request then grows with the sample count instead of input bytes.
 perSampleIntercept := func(baseGiB, perSampleMiB, samples) {
@@ -65,6 +71,7 @@ export {
 	FLOOR_GIB: FLOOR_GIB,
 	fallbackGiB: fallbackGiB,
 	apply: apply,
+	applyComputed: applyComputed,
 	perSampleIntercept: perSampleIntercept,
 	importMem: importMem
 }
