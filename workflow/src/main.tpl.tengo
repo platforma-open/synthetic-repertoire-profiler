@@ -285,6 +285,16 @@ wf.body(func(args) {
 	// Per-sample mutation-load histogram — feeds the in-block plot, not exported.
 	ntMutationHistogramXsv := xsvTarget("ntMutationHistogramXsv", "ntMutationHistogram", [ntMutationCountAxis], columnSpecs.mutationHistogramColumns("nucleotide", hasUmi))
 	aaMutationHistogramXsv := xsvTarget("aaMutationHistogramXsv", "aaMutationHistogram", [aaMutationCountAxis], columnSpecs.mutationHistogramColumns("aminoacid", hasUmi))
+	// Per-sample residue composition — feeds the in-block heat map, not exported.
+	compositionXsv := func(level, alphabet, posLabel) {
+		return xsvTarget(level + "StateCompositionXsv", level + "StateComposition", [
+			columnSpecs.parentIdAxisSpec("Parent"),
+			columnSpecs.positionAxisSpec(alphabet, posLabel),
+			columnSpecs.stateAxisSpec(alphabet)
+		], columnSpecs.stateHeatmapPerSampleColumns(alphabet, hasUmi))
+	}
+	aaStateCompositionXsv := compositionXsv("aa", "aminoacid", "Position aa")
+	ntStateCompositionXsv := compositionXsv("nt", "nucleotide", "Position nt")
 
 	// Per-sample step reports (ResourceMap keyed [step, format]; processColumn
 	// prepends sampleId). Feeds the sample report panel (json charts + txt views)
@@ -342,6 +352,9 @@ wf.body(func(args) {
 		fileOutput("paramsJson"),
 		fileOutput("ntAbundance"),
 		fileOutput("aaAbundance"),
+		// Raw per-sample composition files, summed into the pooled heat map.
+		fileOutput("aaStateComposition"),
+		fileOutput("ntStateComposition"),
 		fileOutput("knownDesignedNt"),
 		fileOutput("knownDesignedAa"),
 		fileOutput("aaConvergence"),
@@ -351,6 +364,8 @@ wf.body(func(args) {
 		aaAbundanceXsv,
 		ntMutationHistogramXsv,
 		aaMutationHistogramXsv,
+		aaStateCompositionXsv,
+		ntStateCompositionXsv,
 		knownNtAbundanceXsv,
 		knownAaAbundanceXsv,
 		aaConvergenceXsv,
@@ -422,8 +437,6 @@ wf.body(func(args) {
 			{ splitDataAndSpec: true, mem: aggMem }
 		)
 	}
-	// The properties TSVs are also read by the composition heat map below (for the
-	// cross-sample per-variant read total), so hold the file handles.
 	ntPropsTsv := aggVarsRun.output("ntProperties")
 	aaPropsTsv := aggVarsRun.output("aaProperties")
 	// aa properties always; nt properties only when exported (skip the import
@@ -438,9 +451,6 @@ wf.body(func(args) {
 	// aa always; nt only when nt export is enabled (its per-sample TSV is an empty
 	// placeholder otherwise — see repertoire-pipeline). Same ephemeral aggregate
 	// serves both levels.
-	// Returns the imported PColumns AND the aggregated TSV: the same table feeds the
-	// in-block composition heat map (compute-state-heatmap), which reads it as a
-	// frame rather than round-tripping the imported column back out.
 	importStateMatrix := func(levelPrefix, variantAxis, alphabet, posLabel) {
 		// One dedup job per position chunk, then a streaming concat of the results.
 		mergeInputs := { aggMemGB: aggMemGB }
@@ -452,37 +462,29 @@ wf.body(func(args) {
 			mergeInputs["chunk" + string(idx)] = chunkRun.output("stateMatrix")
 		}
 		smRun := render.createEphemeral(mergeStateMatrixTpl, mergeInputs)
-		stateMatrixTsv := smRun.output("stateMatrix")
-		return {
-			tsv: stateMatrixTsv,
-			cols: xsv.importFile(
-				stateMatrixTsv,
-				"tsv",
-				{
-					axes: [
-						variantAxis,
-						columnSpecs.parentIdAxisSpec("Parent"),
-						columnSpecs.positionAxisSpec(alphabet, posLabel)
-					],
-					columns: columnSpecs.stateMatrixColumns(alphabet),
-					storageFormat: "Parquet",
-					partitionKeyLength: 0
-				},
-				{ splitDataAndSpec: true, mem: aggMem }
-			)
-		}
+		return xsv.importFile(
+			smRun.output("stateMatrix"),
+			"tsv",
+			{
+				axes: [
+					variantAxis,
+					columnSpecs.parentIdAxisSpec("Parent"),
+					columnSpecs.positionAxisSpec(alphabet, posLabel)
+				],
+				columns: columnSpecs.stateMatrixColumns(alphabet),
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			{ splitDataAndSpec: true, mem: aggMem }
+		)
 	}
-	aaStateMatrix := undefined
 	aaStateMatrixCols := undefined
 	if exportStateMatrix {
-		aaStateMatrix = importStateMatrix("aa", aaVariantAxis, "aminoacid", "Position aa")
-		aaStateMatrixCols = aaStateMatrix.cols
+		aaStateMatrixCols = importStateMatrix("aa", aaVariantAxis, "aminoacid", "Position aa")
 	}
-	ntStateMatrix := undefined
 	ntStateMatrixCols := undefined
 	if exportNtStateMatrix {
-		ntStateMatrix = importStateMatrix("nt", ntVariantAxis, "nucleotide", "Position nt")
-		ntStateMatrixCols = ntStateMatrix.cols
+		ntStateMatrixCols = importStateMatrix("nt", ntVariantAxis, "nucleotide", "Position nt")
 	}
 
 	// Region membership [parentId, position(aa)] -> region, deduped cross-sample.
@@ -790,11 +792,10 @@ wf.body(func(args) {
 	// parent: positions from different parents are different coordinate systems, so
 	// the page maps parentId to a grouping (single parent) or to tabs (several).
 	stateHeatmapPfBuilder := pframes.pFrameBuilder()
-	addStateHeatmap := func(prefix, stateMatrixTsv, propertiesTsv, alphabet, posLabel, trace, parentResidueCols) {
+	addStateHeatmap := func(prefix, compositionData, alphabet, posLabel, trace, parentResidueCols) {
 		hmRun := render.createEphemeral(computeStateHeatmapTpl, {
 			aggMemGB: aggMemGB,
-			stateMatrixTsv: stateMatrixTsv,
-			propertiesTsv: propertiesTsv,
+			compositionData: compositionData,
 			hasUmi: hasUmi
 		})
 		hmCols := xsv.importFile(
@@ -820,12 +821,30 @@ wf.body(func(args) {
 			stateHeatmapPfBuilder.add(prefix + "parent/" + k, trace.inject(v.spec), v.data)
 		}
 	}
-	// Reads the aggregated matrix, so it only runs when one was built.
+	// Sums the per-sample composition, which is empty when its matrix flag is off.
 	if exportStateMatrix {
-		addStateHeatmap("aa/", aaStateMatrix.tsv, aaPropsTsv, "aminoacid", "Position aa", aaTrace, aaParentResidueCols)
+		addStateHeatmap("aa/", perSampleResults.outputData("aaStateComposition"), "aminoacid", "Position aa", aaTrace, aaParentResidueCols)
 	}
 	if exportNtStateMatrix {
-		addStateHeatmap("nt/", ntStateMatrix.tsv, ntPropsTsv, "nucleotide", "Position nt", ntTrace, ntParentResidueCols)
+		addStateHeatmap("nt/", perSampleResults.outputData("ntStateComposition"), "nucleotide", "Position nt", ntTrace, ntParentResidueCols)
+	}
+	// Per-sample composition cells, [sampleId, parentId, position, state], computed
+	// in each sample's own job. Axes 1-3 match the aggregate map's, so these share the
+	// parent-residue and region tracks added above.
+	addStateComposition := func(prefix, xsvName, trace) {
+		for columnName in perSampleResults.listXsvColumns(xsvName) {
+			stateHeatmapPfBuilder.add(
+				prefix + columnName,
+				trace.inject(perSampleResults.outputSpec(xsvName, columnName)),
+				perSampleResults.outputData(xsvName, columnName)
+			)
+		}
+	}
+	if exportStateMatrix {
+		addStateComposition("aaPerSample/", "aaStateCompositionXsv", aaTrace)
+	}
+	if exportNtStateMatrix {
+		addStateComposition("ntPerSample/", "ntStateCompositionXsv", ntTrace)
 	}
 	// Region membership as a second [parentId, position] track. The cross-sample
 	// region table is aa-positioned, so it rides the aa map only. Imported here a

@@ -22,7 +22,7 @@ smChunks := import(":state-matrix-chunks")
 json := import("json")
 
 // Outputs produced by downstream.tpl and passed straight through.
-passthroughNames := ["variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv"]
+passthroughNames := ["variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv"]
 for chunkKey in smChunks.keys() {
 	passthroughNames = append(passthroughNames, smChunks.outputName("aa", chunkKey))
 	passthroughNames = append(passthroughNames, smChunks.outputName("nt", chunkKey))
