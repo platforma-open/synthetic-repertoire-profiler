@@ -1,5 +1,5 @@
 // Memory of the cross-sample ptabler steps: the variant, linker and known-set aggregates, the
-// state-matrix dedup and merge, the composition heat map, and the variant-keyed imports.
+// state-matrix dedup, the composition heat map, and the variant-keyed imports.
 //
 // On a backend that reports blob sizes, each step keeps pt's input-size rule, 4 GiB + 10 x
 // input, with no upper limit, and a floor of FLOOR_GIB. The "Memory for aggregation" setting
@@ -13,8 +13,7 @@
 //
 //   aggregate-variants        1.1 to 2.1
 //   aggregate-linkers         1.0
-//   state-matrix dedup        0.5 GiB + 5.5 x input with every row distinct; 3.8 x on 3 samples
-//   state-matrix merge        0.9 to 3.4, collected in memory
+//   state-matrix dedup        1.0 on 57 samples, 2 GiB of matrix; holds the variant list, not the matrix
 //   heat map                  2.0 to 6.2
 //   xsv import                2.0 to 5.7
 //

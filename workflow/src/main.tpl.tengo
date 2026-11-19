@@ -14,7 +14,6 @@ xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
 strings := import("@platforma-sdk/workflow-tengo:strings")
 columnSpecs := import(":column-specs")
 regionConfig := import(":region-config")
-smChunks := import(":state-matrix-chunks")
 aggSizing := import(":aggregate-sizing")
 json := import("json")
 times := import("times")
@@ -25,7 +24,6 @@ repertoirePipelineTpl := assets.importTemplate(":repertoire-pipeline")
 vdjAutoRegionsTpl := assets.importTemplate(":vdj-auto-regions")
 aggregateVariantsTpl := assets.importTemplate(":aggregate-variants")
 aggregateStateMatrixTpl := assets.importTemplate(":aggregate-state-matrix")
-mergeStateMatrixTpl := assets.importTemplate(":merge-state-matrix")
 computeStateHeatmapTpl := assets.importTemplate(":compute-state-heatmap")
 aggregateRegionAnnotationTpl := assets.importTemplate(":aggregate-region-annotation")
 aggregateParentTablesTpl := assets.importTemplate(":aggregate-parent-tables")
@@ -339,15 +337,12 @@ wf.body(func(args) {
 		fileOutput("aaMutationHistogram"),
 		stepLogsOutput
 	]
-	// State matrix, split by position chunk inside the per-sample job: one plain File
-	// output per chunk key for each level that is on (see state-matrix-chunks outputName).
-	for chunkKey in smChunks.keys() {
-		if exportStateMatrix {
-			targetOutputs = append(targetOutputs, fileOutput(smChunks.outputName("aa", chunkKey)))
-		}
-		if exportNtStateMatrix {
-			targetOutputs = append(targetOutputs, fileOutput(smChunks.outputName("nt", chunkKey)))
-		}
+	// State matrix as mitool wrote it, one File per level that is on.
+	if exportStateMatrix {
+		targetOutputs = append(targetOutputs, fileOutput("aaStateMatrixTsv"))
+	}
+	if exportNtStateMatrix {
+		targetOutputs = append(targetOutputs, fileOutput("ntStateMatrixTsv"))
 	}
 
 	mitoolResources := {}
@@ -449,16 +444,15 @@ wf.body(func(args) {
 	// in-block composition heat map (compute-state-heatmap), which reads it as a
 	// frame rather than round-tripping the imported column back out.
 	importStateMatrix := func(levelPrefix, variantAxis, alphabet, posLabel) {
-		// One dedup job per position chunk, then a streaming concat of the results.
-		mergeInputs := { aggMemGB: aggMemGB }
-		for idx, key in smChunks.keys() {
-			chunkRun := render.createEphemeral(aggregateStateMatrixTpl, {
-				aggMemGB: aggMemGB,
-				stateMatrixData: perSampleResults.outputData(smChunks.outputName(levelPrefix, key))
-			})
-			mergeInputs["chunk" + string(idx)] = chunkRun.output("stateMatrix")
-		}
-		smRun := render.createEphemeral(mergeStateMatrixTpl, mergeInputs)
+		// The level's abundance tables name the variants each sample keeps; its variants
+		// tables name the parent mitool gave each variant in that sample.
+		smRun := render.createEphemeral(aggregateStateMatrixTpl, {
+			aggMemGB: aggMemGB,
+			stateMatrixData: perSampleResults.outputData(levelPrefix + "StateMatrixTsv"),
+			abundanceData: perSampleResults.outputData(levelPrefix + "Abundance"),
+			variantsData: perSampleResults.outputData(levelPrefix == "aa" ? "aaVariantsTsv" : "variantsTsv"),
+			variantsKeyColumn: levelPrefix == "aa" ? "aaVariantKey" : "variantKey"
+		})
 		stateMatrixTsv := smRun.output("stateMatrix")
 		return {
 			tsv: stateMatrixTsv,
