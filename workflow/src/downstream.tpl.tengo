@@ -804,29 +804,52 @@ self.body(func(inputs) {
 		file: variantsFile,
 		xsvType: "tsv"
 	}, { id: "variantsMeta", inferSchema: false })
+	aaMetaDf := ptWf.frame({
+		file: aaVariantsFile,
+		xsvType: "tsv"
+	}, { id: "aaVariantsMeta", inferSchema: false })
+	hasStopExpr := func() {
+		return pt.when(pt.col("aaSequence").strContains("*", { literal: true })).
+			then(pt.lit("true")).otherwise(pt.lit("false"))
+	}
+	// One row per aa key (an aa key can repeat across parents); "true" > "false", so max
+	// is "true" when any row has a stop.
+	aaStop := aaMetaDf.select(
+		pt.col("aaVariantKey"),
+		hasStopExpr().alias("aaHasStop")
+	).groupBy("aaVariantKey").agg(pt.col("aaHasStop").max().alias("aaHasStop"))
+	// aaHasStop "" = unknown: empty aa key, or aa key absent from this sample's aa table.
 	ntMetaDf.select(
 		pt.col("variantKey"),
 		pt.col("parentId"),
 		pt.col("aaVariantKey"),
 		pt.col("frameShift"),
 		pt.col("assignStatus")
-	).save("ntKeys.parquet")
+	).
+		join(aaStop, { how: "left", on: ["aaVariantKey"] }).
+		withColumns(
+			pt.when(pt.col("aaVariantKey").fillNull("").eq(pt.lit(""))).then(pt.lit("")).
+				otherwise(pt.col("aaHasStop").fillNull("")).alias("aaHasStop")
+		).
+		select(
+			pt.col("variantKey"),
+			pt.col("parentId"),
+			pt.col("aaVariantKey"),
+			pt.col("frameShift"),
+			pt.col("assignStatus"),
+			pt.col("aaHasStop")
+		).save("ntKeys.parquet")
 	ntWideSelect := [pt.col("variantKey"), pt.col("ntSequence"), pt.col("mutations"), pt.col("mutationCount")]
 	for rn in ntRegionCols {
 		ntWideSelect = append(ntWideSelect, pt.col("nSeq" + rn))
 	}
 	ntMetaDf.select(ntWideSelect...).save("ntWide.parquet")
 
-	aaMetaDf := ptWf.frame({
-		file: aaVariantsFile,
-		xsvType: "tsv"
-	}, { id: "aaVariantsMeta", inferSchema: false })
 	aaMetaDf.select(
 		pt.col("aaVariantKey"),
 		pt.col("parentId"),
 		pt.col("knownAaKey"),
-		pt.when(pt.col("aaSequence").strContains("*", { literal: true })).
-			then(pt.lit("true")).otherwise(pt.lit("false")).alias("hasStop")
+		hasStopExpr().alias("hasStop")
 	).save("aaKeys.parquet")
 	aaWideSelect := [pt.col("aaVariantKey"), pt.col("aaSequence"), pt.col("mutations"), pt.col("mutationCount")]
 	for rn in aaRegionCols {
