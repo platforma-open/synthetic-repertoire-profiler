@@ -18,7 +18,7 @@ times := import("times")
 
 // The state matrix leaves this template already split by position: one File-valued
 // output per level per chunk key. See state-matrix-chunks.
-outputNames := ["analyzeLogStream", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv"]
+outputNames := ["analyzeLogStream", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv"]
 for chunkKey in smChunks.keys() {
 	outputNames = append(outputNames, smChunks.outputName("aa", chunkKey))
 	outputNames = append(outputNames, smChunks.outputName("nt", chunkKey))
@@ -846,6 +846,63 @@ self.body(func(inputs) {
 		}
 	}
 
+	// Per-sample residue composition: [parentId, position, state] -> readCount,
+	// frequency (+ moleculeCount, moleculeFrequency on a UMI run). Built here from
+	// this sample's own matrix, so no cross-sample job joins the merged matrix with
+	// every sample's counts. The matrix is already restricted to the kept variants,
+	// so an inner join with the unfiltered counts keeps the same cells.
+	smCounts := undefined
+	countsFor := func(keyCol) {
+		if is_undefined(smCounts) {
+			smCounts = smWf.frame({
+				file: variantsFile,
+				xsvType: "tsv"
+			}, { id: "smCounts", inferSchema: false })
+		}
+		aggs := [pt.col("readCount").cast("Long").sum().alias("variantReads")]
+		if hasUmi {
+			aggs = append(aggs, pt.col("moleculeCount").cast("Long").sum().alias("variantMolecules"))
+		}
+		return smCounts.
+			filter(b6NonEmpty(keyCol)).
+			groupBy(keyCol).agg(aggs...).
+			withColumns(pt.col(keyCol).alias("variantKey"))
+	}
+	// Typed 0-row counts for a skipped matrix, so the placeholder output keeps the
+	// real column types without staging variants.tsv.
+	emptyCounts := func() {
+		cols := [pt.col("variantKey"), pt.lit(0).cast("Long").alias("variantReads")]
+		if hasUmi {
+			cols = append(cols, pt.lit(0).cast("Long").alias("variantMolecules"))
+		}
+		return emptySmFrame().select(cols...)
+	}
+	saveComposition := func(smDf, counts, fileName) {
+		cellAggs := [pt.col("variantReads").sum().alias("readCount")]
+		if hasUmi {
+			cellAggs = append(cellAggs, pt.col("variantMolecules").sum().alias("moleculeCount"))
+		}
+		countCols := [pt.col("variantKey"), pt.col("variantReads")]
+		if hasUmi {
+			countCols = append(countCols, pt.col("variantMolecules"))
+		}
+		cells := smCols(smDf).
+			join(counts.select(countCols...), { how: "inner", on: ["variantKey"] }).
+			groupBy("parentId", "position", "state").
+			agg(cellAggs...)
+		// Double on both sides: an integer division would floor every frequency to 0.
+		freqOf := func(countCol, alias) {
+			return pt.col(countCol).cast("Double").
+				truediv(pt.col(countCol).cast("Double").sum().over(["parentId", "position"])).
+				alias(alias)
+		}
+		freqCols := [freqOf("readCount", "frequency")]
+		if hasUmi {
+			freqCols = append(freqCols, freqOf("moleculeCount", "moleculeFrequency"))
+		}
+		cells.withColumns(freqCols...).save(fileName)
+	}
+
 	if exportStateMatrix {
 		// The matrix is variant-keyed, so it keeps only the variants the tables keep:
 		// the productive ones (aaVariantsFile is already filtered) and, under
@@ -869,8 +926,10 @@ self.body(func(inputs) {
 			aaSmDf = aaSmDf.join(smKeptAa, { how: "inner", on: ["variantKey"] })
 		}
 		chunkStateMatrix(aaSmDf, "aa")
+		saveComposition(aaSmDf, countsFor("aaVariantKey"), "aaStateComposition.parquet")
 	} else {
 		chunkStateMatrix(emptySmFrame(), "aa")
+		saveComposition(emptySmFrame(), emptyCounts(), "aaStateComposition.parquet")
 	}
 
 	// nt: its own flag, so the aa matrix and the nt tables do not decide it.
@@ -896,8 +955,10 @@ self.body(func(inputs) {
 			ntSmDf = ntSmDf.join(ntKeptKeys, { how: "inner", on: ["variantKey"] })
 		}
 		chunkStateMatrix(ntSmDf, "nt")
+		saveComposition(ntSmDf, countsFor("variantKey"), "ntStateComposition.parquet")
 	} else {
 		chunkStateMatrix(emptySmFrame(), "nt")
+		saveComposition(emptySmFrame(), emptyCounts(), "ntStateComposition.parquet")
 	}
 
 	smResult := smWf.run()
@@ -937,7 +998,9 @@ self.body(func(inputs) {
 		qcRow: ptResult.getFile("qcRow.parquet"),
 		// No sampleId column — processColumn supplies the sample key from the partition.
 		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),
-		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet")
+		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet"),
+		aaStateComposition: smResult.getFile("aaStateComposition.parquet"),
+		ntStateComposition: smResult.getFile("ntStateComposition.parquet")
 	}
 
 	// One File output per level per chunk key, so each dedup job gets its own slice.

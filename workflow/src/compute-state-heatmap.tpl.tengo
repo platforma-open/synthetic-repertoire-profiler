@@ -1,69 +1,61 @@
-// Per-position residue composition precalc (ephemeral). Level-neutral: used for
-// both the aa and the nt state matrix (identical TSV schema, one invocation each).
+// Per-position residue composition precalc, pooled over every sample (ephemeral).
+// Level-neutral: used for both the aa and the nt level.
 //
-// The state matrix is per-variant ([variantKey, parentId, position] -> state).
-// This collapses the variant axis: for each (parentId, position, state) cell it
-// sums the read counts of every variant carrying state `s` at position `p`, using
-// the cross-sample per-variant total (readCountTotal) — so the map pools every
-// sample in the run.
+// Reads the per-sample composition files that each sample's job already wrote
+// ([parentId, position, state] -> readCount, …) and sums them over samples:
 //
 //   stateHeatmap.tsv   [parentId, position, state] -> readCount, frequency
 //                       (+ moleculeCount, moleculeFrequency on a UMI run)
 //
-// `frequency` is the same sum divided by its (parentId, position) column total, so
-// each position column adds up to 1 — the per-position residue composition. Every
-// value column rides in one frame; the plot page defaults to frequency.
+// `frequency` is recomputed from the summed counts over the (parentId, position)
+// column total, so each position column adds up to 1. Averaging the per-sample
+// frequencies would weight every sample equally and give a different number.
 //
 // The parent-residue track is NOT built here — it comes from mitool via
 // aggregate-parent-tables.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 aggSizing := import(":aggregate-sizing")
 
 self.defineOutputs("stateHeatmap")
 
 self.awaitState("InputsLocked")
-self.awaitState("stateMatrixTsv", "ResourceReady")
-self.awaitState("propertiesTsv", "ResourceReady")
+self.awaitState("compositionData", "ResourceReady")
 
 self.body(func(inputs) {
 	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
 
-	// inferSchema:false → every column read as String, matching the sibling
-	// aggregates (the position axis is String, see column-specs positionAxisSpec).
-	// The numeric column consumed below is cast explicitly.
-	smDf := wf.frame({
-		file: inputs.stateMatrixTsv,
-		xsvType: "tsv"
-	}, { id: "sm", inferSchema: false })
-
 	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
 
-	// Cross-sample per-variant totals from the aggregated properties table — already
-	// pooled over every sample, which is what this map plots.
-	propsSelect := [
-		pt.col("variantKey"),
-		pt.col("readCountTotal").cast("Long").alias("variantReads")
+	// Same columns and types from every sample, so the concat accepts them.
+	perSampleSelect := [
+		pt.col("parentId").cast("String"),
+		pt.col("position").cast("String"),
+		pt.col("state").cast("String"),
+		pt.col("readCount").cast("Long")
 	]
 	if hasUmi {
-		propsSelect = append(propsSelect,
-			pt.col("uniqueMoleculeCountSum").cast("Long").alias("variantMolecules"))
+		perSampleSelect = append(perSampleSelect, pt.col("moleculeCount").cast("Long"))
 	}
-	variantReadsDf := wf.frame({
-		file: inputs.propertiesTsv,
-		xsvType: "tsv"
-	}, { id: "props", inferSchema: false }).
-		select(propsSelect...)
+	frames := []
+	rmMap := inputs.compositionData.inputs()
+	for sKey in maps.getKeys(rmMap) {
+		frames = append(frames, wf.frame({
+			file: rmMap[sKey],
+			xsvType: "parquet"
+		}, { id: "comp_" + string(len(frames)) }).select(perSampleSelect...))
+	}
+	ll.assert(len(frames) > 0, "no per-sample composition frames")
+	perSample := len(frames) == 1 ? frames[0] : pt.concat(frames)
 
-	// Collapse to [parentId, position, state]. Inner join drops variants with no
-	// abundance row.
-	cellAggs := [pt.col("variantReads").sum().alias("readCount")]
+	cellAggs := [pt.col("readCount").sum().alias("readCount")]
 	if hasUmi {
-		cellAggs = append(cellAggs, pt.col("variantMolecules").sum().alias("moleculeCount"))
+		cellAggs = append(cellAggs, pt.col("moleculeCount").sum().alias("moleculeCount"))
 	}
-	cells := smDf.
-		join(variantReadsDf, { on: "variantKey", how: "inner" }).
+	cells := perSample.
 		groupBy("parentId", "position", "state").
 		agg(cellAggs...)
 

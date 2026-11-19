@@ -322,6 +322,80 @@ stateHeatmapColumns := func(alphabet, hasUmi) {
 	})
 }
 
+// Per-sample variant of stateHeatmapColumns, keyed [sampleId, parentId, position,
+// state]. Same cells, one row per sample. Distinct spec names (…PerSample) so both
+// sets ride the same frame without colliding, and no `abundance/aggregated`
+// annotation — these are NOT pooled over samples. The page facets these by sampleId.
+stateHeatmapPerSampleColumns := func(alphabet, hasUmi) {
+	cols := []
+	if hasUmi {
+		cols = append(cols, {
+			column: "moleculeFrequency",
+			id: "state-umi-frequency-per-sample",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/repertoire/stateMoleculeFrequencyPerSample",
+				valueType: "Double",
+				domain: { "pl7.app/alphabet": alphabet },
+				annotations: tableAnno(100500, "default", {
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/normalized": "true",
+					"pl7.app/label": "Residue frequency per sample (UMIs)",
+					"pl7.app/format": ".2p"
+				})
+			}
+		}, {
+			column: "moleculeCount",
+			id: "state-umi-count-per-sample",
+			allowNA: false,
+			spec: {
+				name: "pl7.app/repertoire/stateMoleculeCountPerSample",
+				valueType: "Long",
+				domain: { "pl7.app/alphabet": alphabet },
+				annotations: tableAnno(90500, "default", {
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/normalized": "false",
+					"pl7.app/label": "UMI count per sample"
+				})
+			}
+		})
+	}
+	return append(cols, {
+		column: "readCount",
+		id: "state-read-count-per-sample",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/stateReadCountPerSample",
+			valueType: "Long",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(90000, "default", {
+				"pl7.app/isAbundance": "true",
+				"pl7.app/abundance/normalized": "false",
+				"pl7.app/label": "Read count per sample"
+			})
+		}
+	}, {
+		column: "frequency",
+		id: "state-frequency-per-sample",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/repertoire/stateFrequencyPerSample",
+			valueType: "Double",
+			domain: {
+				"pl7.app/alphabet": alphabet
+			},
+			annotations: tableAnno(100000, "default", {
+				"pl7.app/isAbundance": "true",
+				"pl7.app/abundance/normalized": "true",
+				"pl7.app/label": "Residue frequency per sample",
+				"pl7.app/format": ".2p"
+			})
+		}
+	})
+}
+
 // Parent (reference) residue per position, keyed [parentId, position] — the track
 // that shows the parent sequence under the heat map's position axis, and what a
 // downstream block differences against to tell a mutated cell from an unmutated
@@ -1418,6 +1492,7 @@ export {
 	stateMatrixColumns: stateMatrixColumns,
 	stateAxisSpec: stateAxisSpec,
 	stateHeatmapColumns: stateHeatmapColumns,
+	stateHeatmapPerSampleColumns: stateHeatmapPerSampleColumns,
 	parentResidueColumns: parentResidueColumns,
 	parentSequenceColumns: parentSequenceColumns,
 	parentSubdividedRegionsColumns: parentSubdividedRegionsColumns,

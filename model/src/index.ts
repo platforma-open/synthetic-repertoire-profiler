@@ -579,7 +579,12 @@ export type BlockData = {
   knownVariantsAaTableState: PlDataTableStateV2;
   graphStateMutationHistogram: GraphMakerState;
   graphStateStateHeatmap: GraphMakerState;
+  graphStateStateHeatmapPerSample: GraphMakerState;
+  // Which map the Residue Composition page shows.
+  stateHeatmapTab: StateHeatmapTab;
 };
+
+export type StateHeatmapTab = "pooled" | "perSample";
 
 /** Workflow-facing args projected from `BlockData` by `.args(...)`. */
 export type BlockArgs = {
@@ -686,7 +691,9 @@ type LateInitFields =
   | "graphStateMutationHistogram"
   | "graphStateStateHeatmap"
   | "knownVariantsNtTableState";
-type BlockDataV13 = Omit<BlockData, LateInitFields> & Partial<Pick<BlockData, LateInitFields>>;
+type BlockDataV13 = Omit<BlockDataV14, LateInitFields> &
+  Partial<Pick<BlockDataV14, LateInitFields>>;
+type BlockDataV14 = Omit<BlockData, "graphStateStateHeatmapPerSample" | "stateHeatmapTab">;
 
 export const DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE: GraphMakerState = {
   title: "Mutation Distribution",
@@ -735,6 +742,16 @@ export const DEFAULT_STATE_HEATMAP_GRAPH_STATE: GraphMakerState = {
       hideAxisLabels: false,
       cellSize: 20,
     },
+  },
+};
+
+export const DEFAULT_STATE_HEATMAP_PER_SAMPLE_GRAPH_STATE: GraphMakerState = {
+  ...DEFAULT_STATE_HEATMAP_GRAPH_STATE,
+  title: "Per-position residue composition per sample",
+  // One sample per row: each map is as wide as a long parent's position axis.
+  axesSettings: {
+    ...DEFAULT_STATE_HEATMAP_GRAPH_STATE.axesSettings,
+    other: { facetColumns: 1 },
   },
 };
 
@@ -829,13 +846,18 @@ const dataModel = new DataModelBuilder({ kind })
   // project is stamped at an earlier version with them absent, and a project already at the
   // latest version runs no migration until a newer one exists — so GraphMaker was handed an
   // undefined state and threw. Backfill here; a project that already has them keeps its values.
-  .migrate<BlockData>("v14", (v13) => ({
+  .migrate<BlockDataV14>("v14", (v13) => ({
     ...v13,
     graphStateMutationHistogram: v13.graphStateMutationHistogram ?? {
       ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE,
     },
     graphStateStateHeatmap: v13.graphStateStateHeatmap ?? { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
     knownVariantsNtTableState: v13.knownVariantsNtTableState ?? createPlDataTableStateV2(),
+  }))
+  .migrate<BlockData>("v15", (v14) => ({
+    ...v14,
+    graphStateStateHeatmapPerSample: { ...DEFAULT_STATE_HEATMAP_PER_SAMPLE_GRAPH_STATE },
+    stateHeatmapTab: "pooled",
   }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
@@ -887,6 +909,8 @@ const dataModel = new DataModelBuilder({ kind })
     knownVariantsAaTableState: createPlDataTableStateV2(),
     graphStateMutationHistogram: { ...DEFAULT_MUTATION_HISTOGRAM_GRAPH_STATE },
     graphStateStateHeatmap: { ...DEFAULT_STATE_HEATMAP_GRAPH_STATE },
+    graphStateStateHeatmapPerSample: { ...DEFAULT_STATE_HEATMAP_PER_SAMPLE_GRAPH_STATE },
+    stateHeatmapTab: "pooled" as const,
   }));
 
 const DNA_IUPAC_RE = /^[ACGTacgtMKRYWSBDHVNmkrywsbdhvn]*$/;
@@ -1245,16 +1269,25 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       ?.map((c) => ({ columnId: c.id, spec: c.spec }) satisfies PColumnIdAndSpec),
   )
 
-  // Per-position residue composition heat map. Own columns only — the frame is
-  // self-contained (cells plus the parent-residue and region tracks, all keyed on
-  // [parentId, position]), and `createPFrameForGraphs` would walk the result pool
-  // and pull this block's own `variants` export in, state matrix included.
+  // Per-position residue composition heat map. Own columns (aggregate cells, the
+  // per-sample cells, and the parent-residue and region tracks keyed on
+  // [parentId, position]) plus upstream single-axis sample metadata, so the
+  // per-sample cells can facet and filter by sample group. Anchored on the block
+  // input like the mutation histogram; `createPFrameForGraphs` would walk the result
+  // pool and pull this block's own `variants` export in, state matrix included.
   .outputWithStatus("stateHeatmapPf", (ctx): PFrameHandle | undefined => {
     const pCols = ctx.outputs
       ?.resolve({ field: "stateHeatmap", assertFieldType: "Input", allowPermanentAbsence: true })
       ?.getPColumns();
     if (pCols === undefined) return undefined;
-    return ctx.createPFrame(pCols);
+    const inputRef = ctx.data.input;
+    const sampleMeta =
+      inputRef !== undefined
+        ? (ctx.resultPool.getAnchoredPColumns({ main: inputRef }, [
+            { axes: [{ anchor: "main", idx: 0 }] },
+          ]) ?? [])
+        : [];
+    return ctx.createPFrame([...pCols, ...sampleMeta]);
   })
 
   // Drives the page's default axis mapping, and the parent enumeration that
