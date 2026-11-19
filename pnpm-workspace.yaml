@@ -16,11 +16,11 @@ catalog:
   "@platforma-open/milaboratories.software-mitool": 2.3.1-177-main
   "@platforma-sdk/model": 1.90.2
   "@platforma-sdk/ui-vue": 1.90.8
-  "@platforma-sdk/workflow-tengo": 6.23.0
-  "@platforma-sdk/test": 1.90.10
+  "@platforma-sdk/workflow-tengo": 6.24.0
+  "@platforma-sdk/test": 1.90.12
   "@platforma-sdk/block-kind": 1.1.1
-  "@platforma-sdk/block-tools": 2.20.3
-  "@platforma-sdk/tengo-builder": 4.1.27
+  "@platforma-sdk/block-tools": 2.20.4
+  "@platforma-sdk/tengo-builder": 4.1.28
   "@platforma-sdk/package-builder": 3.18.1
   "@milaboratories/ts-builder": 1.8.0
   "@milaboratories/ts-configs": 1.4.1
