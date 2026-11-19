@@ -90,6 +90,7 @@ self.body(func(inputs) {
 	minReadsPerConsensus := params.minReadsPerConsensus
 	minUmiQuality := params.minUmiQuality
 	limitInput := params.limitInput
+	unstranded := params.unstranded
 	// The "Advanced Settings" overrides for :resources; either may be absent.
 	res := inputs.resources
 
@@ -175,6 +176,7 @@ self.body(func(inputs) {
 		pattern: pattern,
 		inputArg: inputArg,
 		limitInput: limitInput,
+		unstranded: unstranded,
 		inputFiles: inputFilesBuilder.build()
 	}, {
 		metaInputs: {

@@ -355,6 +355,21 @@ ACGTACGT..."
       </template>
     </PlTextField>
 
+    <PlCheckbox
+      :model-value="app.model.data.unstranded ?? false"
+      @update:model-value="(v) => (app.model.data.unstranded = v)"
+    >
+      Search both strands
+      <PlTooltip class="info" position="top">
+        <template #tooltip>
+          Off by default. When on, a read that does not match the tag pattern is also tried as its
+          reverse complement (single-end), or with its two mates swapped (paired-end). Turn it on
+          for reads that arrive in both orientations, such as Nanopore amplicons. Otherwise about
+          half of the reads fail to match.
+        </template>
+      </PlTooltip>
+    </PlCheckbox>
+
     <template v-if="umi">
       <PlSectionSeparator>Molecule consensus</PlSectionSeparator>
       <PlRow>

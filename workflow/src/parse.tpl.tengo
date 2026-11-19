@@ -1,7 +1,7 @@
 // Per-sample `mitool parse` subtemplate.
 //
-// Its own memoization boundary: parse reads only the tag pattern, the read limit
-// and the FASTQ files, so it survives a change to any analyze or export setting.
+// Its own memoization boundary: parse reads only the tag pattern, the strand mode,
+// the read limit and the FASTQ files, so it survives a change to any analyze or export setting.
 // The resource overrides arrive as a meta input, which deduplication ignores.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
@@ -25,6 +25,7 @@ self.body(func(inputs) {
 	pattern := inputs.pattern
 	inputArg := inputs.inputArg
 	limitInput := inputs.limitInput
+	unstranded := inputs.unstranded
 
 	parseBuilder := exec.builder().
 		name("mitool parse").
@@ -40,6 +41,11 @@ self.body(func(inputs) {
 	// An option, so it must precede the positional arguments below.
 	if !is_undefined(limitInput) {
 		parseBuilder = parseBuilder.arg("-n").arg(string(int(limitInput)))
+	}
+	// Single-end: also try the reverse-complemented read. Paired-end: also try the
+	// mates swapped. A reversed hit is flipped before capture, so inserts stay forward.
+	if unstranded == true {
+		parseBuilder = parseBuilder.arg("--unstranded")
 	}
 	parseBuilder = parseBuilder.
 		arg(inputArg).

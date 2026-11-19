@@ -435,6 +435,9 @@ export type BlockData = {
   // mitool tag pattern: insert capture (R1/R2) + optional UMI. UMI presence and layout
   // are derived by parsing this string — see patternUmiSpec.
   tagPattern?: string;
+  // → mitool parse -u: also match the reverse-complemented read (single-end), or the
+  // swapped mates (paired-end). Absent = forward only.
+  unstranded?: boolean;
 
   // Parents (alignment references) — FASTA, two modes.
   parentInputMode: ParentInputMode;
@@ -590,6 +593,8 @@ export type StateHeatmapTab = "pooled" | "perSample";
 export type BlockArgs = {
   input: PlRef;
   tagPattern: string;
+  // `true` or absent, never `false`: a `false` would change args and mark finished runs stale.
+  unstranded?: true;
   patternParts: PatternParts;
   // Absent when the pattern has no UMI; its presence switches the UMI chain on.
   umi?: UmiSpec;
@@ -898,6 +903,7 @@ const dataModel = new DataModelBuilder({ kind })
     // Paired-end default; the UI refits it to the dataset's read structure when a
     // dataset is picked (see onSelectInput in SettingsPanel).
     tagPattern: params?.tagPattern ?? DEFAULT_TAG_PATTERN_PAIRED,
+    unstranded: params?.unstranded,
     parentInputMode: params?.parentInputMode ?? "fastaSequence",
     parentSequence: params?.parentSequence,
     parentRegions: params?.parentRegions,
@@ -1553,6 +1559,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     return {
       input: data.input,
       tagPattern,
+      unstranded: data.unstranded ? true : undefined,
       patternParts,
       umi,
       // Suppressed without a UMI so the staleness gate ignores them on a non-UMI run.
@@ -1640,6 +1647,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   .templateParams((data) => ({
     input: data.input,
     tagPattern: data.tagPattern,
+    unstranded: data.unstranded,
     parentInputMode: data.parentInputMode,
     parentSequence: data.parentSequence,
     parentRegions: data.parentRegions,
