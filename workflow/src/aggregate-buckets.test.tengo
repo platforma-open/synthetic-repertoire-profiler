@@ -1,0 +1,160 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+units := import("@platforma-sdk/workflow-tengo:units")
+buckets := import(":aggregate-buckets")
+variantLabel := import(":variant-label")
+
+GiB := units.GiB
+MiB := units.MiB
+
+TestPlanPicksSmallestPowerOfTwo := func() {
+	small := buckets.plan(500 * MiB, 3, undefined)
+	test.isEqual(1, small.k)
+	test.isEqual(1, small.l)
+	test.isEqual(500 * MiB, small.totalBytes)
+	test.isEqual(1, buckets.plan(1 * GiB, 3, undefined).k)
+	test.isEqual(2, buckets.plan(1 * GiB + 1, 3, undefined).k)
+	test.isEqual(8, buckets.plan(8 * GiB, 200, undefined).k)
+	test.isEqual(16, buckets.plan(8 * GiB + 1, 200, undefined).k)
+	huge := buckets.plan(1000 * GiB, 4000, undefined)
+	test.isEqual(256, huge.k)
+	test.isEqual(26, huge.l)
+	test.isEqual(8, buckets.plan(8 * GiB, 200, undefined).l)
+	test.isEqual(26, buckets.plan(64 * GiB, 1500, undefined).l)
+}
+
+TestPlanWithoutBlobSizesUsesSampleEstimate := func() {
+	p := buckets.plan(undefined, 200, undefined)
+	test.isEqual(200 * 42 * MiB, p.totalBytes)
+	test.isEqual(16, p.k)
+}
+
+TestPlanOverride := func() {
+	four := buckets.plan(500 * MiB, 3, 4)
+	test.isEqual(4, four.k)
+	test.isEqual(4, four.l)
+	test.isEqual(500 * MiB, four.totalBytes)
+	most := buckets.plan(500 * MiB, 3, 256)
+	test.isEqual(256, most.k)
+	test.isEqual(26, most.l)
+}
+
+TestKeyBucketsPartition256Prefixes := func() {
+	hex := "0123456789abcdef"
+	all := {}
+	for p := 0; p < 256; p++ {
+		all[hex[p / 16:p / 16 + 1] + hex[p % 16:p % 16 + 1]] = true
+	}
+
+	for k in [1, 2, 4, 8, 256] {
+		lists := buckets.keyBucketPrefixes(k)
+		test.isEqual(k, len(lists))
+		seen := {}
+		for list in lists {
+			test.isEqual(256 / k, len(list))
+			for prefix in list {
+				test.isTrue(all[prefix] == true, "not a 2-char lowercase hex prefix: " + prefix)
+				test.isTrue(is_undefined(seen[prefix]), "prefix repeats: " + prefix)
+				seen[prefix] = true
+			}
+		}
+		test.isEqual(256, len(seen))
+	}
+
+	two := buckets.keyBucketPrefixes(2)
+	test.isEqual("00", two[0][0])
+	test.isEqual("01", two[1][0])
+	test.isEqual("ff", two[1][127])
+}
+
+TestLabelLettersDealt := func() {
+	test.isEqual(["ABCDEFGHIJKLMNOPQRSTUVWXYZ"], buckets.labelLetters(1))
+	test.isEqual("AEIMQUY", buckets.labelLetters(4)[0])
+	for l in [1, 4, 8, 26] {
+		letters := buckets.labelLetters(l)
+		test.isEqual(l, len(letters))
+		total := 0
+		for s in letters {
+			total += len(s)
+		}
+		test.isEqual(26, total)
+	}
+}
+
+TestBucketJobBytes := func() {
+	test.isEqual(2 * (2 * GiB + 200 * 16 * MiB + 6 * GiB), buckets.bucketJobBytes(200, 8 * GiB, 8, undefined))
+	test.isEqual(16 * GiB, buckets.bucketJobBytes(3, 10 * MiB, 1, undefined))
+	test.isEqual(100 * GiB, buckets.bucketJobBytes(3, 10 * MiB, 1, 100))
+}
+
+TestFlatJobBytes := func() {
+	test.isEqual(16 * GiB, buckets.flatJobBytes(undefined))
+	test.isEqual(16 * GiB, buckets.flatJobBytes(8))
+	test.isEqual(33 * GiB, buckets.flatJobBytes(32.5))
+}
+
+keyPrefixExpr := {
+	type: "substring",
+	value: {
+		type: "fill_null",
+		input: { type: "col", name: "variantKey" },
+		fillValue: { type: "const", value: "" }
+	},
+	start: { type: "const", value: 0 },
+	length: { type: "const", value: 2 }
+}
+
+TestKeyPredicate := func() {
+	plain := buckets.keyPredicate(pt, "variantKey", ["00", "02"], false)._getExpression({})
+	test.isEqual({ type: "in_set", value: keyPrefixExpr, set: ["00", "02"] }, plain)
+
+	caught := buckets.keyPredicate(pt, "variantKey", ["00", "02"], true)._getExpression({})
+	test.isEqual("or", caught.type)
+	test.isEqual(plain, caught.operands[0])
+	test.isEqual("not", caught.operands[1].type)
+	test.isEqual(keyPrefixExpr, caught.operands[1].value.value)
+	test.isEqual(256, len(caught.operands[1].value.set))
+}
+
+labelPrefix := {
+	type: "to_upper",
+	value: {
+		type: "substring",
+		value: {
+			type: "str_replace",
+			value: { type: "col", name: "_seqHash" },
+			pattern: { type: "const", value: "\\d" },
+			replacement: { type: "const", value: "" },
+			replaceAll: true,
+			literal: false
+		},
+		start: { type: "const", value: 0 },
+		length: { type: "const", value: 5 }
+	}
+}
+
+TestLabelPrefixExpr := func() {
+	test.isEqual(labelPrefix, variantLabel.labelPrefixExpr(pt, "_seqHash")._getExpression({}))
+}
+
+TestLabelPredicate := func() {
+	first := {
+		type: "fill_null",
+		input: {
+			type: "substring",
+			value: labelPrefix,
+			start: { type: "const", value: 0 },
+			length: { type: "const", value: 1 }
+		},
+		fillValue: { type: "const", value: "" }
+	}
+
+	plain := buckets.labelPredicate(pt, "_seqHash", "AE", false)._getExpression({})
+	test.isEqual({ type: "in_set", value: first, set: ["A", "E"] }, plain)
+
+	caught := buckets.labelPredicate(pt, "_seqHash", "AE", true)._getExpression({})
+	test.isEqual({
+		type: "or",
+		operands: [plain, { type: "eq", lhs: first, rhs: { type: "const", value: "" } }]
+	}, caught)
+}
