@@ -15,7 +15,7 @@ import {
   useAgGridOptions,
 } from "@platforma-sdk/ui-vue";
 import { computed, ref, watch } from "vue";
-import type { AlignReport } from "./alignmentChartSettings";
+import type { AlignReport, ParseReport } from "./alignmentChartSettings";
 import { getAlignmentChartSettings } from "./alignmentChartSettings";
 import { useApp } from "./app";
 import { pipelineStatus } from "./stepProgress";
@@ -33,6 +33,7 @@ type SampleRow = {
   progressPercent?: string;
   running: boolean;
   alignReport?: AlignReport;
+  parseReport?: ParseReport;
 };
 
 // Settings drawer: open until the run starts; auto-close when the workflow
@@ -52,20 +53,28 @@ const stepEntries = computed(() => model.outputs.stepProgress?.data ?? []);
 
 const doneSet = computed(() => new Set((model.outputs.done ?? []).map(String)));
 
-// sampleId -> parsed align.report.json (alignment outcome) for the Alignments
-// column, read from the consolidated reports map (step "align", format "json").
-// Content is fetched + cached reactively by handle.
-const alignReportMap = computed(() => {
-  const m = new Map<string, AlignReport | undefined>();
-  for (const e of model.outputs.reports?.data ?? []) {
-    if (e.value === undefined || e.key[1] !== "align" || e.key[2] !== "json") continue;
-    m.set(
-      String(e.key[0]),
-      reactiveFileContent.getContentJson(e.value.handle)?.value as AlignReport | undefined,
-    );
-  }
-  return m;
-});
+// sampleId -> parsed `<step>.report.json` for the Alignments column, read from the
+// consolidated reports map. Content is fetched + cached reactively by handle.
+const reportMap = <T>(step: string) =>
+  computed(() => {
+    const m = new Map<string, T | undefined>();
+    for (const e of model.outputs.reports?.data ?? []) {
+      if (e.value === undefined || e.key[1] !== step || e.key[2] !== "json") continue;
+      m.set(String(e.key[0]), reactiveFileContent.getContentJson(e.value.handle)?.value as T);
+    }
+    return m;
+  });
+const alignReportMap = reportMap<AlignReport>("align");
+const parseReportMap = reportMap<ParseReport>("parse");
+// A UMI run has a consensus report; its bar leaves parse out (see getAlignmentChartSettings).
+const umiSamples = computed(
+  () =>
+    new Set(
+      (model.outputs.reports?.data ?? [])
+        .filter((e) => e.key[1] === "consensus")
+        .map((e) => String(e.key[0])),
+    ),
+);
 
 const rows = computed<SampleRow[]>(() => {
   const labels = model.outputs.sampleLabels ?? {};
@@ -84,6 +93,7 @@ const rows = computed<SampleRow[]>(() => {
       progressPercent: status.percent,
       running: status.running,
       alignReport: alignReportMap.value.get(sampleId),
+      parseReport: umiSamples.value.has(sampleId) ? undefined : parseReportMap.value.get(sampleId),
     };
   });
 });
@@ -134,7 +144,9 @@ const columnDefs: ColDef<SampleRow>[] = [
     cellStyle: { "--ag-cell-horizontal-padding": "12px" },
     cellRendererSelector: (cellData) => ({
       component: PlAgChartStackedBarCell,
-      params: { value: getAlignmentChartSettings(cellData.data?.alignReport) },
+      params: {
+        value: getAlignmentChartSettings(cellData.data?.alignReport, cellData.data?.parseReport),
+      },
     }),
   }),
 ];

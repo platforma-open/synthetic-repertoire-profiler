@@ -221,6 +221,7 @@ self.body(func(inputs) {
 	// --- everything after parse ---
 	downInputs := {
 		analyzeMic: analyzeMic,
+		parseReportJson: parseRun.output("parseReportJson"),
 		sampleId: sampleId,
 		params: params
 	}

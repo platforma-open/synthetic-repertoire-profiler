@@ -35,6 +35,8 @@ import { parsePattern, patternUmiSpec } from "./pattern";
 export { parsePattern, patternHasUmi, patternUmiSpec } from "./pattern";
 export type { LengthRange, PatternHalf, PatternParts, UmiSpec } from "./pattern";
 export { parseParentFasta } from "./parentFasta";
+export { alignmentBarParts } from "./alignmentBar";
+export type { AlignmentBarPart, AlignReport, ParseReport } from "./alignmentBar";
 export type { ParsedParent } from "./parentFasta";
 
 // The parent-input and region shapes are part of the kind's init-params

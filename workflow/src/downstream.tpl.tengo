@@ -259,8 +259,9 @@ self.body(func(inputs) {
 
 	// Per-sample reports ResourceMap keyed [step, format]; processColumn prepends
 	// sampleId -> [sampleId, step, format]. Feeds the sample report panel + the
-	// Main-page Alignments cell (align/json).
+	// Main-page Alignments cell (parse/json + align/json).
 	reportsMap := pcolumn.resourceMapBuilder(2)
+	reportsMap.add(["parse", "json"], inputs.parseReportJson)
 	for step in reportSteps {
 		reportsMap.add([step, "json"], analyzeCmd.getFile("out." + step + ".report.json"))
 	}
