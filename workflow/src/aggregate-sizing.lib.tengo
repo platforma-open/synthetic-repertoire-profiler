@@ -1,24 +1,26 @@
-// Memory of the cross-sample ptabler steps: the variant, linker and known-set aggregates, the
-// state-matrix dedup and merge, the composition heat map, and the variant-keyed imports.
+// Memory of the cross-sample ptabler steps: the variant and known-set aggregates, the
+// state-matrix dedup, the composition heat map, and the variant-keyed imports.
 //
-// On a backend that reports blob sizes, each step keeps pt's input-size rule, 4 GiB + 10 x
-// input, with no upper limit, and a floor of FLOOR_GIB. The "Memory for aggregation" setting
-// does not apply there: the grant already covers the measured need, so a user number could
-// only shrink how many steps the queue admits at once.
+// On a backend that reports blob sizes, each step keeps pt's input-size rule, 4 GiB + slope x
+// input, with no upper limit, and a floor of FLOOR_GIB. The slope is pt's 10 unless a step sets
+// its own below. The "Memory for aggregation" setting does not apply there: the grant already
+// covers the measured need, so a user number could only shrink how many steps the queue admits
+// at once.
 //
 // A backend without blob sizes cannot evaluate the rule. There each step gets a flat
 // FLOOR_GIB, and the setting raises it. Same rule as mixcr-clonotyping's shard plan.
 //
 // Measured peak RSS per stored input byte, polars 1.33.1, 8 threads, 1 to 6 samples:
 //
-//   aggregate-variants        1.1 to 2.1
-//   aggregate-linkers         1.0
-//   state-matrix dedup        0.5 GiB + 5.5 x input with every row distinct; 3.8 x on 3 samples
-//   state-matrix merge        0.9 to 3.4, collected in memory
-//   heat map                  2.0 to 6.2
-//   xsv import                2.0 to 5.7
+//   aggregate-variants        per byte of parquet input: 4.5 without the nt tables and 13 with them, locally
+//                             under a hard limit; 200 samples without them peaked at 17 GiB in a 40 GiB
+//                             grant; runs at slope 10 and 30
+//   state-matrix dedup        0.3 on 3 samples, 31 GiB of matrix, in a 12 GiB limit; sized by sample count
+//   heat map                  2.0 to 6.2 below 1 GiB; a 25 GiB matrix ran in a 12 GiB limit; runs at slope 1
+//   xsv import                2.0 to 5.7 below 1 GiB; 1.1 on a 25 GiB matrix in a 54 GiB grant; the matrix import runs at slope 3
 //
-// So 10 x input covers every step by 1.6x or more.
+// So each slope covers its step by 2.0x or more, except the matrix import, whose peak follows
+// its grant (1.65x at slope 3).
 
 feats := import("@platforma-sdk/workflow-tengo:feats")
 units := import("@platforma-sdk/workflow-tengo:units")
@@ -43,6 +45,12 @@ apply := func(wf, aggMemGB) {
 	return wf.mem(fallbackGiB(aggMemGB) * units.GiB)
 }
 
+// perSampleIntercept returns baseGiB + perSampleMiB x samples, in bytes, for .memIntercept().
+// With .memSlope(0) the request then grows with the sample count instead of input bytes.
+perSampleIntercept := func(baseGiB, perSampleMiB, samples) {
+	return baseGiB * units.GiB + perSampleMiB * units.MiB * samples
+}
+
 // importMem returns the `mem` option of a variant-keyed xsv.importFile: undefined, which
 // leaves the SDK's input-size rule in charge, or the flat grant on a backend without blob
 // sizes.
@@ -57,5 +65,6 @@ export {
 	FLOOR_GIB: FLOOR_GIB,
 	fallbackGiB: fallbackGiB,
 	apply: apply,
+	perSampleIntercept: perSampleIntercept,
 	importMem: importMem
 }

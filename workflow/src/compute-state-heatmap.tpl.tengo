@@ -26,7 +26,9 @@ self.awaitState("InputsLocked")
 self.awaitState("compositionData", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+	// Slope 1, not pt's 10: the inputs are the per-sample composition files, one row
+	// per (parent, position, state), so the floor covers the job.
+	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB).memSlope(1)
 
 	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
 

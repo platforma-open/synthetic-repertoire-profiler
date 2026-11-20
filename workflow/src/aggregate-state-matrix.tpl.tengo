@@ -1,16 +1,22 @@
-// Cross-sample state-matrix dedup for ONE position chunk (ephemeral). Level-neutral:
-// used for both the aa and the nt state matrix, rendered once per chunk key per level.
+// Cross-sample state-matrix dedup (ephemeral). Level-neutral: one invocation per level.
 //
-// The state matrix is a property of the variant, so it is identical in every sample a
-// variant appears in. Dedups by [variantKey, parentId, position] across samples:
 //   stateMatrix.tsv  [variantKey, parentId, position] -> state
+//
+// The rows of one (variant, parent) pair are identical in every sample that holds the
+// pair. Each pair gets one owner sample, the first that keeps it, and only the owner's
+// rows pass. The matrix rows stream through the join; the job holds the pair list,
+// never the matrix.
+//
+// The owner is per pair, not per variant: mitool gives a variant the parent of the
+// first nt variant it sees in a sample, so one variant can carry different parents in
+// different samples, and each parent's rows must survive.
+//
+// The abundance tables carry the variants each sample keeps, so the productive and
+// export-only-matched filters reach the matrix through them. The variants tables carry
+// the parent of each variant in that sample.
 //
 // (mitool names the first TSV column `variantKey` in both the aa and nt exports;
 // it holds the aa/nt variant key respectively, matching the variant axis column.)
-//
-// `unique({ keep: "any" })` rather than groupBy().agg(first()): ptabler hardcodes
-// maintain_order on groupBy, which cannot stream. `keep: "any"` is exact — the state
-// matrix is a pure function of the variant, so duplicates carry identical states.
 // No trailing sort: xsv.importFile sorts by axes.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
@@ -23,33 +29,71 @@ self.defineOutputs("stateMatrix")
 
 self.awaitState("InputsLocked")
 self.awaitState("stateMatrixData", "ResourceReady")
+self.awaitState("abundanceData", "ResourceReady")
+self.awaitState("variantsData", "ResourceReady")
 
 self.body(func(inputs) {
-	// [sampleId] -> this chunk's per-sample file.
-	rmMap := inputs.stateMatrixData.inputs()
+	// All three keyed [sampleId].
+	smMap := inputs.stateMatrixData.inputs()
+	abMap := inputs.abundanceData.inputs()
+	varMap := inputs.variantsData.inputs()
+	// The variants tables name the key column after the level.
+	keyCol := inputs.variantsKeyColumn
 
-	// The dedup holds every distinct key in RAM and does not spill. Raise DIGITS in
-	// state-matrix-chunks if one chunk outgrows a node.
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+	// Sized by sample count, not input bytes: the job streams the matrices and holds only the
+	// (variant, parent) owner list. Smallest passing hard limit, 8 threads: aa 4, 4, 8 GiB at
+	// 50, 100, 200 samples (64 to 271 GB of input); nt 8 GiB at 200 (920 GB). This asks
+	// 6 GiB + 60 MiB per sample, at least the 16 GiB floor: 2x a need of 3 GiB + 30 MiB
+	// per sample.
+	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB).
+		memIntercept(aggSizing.perSampleIntercept(6, 60, len(smMap))).
+		memSlope(0)
 
-	frames := []
-	for sKey in maps.getKeys(rmMap) {
+	keyFrames := []
+	smFrames := []
+	for sKey in maps.getKeys(smMap) {
+		ll.assert(!is_undefined(abMap[sKey]), "no abundance table for sample %v", sKey)
+		ll.assert(!is_undefined(varMap[sKey]), "no variants table for sample %v", sKey)
+		idx := len(smFrames)
+		kept := wf.frame({
+			file: abMap[sKey],
+			xsvType: "parquet"
+		}, { id: "kept_" + string(idx) }).select(
+			pt.col("variantKey").cast("String").alias("variantKey")
+		)
+		parents := wf.frame({
+			file: varMap[sKey],
+			xsvType: "tsv"
+		}, { id: "parents_" + string(idx), inferSchema: false }).select(
+			pt.col(keyCol).alias("variantKey"),
+			pt.col("parentId")
+		)
+		keyFrames = append(keyFrames, kept.
+			join(parents, { how: "inner", on: ["variantKey"] }).
+			select(pt.col("variantKey"), pt.col("parentId"), pt.lit(idx).alias("__owner")))
 		// inferSchema:false -> every column String, so empty and populated per-sample
 		// TSVs share one schema and the concat cannot hit a type mismatch.
-		frames = append(frames, wf.frame({
-			file: rmMap[sKey],
+		smFrames = append(smFrames, wf.frame({
+			file: smMap[sKey],
 			xsvType: "tsv"
-		}, { id: "sm_" + string(len(frames)), inferSchema: false }))
+		}, { id: "sm_" + string(idx), inferSchema: false }).withColumns(
+			pt.lit(idx).alias("__owner")
+		))
 	}
-	ll.assert(len(frames) > 0, "no state-matrix frames")
+	ll.assert(len(smFrames) > 0, "no state-matrix frames")
 
-	merged := frames[0]
-	if len(frames) > 1 {
-		merged = pt.concat(frames)
+	keys := keyFrames[0]
+	matrix := smFrames[0]
+	if len(smFrames) > 1 {
+		keys = pt.concat(keyFrames)
+		matrix = pt.concat(smFrames)
 	}
 
-	merged.
-		unique({ subset: ["variantKey", "parentId", "position"], keep: "any" }).
+	owners := keys.groupBy("variantKey", "parentId").agg(pt.col("__owner").min().alias("__owner"))
+
+	matrix.
+		join(owners, { how: "inner", on: ["variantKey", "parentId", "__owner"] }).
+		select(pt.col("variantKey"), pt.col("parentId"), pt.col("position"), pt.col("state")).
 		save("stateMatrix.tsv", { xsvType: "tsv" })
 
 	result := wf.run()
