@@ -3,13 +3,13 @@ import { Gradient } from "@platforma-sdk/ui-vue";
 import type { Ref } from "vue";
 import { computed, unref } from "vue";
 
-/** Per-sample alignment outcome, as written by mitool's `align.report.json`.
- *  Only the fields the Alignments bar needs are typed; the rest is ignored. */
-export type AlignReport = {
-  aligned?: number;
-  notAligned?: number;
-  notAlignedReasons?: Record<string, number>;
-};
+import type {
+  AlignReport,
+  ParseReport,
+} from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
+import { alignmentBarParts } from "@platforma-open/milaboratories.synthetic-repertoire-profiler.model";
+
+export type { AlignReport, ParseReport };
 
 // Human labels for the alignment outcome codes mitool writes to
 // align.report.json (Success + the FragmentAligner.NotAlignedReason enum).
@@ -22,21 +22,15 @@ const categoryLabels: Record<string, string> = {
   TooManyIndels: "Indels present",
   LowBaseQuality: "Low base quality",
   NoInput: "No usable sequence",
+  NoPatternMatch: "No tag pattern match",
 };
 
-/** Build a stacked-bar value (Aligned + each not-aligned reason) for
- *  PlAgChartStackedBarCell. */
-export function getAlignmentChartSettings(alignReport: AlignReport | undefined) {
-  const data = (() => {
-    if (alignReport === undefined) return [];
-    const aligned = alignReport.aligned ?? 0;
-    const reasons = alignReport.notAlignedReasons ?? {};
-    const result = [{ category: "Success", value: aligned }];
-    for (const [reason, count] of Object.entries(reasons)) {
-      if (count > 0) result.push({ category: reason, value: count });
-    }
-    return result;
-  })();
+/** Build a stacked-bar value for PlAgChartStackedBarCell; parts as in alignmentBarParts. */
+export function getAlignmentChartSettings(
+  alignReport: AlignReport | undefined,
+  parseReport?: ParseReport,
+) {
+  const data = alignmentBarParts(alignReport, parseReport);
 
   const total = data.reduce((x, y) => x + y.value, 0);
 
@@ -53,6 +47,7 @@ export function getAlignmentChartSettings(alignReport: AlignReport | undefined) 
     TooManyIndels: magma.getNthOf(4, 9),
     LowBaseQuality: magma.getNthOf(6, 9),
     NoInput: magma.getNthOf(7, 9),
+    NoPatternMatch: magma.getNthOf(8, 9),
   } as Record<string, Color>;
 
   return {
@@ -70,6 +65,9 @@ export function getAlignmentChartSettings(alignReport: AlignReport | undefined) 
 }
 
 /** Reactive wrapper for the full-size chart in the sample report panel. */
-export function useAlignmentChartSettings(alignReportRef: Ref<AlignReport | undefined>) {
-  return computed(() => getAlignmentChartSettings(unref(alignReportRef)));
+export function useAlignmentChartSettings(
+  alignReportRef: Ref<AlignReport | undefined>,
+  parseReportRef: Ref<ParseReport | undefined>,
+) {
+  return computed(() => getAlignmentChartSettings(unref(alignReportRef), unref(parseReportRef)));
 }

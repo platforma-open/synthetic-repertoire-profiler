@@ -121,6 +121,8 @@ export type BlockParams = {
   input?: PlRef;
 
   tagPattern?: string;
+  /** Match the tag pattern on both strands (`mitool parse -u`). Absent = forward only. */
+  unstranded?: boolean;
 
   parentInputMode?: ParentInputMode;
   parentSequence?: string;
@@ -196,6 +198,7 @@ function parseInitializationParams(value: unknown): BlockParams {
   const {
     input,
     tagPattern,
+    unstranded,
     parentInputMode,
     parentSequence,
     parentRegions,
@@ -229,6 +232,7 @@ function parseInitializationParams(value: unknown): BlockParams {
     input: optionalRef(input, "input"),
 
     tagPattern: optionalString(tagPattern, "tagPattern"),
+    unstranded: optionalBoolean(unstranded, "unstranded"),
 
     parentInputMode: optionalEnum(parentInputMode, PARENT_INPUT_MODES, "parentInputMode"),
     parentSequence: optionalString(parentSequence, "parentSequence"),
