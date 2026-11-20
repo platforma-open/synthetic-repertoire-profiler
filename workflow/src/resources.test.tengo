@@ -27,13 +27,12 @@ TestParseIsFlat := func() {
 }
 
 TestAnalyzeIsSizedFromTheMic := func() {
-	// max(12, 4 + 9 x GiB), rounded up.
-	test.isEqual(_gib(12), _ram(rs.lookup("analyze"), _gib(1) / 4))
-	test.isEqual(_gib(12), _ram(rs.lookup("analyze"), _gib(1) / 2))
-	test.isEqual(_gib(13), _ram(rs.lookup("analyze"), _gib(1)))
-	test.isEqual(_gib(31), _ram(rs.lookup("analyze"), _gib(3)))
-	test.isEqual(_gib(23), _ram(rs.lookup("analyze"), _gib(21) / 10))
-	test.isEqual(_gib(184), _ram(rs.lookup("analyze"), _gib(20)))
+	// max(12, 8 + 32 x GiB), rounded up.
+	test.isEqual(_gib(12), _ram(rs.lookup("analyze"), _gib(1) / 8))
+	test.isEqual(_gib(16), _ram(rs.lookup("analyze"), _gib(1) / 4))
+	test.isEqual(_gib(24), _ram(rs.lookup("analyze"), _gib(1) / 2))
+	test.isEqual(_gib(40), _ram(rs.lookup("analyze"), _gib(1)))
+	test.isEqual(_gib(104), _ram(rs.lookup("analyze"), _gib(3)))
 }
 
 TestUmiStepsAreSizedFromTheMic := func() {
@@ -54,7 +53,7 @@ TestMemoryOverrideMakesTheGrantFlat := func() {
 TestCpuOverrideKeepsTheMemoryRule := func() {
 	row := rs.effective(rs.lookup("analyze"), { perProcessCPUs: 12 })
 	test.isEqual(12, row.cpu)
-	test.isEqual(_gib(31), _ram(row, _gib(3)))
+	test.isEqual(_gib(104), _ram(row, _gib(3)))
 }
 
 TestNoOverrides := func() {
