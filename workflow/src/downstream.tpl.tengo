@@ -11,13 +11,15 @@ exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+smart := import("@platforma-sdk/workflow-tengo:smart")
 resources := import(":resources")
 smChunks := import(":state-matrix-chunks")
 
 times := import("times")
 
 // The state matrix leaves this template already split by position: one File-valued
-// output per level per chunk key. See state-matrix-chunks.
+// output per level per chunk key; a null resource for a level that is off. See
+// state-matrix-chunks.
 outputNames := ["analyzeLogStream", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv"]
 for chunkKey in smChunks.keys() {
 	outputNames = append(outputNames, smChunks.outputName("aa", chunkKey))
@@ -802,20 +804,18 @@ self.body(func(inputs) {
 	// --- Per-sample state-matrix chunking (its own pt workflow) -------------
 	// Separate from the table workflow above: the matrix is dense — one row per
 	// variant per parent position — so on a large repertoire it dwarfs every other
-	// table and would size the whole process. Its own workflow also lets it be
-	// skipped outright. Chunks slice the position axis so the cross-sample dedup
-	// runs as that many independent jobs. See state-matrix-chunks.
+	// table and would size the whole process. It does not run when both levels are
+	// off. Chunks slice the position axis so the cross-sample dedup runs as that many
+	// independent jobs. See state-matrix-chunks.
 	smWf := pt.workflow()
 
 	smCols := func(f) {
 		return f.select(pt.col("variantKey"), pt.col("parentId"), pt.col("position"), pt.col("state"))
 	}
 
-	// Every chunk output must exist whether or not a matrix ran, so the skipped ones
-	// get a 0-row frame. It is built from the tiny parents table, never from the
-	// matrix: a pt frame stages its file into the workdir, so sourcing the
-	// placeholders from the matrix would copy it even when nothing reads it. Built on
-	// demand, so a run that needs no placeholder does not stage anything extra.
+	// 0-row frame with the matrix columns, for the nt level with no match signal. Built
+	// from the tiny parents table, never from the matrix: a pt frame stages its file
+	// into the workdir. Built on demand.
 	emptySm := undefined
 	emptySmFrame := func() {
 		if is_undefined(emptySm) {
@@ -868,15 +868,6 @@ self.body(func(inputs) {
 			groupBy(keyCol).agg(aggs...).
 			withColumns(pt.col(keyCol).alias("variantKey"))
 	}
-	// Typed 0-row counts for a skipped matrix, so the placeholder output keeps the
-	// real column types without staging variants.tsv.
-	emptyCounts := func() {
-		cols := [pt.col("variantKey"), pt.lit(0).cast("Long").alias("variantReads")]
-		if hasUmi {
-			cols = append(cols, pt.lit(0).cast("Long").alias("variantMolecules"))
-		}
-		return emptySmFrame().select(cols...)
-	}
 	saveComposition := func(smDf, counts, fileName) {
 		cellAggs := [pt.col("variantReads").sum().alias("readCount")]
 		if hasUmi {
@@ -927,9 +918,6 @@ self.body(func(inputs) {
 		}
 		chunkStateMatrix(aaSmDf, "aa")
 		saveComposition(aaSmDf, countsFor("aaVariantKey"), "aaStateComposition.parquet")
-	} else {
-		chunkStateMatrix(emptySmFrame(), "aa")
-		saveComposition(emptySmFrame(), emptyCounts(), "aaStateComposition.parquet")
 	}
 
 	// nt: its own flag, so the aa matrix and the nt tables do not decide it.
@@ -956,12 +944,12 @@ self.body(func(inputs) {
 		}
 		chunkStateMatrix(ntSmDf, "nt")
 		saveComposition(ntSmDf, countsFor("variantKey"), "ntStateComposition.parquet")
-	} else {
-		chunkStateMatrix(emptySmFrame(), "nt")
-		saveComposition(emptySmFrame(), emptyCounts(), "ntStateComposition.parquet")
 	}
 
-	smResult := smWf.run()
+	smResult := undefined
+	if exportStateMatrix || exportNtStateMatrix {
+		smResult = smWf.run()
+	}
 
 	ptResult := ptWf.run()
 
@@ -996,17 +984,25 @@ self.body(func(inputs) {
 		ntParentResiduesTsv: exportNtStateMatrix ? analyzeCmd.getFile("out.nt-parent-residues.tsv") : ptResult.getFile("emptyNtParentResidues.tsv"),
 		parentsTsv: analyzeCmd.getFile("out.parents.tsv"),
 		qcRow: ptResult.getFile("qcRow.parquet"),
-		// No sampleId column — processColumn supplies the sample key from the partition.
+		// No sampleId column: the cross-sample concat stamps it from the sample key.
 		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),
-		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet"),
-		aaStateComposition: smResult.getFile("aaStateComposition.parquet"),
-		ntStateComposition: smResult.getFile("ntStateComposition.parquet")
+		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet")
 	}
 
+	// State-matrix files: a null resource for a level that is off.
+	levelFile := func(enabled, fileName) {
+		if !enabled {
+			return smart.createNullResource()
+		}
+		return smResult.getFile(fileName)
+	}
+	// No sampleId column: the cross-sample concat stamps it from the sample key.
+	result.aaStateComposition = levelFile(exportStateMatrix, "aaStateComposition.parquet")
+	result.ntStateComposition = levelFile(exportNtStateMatrix, "ntStateComposition.parquet")
 	// One File output per level per chunk key, so each dedup job gets its own slice.
 	for chunkKey in smChunks.keys() {
-		result[smChunks.outputName("aa", chunkKey)] = smResult.getFile(smChunks.fileName("aa", chunkKey))
-		result[smChunks.outputName("nt", chunkKey)] = smResult.getFile(smChunks.fileName("nt", chunkKey))
+		result[smChunks.outputName("aa", chunkKey)] = levelFile(exportStateMatrix, smChunks.fileName("aa", chunkKey))
+		result[smChunks.outputName("nt", chunkKey)] = levelFile(exportNtStateMatrix, smChunks.fileName("nt", chunkKey))
 	}
 
 	return result
