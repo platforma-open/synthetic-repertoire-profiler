@@ -22,9 +22,8 @@ _ram := func(row, sizeBytes) {
 	return is_string(node) ? node : _evalSize(node, sizeBytes)
 }
 
-TestParseAndSortAreFlat := func() {
+TestParseIsFlat := func() {
 	test.isEqual("8GiB", _ram(rs.lookup("parse"), _gib(100)))
-	test.isEqual("8GiB", _ram(rs.lookup("sort"), _gib(100)))
 }
 
 TestAnalyzeIsSizedFromTheMic := func() {
@@ -38,8 +37,12 @@ TestAnalyzeIsSizedFromTheMic := func() {
 }
 
 TestUmiStepsAreSizedFromTheMic := func() {
-	test.isEqual(_gib(8), _ram(rs.lookup("refine-tags"), _gib(1)))
-	test.isEqual(_gib(44), _ram(rs.lookup("consensus"), _gib(10)))
+	// max(8, 4 + slope x GiB): slope 7, 5 and 8.
+	test.isEqual(_gib(8), _ram(rs.lookup("refine-tags"), _gib(1) / 2))
+	test.isEqual(_gib(11), _ram(rs.lookup("refine-tags"), _gib(1)))
+	test.isEqual(_gib(8), _ram(rs.lookup("sort"), _gib(1) / 2))
+	test.isEqual(_gib(54), _ram(rs.lookup("sort"), _gib(10)))
+	test.isEqual(_gib(84), _ram(rs.lookup("consensus"), _gib(10)))
 }
 
 TestMemoryOverrideMakesTheGrantFlat := func() {

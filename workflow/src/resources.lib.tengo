@@ -37,10 +37,10 @@ _FALLBACK_GIB := 16
 // shape tested. Measured heap need, mitool 2.3.1-172:
 //
 //   parse        flat: ~0.5 GiB live at 0.25M to 4M reads
-//   refine-tags  0.12 GiB .mic of 1M reads, saturated 12 nt UMI: runs in 0.8 GiB
-//   sort         the sort buffer follows the heap: runs in 0.8 GiB
-//   consensus    same input: thrashes in 0.8 GiB with ~0.65 GiB live. It holds the largest UMI
-//                group, which grows when UMIs collide.
+//   refine-tags  follows the read count, not the UMI count: 0.25 GiB + 3.1 x parsed .mic
+//   sort         1.0 GiB + 2.1 x refined .mic
+//   consensus    0.5 GiB + 3.6 x sorted .mic with ~5 reads per UMI. It holds the largest UMI
+//                group: groups of ~15,600 reads add 0.75 GiB.
 //   analyze      holds every distinct variant in memory until export, so it grows with the
 //                variant count, and the .mic size bounds that count. Heap need per GiB of .mic:
 //                0.26 on a site-saturation DMS library, 0.8 on a natural VHH repertoire,
@@ -50,10 +50,10 @@ _FALLBACK_GIB := 16
 _ROWS := [
 	{ step: "parse", cpu: 8, memFloor: 8, memIntercept: 0, memSlope: 0 },
 
-	// Sized from the parsed .mic.
-	{ step: "refine-tags", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 4 },
-	{ step: "sort", cpu: 8, memFloor: 8, memIntercept: 0, memSlope: 0 },
-	{ step: "consensus", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 4 },
+	// Each sized from the .mic it reads: parsed, refined, sorted.
+	{ step: "refine-tags", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 7 },
+	{ step: "sort", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 5 },
+	{ step: "consensus", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 8 },
 
 	// Sized from the .mic analyze reads: the parsed one, or the consensus one on a UMI run.
 	// Floor 12, not 8: reads that differ little compress into a small .mic, so the data term
