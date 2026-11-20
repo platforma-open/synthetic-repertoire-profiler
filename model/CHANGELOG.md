@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.model
 
+## 1.8.2
+
+### Patch Changes
+
+- f452af7: Residue Composition heatmaps (pooled and per sample) keep their legend pinned while the chart is scrolled.
+
 ## 1.8.1
 
 ### Patch Changes
