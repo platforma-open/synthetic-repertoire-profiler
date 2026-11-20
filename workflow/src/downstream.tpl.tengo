@@ -12,6 +12,7 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 smart := import("@platforma-sdk/workflow-tengo:smart")
+units := import("@platforma-sdk/workflow-tengo:units")
 resources := import(":resources")
 
 times := import("times")
@@ -861,8 +862,9 @@ self.body(func(inputs) {
 	// Separate from the table workflow above: it reads the matrix, which is dense — one
 	// row per variant per parent position — so on a large repertoire it dwarfs every
 	// other table and would size the whole process. It does not run when both levels
-	// are off.
-	smWf := pt.workflow()
+	// are off. The 8 GiB floor covers a backend without blob sizes: a 4M-variant sample
+	// needs 4 GiB.
+	smWf := pt.workflow().memFloor(8 * units.GiB)
 
 	smCols := func(f) {
 		return f.select(pt.col("variantKey"), pt.col("parentId"), pt.col("position"), pt.col("state"))

@@ -31,7 +31,8 @@ self.awaitState("knownDesignedAaData", "ResourceReady")
 self.awaitState("aaConvergenceData", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+	samples := aggSizing.countSamples(maps.getKeys(inputs.variantsTsvData.inputs()))
+	wf := aggSizing.applyOrStep(pt.workflow(), "knownAggregate", samples, inputs.aggMemGB)
 
 	// Export-only-matched: the distance-to-known columns are variant-axis keyed and
 	// part of the exported `variants` frame, so under the filter they are restricted

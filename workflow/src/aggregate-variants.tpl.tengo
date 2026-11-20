@@ -142,7 +142,7 @@ self.body(func(inputs) {
 	labelParts := func(labelInFiles) {
 		files := []
 		for l, letters in buckets.labelLetters(p.l) {
-			wf := aggSizing.applyComputed(pt.workflow(), flatBytes)
+			wf := aggSizing.applyLabel(pt.workflow(), flatBytes, p.l)
 			variantAggregate.addLabels(wf, labelInFiles, labelKeep(letters, l == 0))
 			files = append(files, wf.run().getFile("labels.tsv"))
 		}

@@ -20,14 +20,19 @@
 // Smallest passing hard limit at 50 / 100 / 200 samples, 8 threads; the larger of aa and nt.
 // Each need is at or above it at every point:
 //
-//   dedup                  4 / 4 / 8 GiB (aa; nt 8 GiB at 200)
+//   dedup                  4 / 4 / 8 GiB (aa; nt 8 GiB at 200); aa 13.75 / 26.75 / 53.25 GiB at
+//                          400 / 800 / 1,600 duplicated samples, 33.8 MiB per sample
 //   heatmap                6 / 6 / 6 GiB; slope from aa, fine bisect 2.0 GiB at 50, 4.25 GiB at 200
+//                          also grows with composition rows: 100 parents, 38 GiB at 4,000 samples,
+//                          1,000 parents, 20 GiB at 200; at most 37.8 bytes per input byte
 //   matrixImport           8 / 8 / 12 GiB; slope 13.65 MiB per sample (aa ladder = nt fine)
 //   propertyImport         4 / 4 / 6 GiB
 //   knownImport            not measured; propertyImport's need (its rows are a subset)
 //   labelImport            4 / 4 / 4 GiB; slope from fine bisect
 //   linkerImport           4 / 4 / 4 GiB (ntToAa, parentNt, parentAa); slope from fine bisect
-//   perSampleTableImport   4 / 4 / 4 GiB (abundance concats); slope from fine bisect
+//   perSampleTableImport   4 / 4 / 4 GiB (abundance concats); known abundance 1.25 / 2 / 2.25 GiB,
+//                          6.8 MiB per sample
+//   knownAggregate         20 / 39 / 77 GiB; holds its whole input, 1.1 x the staged bytes
 //
 // The matrix import's DuckDB budget is the limit minus the plan's Polars stage; with the input
 // hot in page cache it needs more (see its STEP_NEED entry).
@@ -42,7 +47,7 @@ FLOOR_GIB := 16
 
 // Need of each sample-count-sized step: baseGiB + perSampleMiB x samples. The request is 2 x need.
 STEP_NEED := {
-	dedup: { baseGiB: 3, perSampleMiB: 30 },
+	dedup: { baseGiB: 3, perSampleMiB: 36 },
 	heatmap: { baseGiB: 5.5, perSampleMiB: 15.5 },
 	// Base 2.5 GiB above the fit: ptabler's DuckDB budget shrinks when the input is already in
 	// page cache; a hot-input run needed 24 GiB at 100 samples.
@@ -51,7 +56,9 @@ STEP_NEED := {
 	knownImport: { baseGiB: 3.5, perSampleMiB: 14 },
 	labelImport: { baseGiB: 4, perSampleMiB: 3.5 },
 	linkerImport: { baseGiB: 4, perSampleMiB: 3.5 },
-	perSampleTableImport: { baseGiB: 4, perSampleMiB: 5.5 }
+	perSampleTableImport: { baseGiB: 4, perSampleMiB: 7 },
+	// Without blob sizes only. 1M designed entries, 0.4M variants per sample.
+	knownAggregate: { baseGiB: 1.4, perSampleMiB: 390 }
 }
 
 // fallbackGiB returns the flat grant on a backend without blob sizes.
@@ -85,6 +92,20 @@ countSamples := func(keys) {
 // Slope 0 makes pt request max(memFloor, memIntercept) with or without blob sizes.
 applyComputed := func(wf, bytes) {
 	return wf.inHeavyQueue().memSlope(0).memIntercept(bytes)
+}
+
+// labelSlope returns the request per byte of label input for one of `labelJobs` label jobs.
+// A label job needs 1 GiB + 5.24 x the label input of its letters; its letters are at most
+// ceil(26 / labelJobs) / 26 of the input.
+labelSlope := func(labelJobs) {
+	lettersPerJob := (26 + labelJobs - 1) / labelJobs
+	return int(math.ceil(10.5 * lettersPerJob / 26.0))
+}
+
+// applyLabel requests max(floorBytes, 4 GiB + labelSlope x label input) for a label job; 4 GiB
+// is pt's smallest intercept. Without blob sizes the request is floorBytes.
+applyLabel := func(wf, floorBytes, labelJobs) {
+	return wf.inHeavyQueue().memFloor(floorBytes).memIntercept(4 * units.GiB).memSlope(labelSlope(labelJobs))
 }
 
 // perSampleIntercept returns baseGiB + perSampleMiB x samples, in bytes; a float when either
@@ -139,6 +160,24 @@ applyStep := func(wf, step, samples, aggMemGB) {
 	return applyComputed(wf, stepRequestBytes(step, samples, aggMemGB))
 }
 
+// applyStepOrInput puts `wf` on the heavy queue and requests the larger of the sized need of
+// `step` and 4 GiB + `slope` x input bytes. Without blob sizes the request is the step's.
+applyStepOrInput := func(wf, step, samples, aggMemGB, slope) {
+	return wf.inHeavyQueue().
+		memFloor(stepRequestBytes(step, samples, aggMemGB)).
+		memIntercept(4 * units.GiB).
+		memSlope(slope)
+}
+
+// applyOrStep puts `wf` on the heavy queue. With blob sizes pt sizes it from its input, at least
+// FLOOR_GIB; without, it requests the sized need of `step`.
+applyOrStep := func(wf, step, samples, aggMemGB) {
+	if feats.hasBlobSize {
+		return wf.inHeavyQueue().memFloor(FLOOR_GIB * units.GiB)
+	}
+	return wf.inHeavyQueue().memSlope(0).memIntercept(requestBytes(stepNeedBytes(step, samples), aggMemGB))
+}
+
 // importOpts returns the memory options of a sized xsv.importFile; no `mem` key, so the
 // intercept is the request with or without blob sizes.
 importOpts := func(step, samples, aggMemGB) {
@@ -149,12 +188,16 @@ export {
 	FLOOR_GIB: FLOOR_GIB,
 	fallbackGiB: fallbackGiB,
 	apply: apply,
+	applyOrStep: applyOrStep,
 	applyComputed: applyComputed,
+	labelSlope: labelSlope,
+	applyLabel: applyLabel,
 	perSampleIntercept: perSampleIntercept,
 	countSamples: countSamples,
 	requestBytes: requestBytes,
 	settingFor: settingFor,
 	stepNeedBytes: stepNeedBytes,
 	applyStep: applyStep,
+	applyStepOrInput: applyStepOrInput,
 	importOpts: importOpts
 }

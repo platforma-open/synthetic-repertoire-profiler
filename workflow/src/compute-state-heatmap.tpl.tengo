@@ -26,8 +26,10 @@ self.awaitState("InputsLocked")
 self.awaitState("compositionData", "ResourceReady")
 
 self.body(func(inputs) {
-	// Sized by sample count: heatmap step.
-	wf := aggSizing.applyStep(pt.workflow(), "heatmap", inputs.samples, inputs.aggMemGB)
+	// Sized by sample count (heatmap step) or by input, whichever is larger: the job holds
+	// every per-sample composition row, so a library of many parents outgrows the sample rule.
+	// The largest measured need is 37.8 bytes per input byte (1,000 parents).
+	wf := aggSizing.applyStepOrInput(pt.workflow(), "heatmap", inputs.samples, inputs.aggMemGB, 80)
 
 	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
 
