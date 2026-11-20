@@ -734,7 +734,7 @@ export const DEFAULT_STATE_HEATMAP_GRAPH_STATE: GraphMakerState = {
   // multi-residue insertions and the gap), and a long parent compresses the
   // position axis to slivers. The chart grows and scrolls instead. Users can
   // override live via the chart's Axes settings.
-  // The chart scrolls, so pin its axes and annotations to keep them in view.
+  // The chart scrolls, so pin its axes, annotations and legend to keep them in view.
   axesSettings: {
     axisX: {
       cellSize: 20,
@@ -743,7 +743,7 @@ export const DEFAULT_STATE_HEATMAP_GRAPH_STATE: GraphMakerState = {
       hideAxisLabels: false,
       cellSize: 20,
     },
-    other: { stickyAxes: true },
+    other: { stickyAxes: true, stickyLegend: true },
   },
 };
 
@@ -757,12 +757,15 @@ export const DEFAULT_STATE_HEATMAP_PER_SAMPLE_GRAPH_STATE: GraphMakerState = {
   },
 };
 
-function withStickyAxes(state: GraphMakerState): GraphMakerState {
+function withSticky(
+  state: GraphMakerState,
+  sticky: { stickyAxes?: boolean; stickyLegend?: boolean },
+): GraphMakerState {
   return {
     ...state,
     axesSettings: {
       ...state.axesSettings,
-      other: { ...state.axesSettings?.other, stickyAxes: true },
+      other: { ...state.axesSettings?.other, ...sticky },
     },
   };
 }
@@ -873,8 +876,17 @@ const dataModel = new DataModelBuilder({ kind })
   }))
   .migrate<BlockData>("v16", (v15) => ({
     ...v15,
-    graphStateStateHeatmap: withStickyAxes(v15.graphStateStateHeatmap),
-    graphStateStateHeatmapPerSample: withStickyAxes(v15.graphStateStateHeatmapPerSample),
+    graphStateStateHeatmap: withSticky(v15.graphStateStateHeatmap, { stickyAxes: true }),
+    graphStateStateHeatmapPerSample: withSticky(v15.graphStateStateHeatmapPerSample, {
+      stickyAxes: true,
+    }),
+  }))
+  .migrate<BlockData>("v17", (v16) => ({
+    ...v16,
+    graphStateStateHeatmap: withSticky(v16.graphStateStateHeatmap, { stickyLegend: true }),
+    graphStateStateHeatmapPerSample: withSticky(v16.graphStateStateHeatmapPerSample, {
+      stickyLegend: true,
+    }),
   }))
   // The first group of fields is the kind's init-params contract, field for
   // field, and
