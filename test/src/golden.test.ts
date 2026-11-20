@@ -12,7 +12,7 @@
  *
  * Regenerate: UPDATE_GOLDEN=1 pnpm test, then pnpm run fmt in test/ (the golden is
  * written unformatted, and the format check runs before the tests). Regenerate only from a
- * build whose output is known to be right (the goldens were written from main at 3e4b9ef),
+ * build whose output is known to be right (the goldens were written from main at 3f61252),
  * and review the diff.
  */
 import { SamplesAndDataBlockPointer } from "@platforma-open/milaboratories.samples-and-data";
