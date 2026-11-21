@@ -60,6 +60,8 @@ type Scenario = {
   tagPattern?: string;
   // Upload known_aa.tsv as the known aa set.
   knownAa?: boolean;
+  // Forces the variant aggregate's bucket count; the golden stays the scenario's own.
+  aggBuckets?: number;
 };
 
 // Each scenario overrides the block defaults and has a golden of its own.
@@ -92,6 +94,18 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
+// Every scenario at the default bucket count and at K=4; `defaults` also at K=256, where
+// most buckets are empty. `title` is display only: each run compares against `<name>.json`.
+const RUNS: (Scenario & { title: string })[] = [
+  ...SCENARIOS.map((s) => ({ ...s, title: s.name })),
+  ...SCENARIOS.map((s) => ({ ...s, aggBuckets: 4, title: `${s.name} K=4` })),
+  ...SCENARIOS.filter((s) => s.name === "defaults").map((s) => ({
+    ...s,
+    aggBuckets: 256,
+    title: `${s.name} K=256`,
+  })),
+];
+
 const SAMPLES = ["s1", "s2", "s3"] as const;
 const sampleId = (s: string) => `GOLDEN${s.toUpperCase()}`.padEnd(24, "A");
 const DATASET_ID = "GOLDENDATASETAAAAAAAAAAA";
@@ -101,8 +115,8 @@ type Golden = { exports: GoldenColumn[]; outputs: Record<string, GoldenColumn[]>
 // The frame outputs of the block under test that are part of the golden.
 const FRAME_OUTPUTS = ["stateHeatmapPf", "mutationHistogramPf"] as const;
 
-blockTest.for(SCENARIOS)(
-  "golden $name: exports and frame outputs match their golden",
+blockTest.for(RUNS)(
+  "golden $title: exports and frame outputs match their golden",
   { timeout: 900_000 },
   async (scenario, { rawPrj, ml, helpers, tmpFolder, expect }) => {
     const EXPECTED = path.join(ASSETS, `${scenario.name}.json`);
@@ -163,6 +177,7 @@ blockTest.for(SCENARIOS)(
         tagPattern: scenario.tagPattern ?? PATTERN,
         runMode: "full",
         ...knownAa,
+        aggBuckets: scenario.aggBuckets,
         ...scenario.args,
       },
     });

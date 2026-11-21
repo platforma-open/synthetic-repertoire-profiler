@@ -31,7 +31,8 @@ self.awaitState("knownDesignedAaData", "ResourceReady")
 self.awaitState("aaConvergenceData", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+	samples := aggSizing.countSamples(maps.getKeys(inputs.variantsTsvData.inputs()))
+	wf := aggSizing.applyOrStep(pt.workflow(), "knownAggregate", samples, inputs.aggMemGB)
 
 	// Export-only-matched: the distance-to-known columns are variant-axis keyed and
 	// part of the exported `variants` frame, so under the filter they are restricted
@@ -94,6 +95,17 @@ self.body(func(inputs) {
 	}
 	loadConcat := func(rmData, idPrefix) {
 		return loadConcatX(rmData, idPrefix, "tsv")
+	}
+	// The designed exports are sample-independent, so one sample's copy is the whole
+	// table. Reading every copy makes the designed join grow with samples squared.
+	loadFirst := func(rmData, idPrefix) {
+		rmMap := rmData.inputs()
+		keys := maps.getKeys(rmMap)
+		ll.assert(len(keys) > 0, "no frames for " + idPrefix)
+		return wf.frame({
+			file: rmMap[keys[0]],
+			xsvType: "tsv"
+		}, { id: idPrefix + "_0", inferSchema: false })
 	}
 
 	nonEmpty := func(col) {
@@ -214,11 +226,11 @@ self.body(func(inputs) {
 	// not the observed variants: each designed nt entry → its translated aa group.
 	// mitool's `knownAaKey` (its own VariantKey hash) bridges nt→aa; we re-key both
 	// sides with the block's hash(sequence) so the linker lands on the same nt/aa
-	// known axes as the rest of the overlay. Designed TSVs are sample-independent;
-	// loadConcat stacks every sample's copy, so we dedup.
-	designedNt := loadConcat(inputs.knownDesignedNtData, "dNt").
+	// known axes as the rest of the overlay. Designed TSVs are sample-independent,
+	// so one copy is read.
+	designedNt := loadFirst(inputs.knownDesignedNtData, "dNt").
 		select(pt.col("ntSequence"), pt.col("knownAaKey"))
-	designedAa := loadConcat(inputs.knownDesignedAaData, "dAa").
+	designedAa := loadFirst(inputs.knownDesignedAaData, "dAa").
 		select(pt.col("knownAaId").alias("knownAaKey"), pt.col("aaSequence"))
 
 	aaToNt := designedNt.
@@ -273,7 +285,7 @@ self.body(func(inputs) {
 	// sampleCount, undetected (dropout) entries carry null (shown blank). This
 	// merges the former separate "Known Variants (NT)" and "Unmatched Designed
 	// (NT)" tables into one. The EXPORT overlay stays matched-only (knownNt.tsv).
-	designedNtKeyed := loadConcat(inputs.knownDesignedNtData, "dNtU").
+	designedNtKeyed := loadFirst(inputs.knownDesignedNtData, "dNtU").
 		select(pt.col("knownNtId"), pt.col("ntSequence")).
 		withColumns(seqHash("ntSequence").alias("knownKey")).
 		groupBy("knownKey").

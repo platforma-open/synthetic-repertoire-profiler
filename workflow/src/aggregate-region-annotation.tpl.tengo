@@ -1,8 +1,8 @@
 // Cross-sample region-annotation aggregation (ephemeral).
 //
 // Region membership ([parentId, position] -> region) is parent-derived, so it is
-// identical in every sample. Concatenate the per-sample region-annotation TSVs
-// and dedup by [parentId, position]:
+// identical in every sample. Read one sample's region-annotation TSV and dedup
+// by [parentId, position]:
 //   regionAnnotation.tsv  [parentId, position] -> region, subRegion
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
@@ -22,24 +22,15 @@ self.body(func(inputs) {
 	wf := pt.workflow().
 		inMediumQueue()
 
-	frames := []
-	for sKey in maps.getKeys(rmMap) {
-		// inferSchema:false → all columns read as String, so empty and populated
-		// per-sample TSVs share one schema and the concat never hits a numeric-vs-
-		// String mismatch (position infers as Int64 when populated). The position
-		// axis is String (see column-specs positionAxisSpec) and region is cast to
-		// String, so no numeric type is lost.
-		frames = append(frames, wf.frame({
-			file: rmMap[sKey],
-			xsvType: "tsv"
-		}, { id: "ra_" + string(len(frames)), inferSchema: false }))
-	}
-	ll.assert(len(frames) > 0, "no region-annotation frames")
-
-	merged := frames[0]
-	if len(frames) > 1 {
-		merged = pt.concat(frames)
-	}
+	sKeys := maps.getKeys(rmMap)
+	ll.assert(len(sKeys) > 0, "no region-annotation frames")
+	// One sample's copy is the whole table. Reading every copy makes memory grow with
+	// samples x table size. inferSchema:false keeps position a String (see column-specs
+	// positionAxisSpec); region is cast to String below.
+	merged := wf.frame({
+		file: rmMap[sKeys[0]],
+		xsvType: "tsv"
+	}, { id: "ra_0", inferSchema: false })
 
 	// Both readings ride through. mitool writes one row per position carrying the widest
 	// containing span in `region` and the narrowest in `subRegion`; the two are equal

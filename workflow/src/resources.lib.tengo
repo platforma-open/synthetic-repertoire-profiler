@@ -19,6 +19,10 @@ f := exec.formula
 // The tag every step puts on the files it is sized from.
 INPUT_TAG := "input"
 
+// The tags analyze puts on its known-set files.
+KNOWN_NT_TAG := "knownNt"
+KNOWN_AA_TAG := "knownAa"
+
 // Backends that cannot evaluate resource formulas get max(floor, this).
 _FALLBACK_GIB := 16
 
@@ -29,6 +33,8 @@ _FALLBACK_GIB := 16
 //   memFloor      GiB, the least the step gets
 //   memIntercept  GiB, added to the data term
 //   memSlope      GiB per GiB of input; 0 makes the grant flat at max(memFloor, memIntercept)
+//   extra         optional [{ tag, slope }]: GiB per GiB of the files under `tag`, added to the
+//                 data term; a tag with no files adds nothing
 //
 // The heap is about 0.85 of the grant, and grant - 2.5 GiB below 17 GiB (`memory-from-limits`).
 // A 8 GiB floor gives a 5.5 GiB heap.
@@ -37,29 +43,33 @@ _FALLBACK_GIB := 16
 // shape tested. Measured heap need, mitool 2.3.1-172:
 //
 //   parse        flat: ~0.5 GiB live at 0.25M to 4M reads
-//   refine-tags  0.12 GiB .mic of 1M reads, saturated 12 nt UMI: runs in 0.8 GiB
-//   sort         the sort buffer follows the heap: runs in 0.8 GiB
-//   consensus    same input: thrashes in 0.8 GiB with ~0.65 GiB live. It holds the largest UMI
-//                group, which grows when UMIs collide.
+//   refine-tags  follows the read count, not the UMI count: 0.25 GiB + 3.1 x parsed .mic
+//   sort         1.0 GiB + 2.1 x refined .mic
+//   consensus    0.5 GiB + 3.6 x sorted .mic with ~5 reads per UMI. It holds the largest UMI
+//                group: groups of ~15,600 reads add 0.75 GiB.
 //   analyze      holds every distinct variant in memory until export, so it grows with the
-//                variant count, and the .mic size bounds that count. Heap need per GiB of .mic:
-//                0.26 on a site-saturation DMS library, 0.8 on a natural VHH repertoire,
-//                2.2 on a designed library where 43% of reads are distinct, and 7.3 on a
-//                short-read random-loop library where 69% are. A slope of 9 keeps the heap
-//                above 7.3 x input at every size: 0.85 x (4 + 9 x input) > 7.3 x input.
+//                variant count, and the .mic size bounds that count. Smallest passing memory
+//                limit on reads that are all distinct: 7 GiB at 4M variants (0.31 GiB .mic),
+//                11 GiB at 8M (0.47 GiB), 18 GiB at 16M (0.94 GiB), so 4 GiB + 15 x .mic.
+//                Libraries with fewer distinct reads need less per GiB of .mic.
+//                A known set adds heap for its matcher, whatever the sample. Need above the
+//                same run without one, per GiB of known-set TSV: 62 for an nt set (5M entries,
+//                1.1 GiB: 69 GiB) and 34 for an aa set alone. An nt set also builds the aa
+//                matcher, so nt with aa costs the same as nt alone.
 _ROWS := [
 	{ step: "parse", cpu: 8, memFloor: 8, memIntercept: 0, memSlope: 0 },
 
-	// Sized from the parsed .mic.
-	{ step: "refine-tags", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 4 },
-	{ step: "sort", cpu: 8, memFloor: 8, memIntercept: 0, memSlope: 0 },
-	{ step: "consensus", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 4 },
+	// Each sized from the .mic it reads: parsed, refined, sorted.
+	{ step: "refine-tags", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 7 },
+	{ step: "sort", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 5 },
+	{ step: "consensus", cpu: 8, memFloor: 8, memIntercept: 4, memSlope: 8 },
 
 	// Sized from the .mic analyze reads: the parsed one, or the consensus one on a UMI run.
-	// Floor 12, not 8: reads that differ little compress into a small .mic, so the data term
-	// stays under the floor while the variant count is high. 4M distinct variants in a .mic
-	// below 0.5 GiB peaked at 7.1 GiB and one run in eight was killed at 8.
-	{ step: "analyze", cpu: 8, memFloor: 12, memIntercept: 4, memSlope: 9 }
+	// 2 x the need on all-distinct reads.
+	{ step: "analyze", cpu: 8, memFloor: 12, memIntercept: 8, memSlope: 32, extra: [
+		{ tag: KNOWN_NT_TAG, slope: 124 },
+		{ tag: KNOWN_AA_TAG, slope: 69 }
+	] }
 ]
 
 _byStep := {}
@@ -83,8 +93,14 @@ ram := func(row) {
 	}
 	// The formula takes integers only, so the slope goes in as hundredths.
 	slopeHundredths := int(row.memSlope * 100 + 0.5)
-	formula := f.gib(row.memIntercept).
-		plus(f.size(INPUT_TAG).times(slopeHundredths).dividedBy(100)).
+	sum := f.gib(row.memIntercept).
+		plus(f.size(INPUT_TAG).times(slopeHundredths).dividedBy(100))
+	if !is_undefined(row.extra) {
+		for term in row.extra {
+			sum = sum.plus(f.size(term.tag, { default: 0 }).times(term.slope))
+		}
+	}
+	formula := sum.
 		dividedBy(f.gib(1)).times(f.gib(1)). // dividedBy ceils, so this rounds up to a whole GiB
 		atLeast(f.gib(row.memFloor))
 	fallback := row.memFloor > _FALLBACK_GIB ? row.memFloor : _FALLBACK_GIB
@@ -115,6 +131,8 @@ apply := func(cmd, step, res) {
 
 export {
 	INPUT_TAG: INPUT_TAG,
+	KNOWN_NT_TAG: KNOWN_NT_TAG,
+	KNOWN_AA_TAG: KNOWN_AA_TAG,
 	lookup: lookup,
 	ram: ram,
 	effective: effective,

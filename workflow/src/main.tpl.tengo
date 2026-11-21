@@ -34,9 +34,10 @@ computeQcTpl := assets.importTemplate(":compute-qc")
 concatPerSampleTableTpl := assets.importTemplate(":concat-per-sample-table")
 
 // The per-sample mitool steps take their CPU and memory from :resources; the user
-// overrides perProcessMemGB / perProcessCPUs replace them. Xsv imports carry no
-// defaults: they run an unsized pt.workflow() and are sized from input volume by
-// the SDK (see aggregate-sizing).
+// overrides perProcessMemGB / perProcessCPUs replace them. The cross-sample xsv
+// imports of variant-keyed tables and per-sample tables are sized by sample count
+// (importOps, see aggregate-sizing); the other xsv imports by input volume, the
+// SDK's default.
 
 // Prerun drives the file uploads (parent FASTA / known-set TSVs) so they finish
 // during staging.
@@ -74,11 +75,15 @@ wf.body(func(args) {
 	// is chosen on its own. It also carries the nt parent-residue track, which mitool
 	// writes only alongside the matrix.
 	exportNtStateMatrix := !is_undefined(args.exportNtStateMatrix) && args.exportNtStateMatrix
-	// The "Memory for aggregation" setting. It applies only on a backend that cannot size
-	// the cross-sample steps from their input (see aggregate-sizing).
+	// The "Memory for aggregation" setting. It applies only on a backend without blob sizes
+	// (see aggregate-sizing).
 	aggMemGB := args.aggregationMemGB
-	// Passed to every variant-keyed xsv import below.
-	aggMem := aggSizing.importMem(aggMemGB)
+	// Sample count of the input dataset; sizes the heat maps and the importOps imports below.
+	samples := aggSizing.countSamples(maps.getKeys(inputData.inputs()))
+	// Options of a cross-sample xsv import sized as `step`.
+	importOps := func(step) {
+		return maps.merge({ splitDataAndSpec: true }, aggSizing.importOpts(step, samples, aggMemGB))
+	}
 	// nt has a match signal only when an nt known set was supplied.
 	hasNtKnown := !is_undefined(args.knownNtFileHandle)
 
@@ -410,7 +415,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 1
 			},
-			{ splitDataAndSpec: true, mem: aggMem }
+			importOps("perSampleTableImport")
 		)
 	}
 
@@ -432,20 +437,42 @@ wf.body(func(args) {
 		needNt: exportNt || exportNtStateMatrix,
 		exportNt: exportNt,
 		exportOnlyKnown: exportOnlyKnown,
-		hasNtKnown: hasNtKnown
+		hasNtKnown: hasNtKnown,
+		aggBuckets: args.aggBuckets
 	})
-	importProps := func(file, axis, isAa, regionNames) {
-		return xsv.importFile(
-			file,
-			"tsv",
-			{
-				axes: [axis],
-				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName, hasUmi, regionChains, chainIds),
-				storageFormat: "Parquet",
-				partitionKeyLength: 0
-			},
-			{ splitDataAndSpec: true, mem: aggMem }
-		)
+	// The variant label comes from its own TSV (variantKey, variantLabel); the other
+	// per-variant columns from the properties TSV. One result map holds both.
+	importProps := func(file, labelFile, axis, isAa, regionNames) {
+		propCols := []
+		labelCols := []
+		for c in columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName, hasUmi, regionChains, chainIds) {
+			if c.column == "variantLabel" {
+				labelCols = append(labelCols, c)
+			} else {
+				propCols = append(propCols, c)
+			}
+		}
+		importCols := func(f, cols, step) {
+			return xsv.importFile(
+				f,
+				"tsv",
+				{
+					axes: [axis],
+					columns: cols,
+					storageFormat: "Parquet",
+					partitionKeyLength: 0
+				},
+				importOps(step)
+			)
+		}
+		merged := {}
+		for k, v in importCols(file, propCols, "propertyImport") {
+			merged[k] = v
+		}
+		for k, v in importCols(labelFile, labelCols, "labelImport") {
+			merged[k] = v
+		}
+		return merged
 	}
 	ntPropsTsv := aggVarsRun.output("ntProperties")
 	aaPropsTsv := aggVarsRun.output("aaProperties")
@@ -453,9 +480,9 @@ wf.body(func(args) {
 	// entirely otherwise — nothing downstream consumes them).
 	ntPropsCols := undefined
 	if exportNt {
-		ntPropsCols = importProps(ntPropsTsv, ntVariantAxis, false, rc.ntRegionNames)
+		ntPropsCols = importProps(ntPropsTsv, aggVarsRun.output("ntLabels"), ntVariantAxis, false, rc.ntRegionNames)
 	}
-	aaPropsCols := importProps(aaPropsTsv, aaVariantAxis, true, rc.aaRegionNames)
+	aaPropsCols := importProps(aaPropsTsv, aggVarsRun.output("aaLabels"), aaVariantAxis, true, rc.aaRegionNames)
 
 	// State matrix [variantKey, parentId, position] -> state, deduped cross-sample.
 	// aa always; nt only when nt export is enabled (its per-sample TSV is an empty
@@ -484,8 +511,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			// Slope 3, not the default 10: on a 25 GiB matrix the import peaked at 28 GiB.
-			{ splitDataAndSpec: true, mem: aggMem, memSlope: 3 }
+			importOps("matrixImport")
 		)
 	}
 	aaStateMatrixCols := undefined
@@ -620,7 +646,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			{ splitDataAndSpec: true, mem: aggMem }
+			importOps("linkerImport")
 		)
 	}
 	// nt→aa and parent→nt linkers reference the nt variant axis, so they are
@@ -785,6 +811,7 @@ wf.body(func(args) {
 	addStateHeatmap := func(prefix, compositionData, alphabet, posLabel, trace, parentResidueCols) {
 		hmRun := render.createEphemeral(computeStateHeatmapTpl, {
 			aggMemGB: aggMemGB,
+			samples: samples,
 			compositionData: compositionData,
 			hasUmi: hasUmi
 		})
@@ -887,7 +914,7 @@ wf.body(func(args) {
 				columns: columns,
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
-			}, { splitDataAndSpec: true, mem: aggMem })
+			}, importOps("knownImport"))
 		}
 
 		// Dynamic import-column specs for the mapped metadata fields. The column

@@ -40,14 +40,9 @@ self.body(func(inputs) {
 	// The variants tables name the key column after the level.
 	keyCol := inputs.variantsKeyColumn
 
-	// Sized by sample count, not input bytes: the job streams the matrices and holds only the
-	// (variant, parent) owner list. Smallest passing hard limit, 8 threads: aa 4, 4, 8 GiB at
-	// 50, 100, 200 samples (64 to 271 GB of input); nt 8 GiB at 200 (920 GB). This asks
-	// 6 GiB + 60 MiB per sample, at least the 16 GiB floor: 2x a need of 3 GiB + 30 MiB
-	// per sample.
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB).
-		memIntercept(aggSizing.perSampleIntercept(6, 60, len(smMap))).
-		memSlope(0)
+	// Sized by sample count: dedup step. The job streams the matrices and holds only the
+	// (variant, parent) owner list.
+	wf := aggSizing.applyStep(pt.workflow(), "dedup", len(smMap), inputs.aggMemGB)
 
 	keyFrames := []
 	smFrames := []
