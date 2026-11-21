@@ -35,6 +35,42 @@ TestAnalyzeIsSizedFromTheMic := func() {
 	test.isEqual(_gib(104), _ram(rs.lookup("analyze"), _gib(3)))
 }
 
+// Analyze memory for a .mic and known-set files of the given sizes; 0 leaves a file out.
+_analyzeRam := func(micBytes, ntBytes, aaBytes) {
+	sizes := { "input.mic": micBytes, "known_nt.tsv": ntBytes, "known_aa.tsv": aaBytes }
+	inputs := {}
+	inputs[rs.INPUT_TAG] = ["input.mic"]
+	all := ["input.mic"]
+	if ntBytes > 0 {
+		inputs[rs.KNOWN_NT_TAG] = ["known_nt.tsv"]
+		all = append(all, "known_nt.tsv")
+	}
+	if aaBytes > 0 {
+		inputs[rs.KNOWN_AA_TAG] = ["known_aa.tsv"]
+		all = append(all, "known_aa.tsv")
+	}
+	resolved := f.resolveAst(rs.ram(rs.lookup("analyze")), inputs, all)
+	resolver := {
+		size: func(files) {
+			total := 0
+			for name in files {
+				total += sizes[name]
+			}
+			return total
+		},
+		lineCount: func(files) { return 0 }
+	}
+	return f.evaluateResource(resolved, resolver, "test")
+}
+
+TestAnalyzeAddsTheKnownSet := func() {
+	// max(12, 8 + 32 x mic + 124 x nt + 69 x aa), rounded up.
+	test.isEqual(_gib(24), _analyzeRam(_gib(1) / 2, 0, 0))
+	test.isEqual(_gib(148), _analyzeRam(_gib(1) / 2, _gib(1), 0))
+	test.isEqual(_gib(93), _analyzeRam(_gib(1) / 2, 0, _gib(1)))
+	test.isEqual(_gib(217), _analyzeRam(_gib(1) / 2, _gib(1), _gib(1)))
+}
+
 TestUmiStepsAreSizedFromTheMic := func() {
 	// max(8, 4 + slope x GiB): slope 7, 5 and 8.
 	test.isEqual(_gib(8), _ram(rs.lookup("refine-tags"), _gib(1) / 2))
