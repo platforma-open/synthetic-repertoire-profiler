@@ -1,7 +1,7 @@
 // Per-sample `mitool parse` subtemplate.
 //
-// Its own memoization boundary: parse reads only the tag pattern, the read limit
-// and the FASTQ files, so it survives a change to any analyze or export setting.
+// Its own memoization boundary: parse reads only the tag pattern, the strand mode,
+// the read limit and the FASTQ files, so it survives a change to any analyze or export setting.
 // The resource overrides arrive as a meta input, which deduplication ignores.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
@@ -13,7 +13,7 @@ resources := import(":resources")
 json := import("json")
 times := import("times")
 
-self.defineOutputs("parsedMic", "parseLogStream")
+self.defineOutputs("parsedMic", "parseLogStream", "parseReportJson")
 
 // `memory-from-limits` sizes the JVM heap from the scheduler's RAM limit — see
 // repertoire-pipeline for why the plain `:main` entrypoint is wrong here.
@@ -25,6 +25,7 @@ self.body(func(inputs) {
 	pattern := inputs.pattern
 	inputArg := inputs.inputArg
 	limitInput := inputs.limitInput
+	unstranded := inputs.unstranded
 
 	parseBuilder := exec.builder().
 		name("mitool parse").
@@ -41,7 +42,13 @@ self.body(func(inputs) {
 	if !is_undefined(limitInput) {
 		parseBuilder = parseBuilder.arg("-n").arg(string(int(limitInput)))
 	}
+	// Single-end: also try the reverse-complemented read. Paired-end: also try the
+	// mates swapped. A reversed hit is flipped before capture, so inserts stay forward.
+	if unstranded == true {
+		parseBuilder = parseBuilder.arg("--unstranded")
+	}
 	parseBuilder = parseBuilder.
+		arg("--json-report").arg("parse.report.json").
 		arg(inputArg).
 		arg("parsed.mic")
 
@@ -54,10 +61,11 @@ self.body(func(inputs) {
 	resources.apply(parseBuilder, "parse", inputs.resources)
 
 	// cache() retains the result; without it there is nothing for a rerun to match.
-	parseCmd := parseBuilder.saveFile("parsed.mic").cache(48 * times.hour).run()
+	parseCmd := parseBuilder.saveFile("parsed.mic").saveFile("parse.report.json").cache(48 * times.hour).run()
 
 	return {
 		parsedMic: parseCmd.getFile("parsed.mic"),
-		parseLogStream: parseCmd.getStdoutStream()
+		parseLogStream: parseCmd.getStdoutStream(),
+		parseReportJson: parseCmd.getFile("parse.report.json")
 	}
 })

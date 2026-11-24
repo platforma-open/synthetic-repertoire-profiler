@@ -182,6 +182,7 @@ wf.body(func(args) {
 	params := maps.clone({
 		fileExtension: fileExtension,
 		pattern: args.tagPattern,
+		unstranded: args.unstranded,
 		patternParts: args.patternParts,
 		// Absent without a UMI; presence is what switches the chain on downstream.
 		umi: args.umi,
