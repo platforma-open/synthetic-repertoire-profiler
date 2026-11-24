@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.synthetic-repertoire-profiler.kind
 
+## 1.5.0
+
+### Minor Changes
+
+- 850b2c8: New "Search both strands" option next to the tag pattern. It matches reads in either orientation, so Nanopore amplicon reads that arrive reverse-complemented are no longer dropped at parse.
+
+  The Alignments bar now shows reads that did not match the tag pattern as "No tag pattern match", so reads lost at parse are visible on the main table and in the sample report. Runs with a UMI keep the old bar.
+
 ## 1.4.0
 
 ### Minor Changes
