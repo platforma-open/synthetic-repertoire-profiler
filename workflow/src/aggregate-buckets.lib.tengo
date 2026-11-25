@@ -1,0 +1,179 @@
+// Bucket plan for the cross-sample variant aggregate and the owner jobs of the state-matrix dedup.
+//
+// Rows split into K key buckets by the first 2 chars of the variant key (16 lowercase hex
+// chars): prefix value p (0..255) goes to bucket p % K. A key that is null, empty or not hex
+// goes to bucket 0. A key maps to one bucket, so each group is complete inside its bucket.
+// The even split relies on mitool's lowercase-hex keys: keys in another format all land in
+// bucket 0, whose job requests a 1/K share.
+//
+// Labels split into L label buckets by the first letter of the label prefix. The 26 letters
+// are dealt round-robin; a prefix not starting with A-Z, including an empty one, goes to label
+// bucket 0.
+//
+// K is the smallest power of two with totalBytes / K <= TARGET_BUCKET_BYTES, at most
+// MAX_KEY_BUCKETS. Without blob sizes, totalBytes is samples x EST_SAMPLE_BYTES for the variant
+// aggregate and samples x EST_PAIR_SAMPLE_BYTES for the dedup owner jobs. L = min(K, 26).
+//
+// Bucket job need: 2 GiB + 1 MiB x samples + 6 x totalBytes / K. Every bucket scans all
+// samples, so the per-sample term does not shrink with K. Smallest passing hard limit of the aa
+// bucket job at 400 / 800 / 1,600 / 4,000 samples: 3.25 / 2.75 / 2.75 / 4.5 GiB. A dedup owner job
+// passes at 1.5 GiB at 400 samples with K=16 (law: 3.3 GiB), 4 GiB at 400 with K=4 (6.0), and
+// 4 GiB at 10 samples of 4M variants with K=1 (5.1). Request: max(floor, 2 x need,
+// aggMemGB GiB); the caller passes aggMemGB only on a backend without blob sizes.
+
+ll := import("@platforma-sdk/workflow-tengo:ll")
+units := import("@platforma-sdk/workflow-tengo:units")
+math := import("math")
+aggSizing := import(":aggregate-sizing")
+variantLabel := import(":variant-label")
+
+TARGET_BUCKET_BYTES := 1 * units.GiB
+EST_SAMPLE_BYTES := 42 * units.MiB
+// Abundance and keys parquets of one sample, the input of a dedup owner job.
+EST_PAIR_SAMPLE_BYTES := 6 * units.MiB
+PREFIX_COUNT := 256
+MAX_KEY_BUCKETS := 256
+LABEL_LETTERS := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+NEED_BASE_BYTES := 2 * units.GiB
+NEED_PER_SAMPLE_BYTES := 1 * units.MiB
+NEED_PER_INPUT_BYTE := 6
+
+HEX := "0123456789abcdef"
+
+ALL_LETTERS := []
+for i := 0; i < len(LABEL_LETTERS); i++ {
+	ALL_LETTERS = append(ALL_LETTERS, LABEL_LETTERS[i:i + 1])
+}
+
+// hexPrefix returns p (0..255) as 2 lowercase hex chars.
+hexPrefix := func(p) {
+	return HEX[p / 16:p / 16 + 1] + HEX[p % 16:p % 16 + 1]
+}
+
+ALL_PREFIXES := []
+for p := 0; p < PREFIX_COUNT; p++ {
+	ALL_PREFIXES = append(ALL_PREFIXES, hexPrefix(p))
+}
+
+// isPowerOfTwoUpTo returns true for 1, 2, 4, ... max.
+isPowerOfTwoUpTo := func(n, max) {
+	for v := 1; v <= max; v *= 2 {
+		if n == v {
+			return true
+		}
+	}
+	return false
+}
+
+// plan chooses the key bucket count k and the label bucket count l.
+//
+// @param totalBytes: int | undefined - bytes over all inputs; undefined without blob sizes
+// @param samples: int - sample count
+// @param override: int | undefined - sets k directly; a power of two from 1 to 256
+// @param estSampleBytes: int - optional; bytes per sample assumed without blob sizes
+// @return { k: int, l: int, totalBytes: int }
+plan := func(totalBytes, samples, override, ...estSampleBytes) {
+	ll.assert(len(estSampleBytes) <= 1, "too many arguments")
+	if is_undefined(totalBytes) {
+		totalBytes = samples * (len(estSampleBytes) == 1 ? estSampleBytes[0] : EST_SAMPLE_BYTES)
+	}
+
+	k := 1
+	if !is_undefined(override) {
+		k = int(override)
+		ll.assert(float(k) == float(override) && isPowerOfTwoUpTo(k, MAX_KEY_BUCKETS),
+			"aggBuckets must be a power of two from 1 to %d, got %v", MAX_KEY_BUCKETS, override)
+	} else {
+		for k < MAX_KEY_BUCKETS && k * TARGET_BUCKET_BYTES < totalBytes {
+			k *= 2
+		}
+	}
+
+	return { k: k, l: int(math.min(k, len(LABEL_LETTERS))), totalBytes: totalBytes }
+}
+
+// keyBucketPrefixes returns k lists of 2-char key prefixes; prefix value p is in list p % k.
+keyBucketPrefixes := func(k) {
+	lists := []
+	for i := 0; i < k; i++ {
+		lists = append(lists, [])
+	}
+	for p := 0; p < PREFIX_COUNT; p++ {
+		lists[p % k] = append(lists[p % k], ALL_PREFIXES[p])
+	}
+	return lists
+}
+
+// keyPredicate returns the filter selecting rows of column `col` whose key prefix is one of
+// `prefixes`. With catchAll it also selects null, empty and non-hex keys.
+keyPredicate := func(pt, col, prefixes, catchAll) {
+	prefix := pt.col(col).fillNull("").strSlice(0, 2)
+	pred := prefix.inSet(prefixes...)
+	if catchAll {
+		pred = pred.or(prefix.inSet(ALL_PREFIXES...).not())
+	}
+	return pred
+}
+
+// labelLetters deals the 26 letters round-robin into l strings.
+labelLetters := func(l) {
+	letters := []
+	for i := 0; i < l; i++ {
+		letters = append(letters, "")
+	}
+	for i := 0; i < len(LABEL_LETTERS); i++ {
+		letters[i % l] += LABEL_LETTERS[i:i + 1]
+	}
+	return letters
+}
+
+// labelPredicate returns the filter selecting rows whose label prefix starts with one of
+// `letters` (a string of letters). With catchAll it also selects a prefix whose first char is
+// outside A-Z, including an empty or null prefix.
+labelPredicate := func(pt, hashCol, letters, catchAll) {
+	first := variantLabel.labelPrefixExpr(pt, hashCol).strSlice(0, 1).fillNull("")
+	set := []
+	for i := 0; i < len(letters); i++ {
+		set = append(set, letters[i:i + 1])
+	}
+	pred := first.inSet(set...)
+	if catchAll {
+		pred = pred.or(first.inSet(ALL_LETTERS...).not())
+	}
+	return pred
+}
+
+// bucketName returns bucket index b as 3 digits, so names sort in bucket order.
+bucketName := func(b) {
+	s := string(b)
+	for len(s) < 3 {
+		s = "0" + s
+	}
+	return s
+}
+
+// flatJobBytes returns max(floor, aggMemGB GiB) in bytes; aggMemGB may be undefined or a float.
+flatJobBytes := func(aggMemGB) {
+	return aggSizing.requestBytes(0, aggMemGB)
+}
+
+// bucketJobBytes returns the request of one key bucket job, in bytes.
+bucketJobBytes := func(samples, totalBytes, k, aggMemGB) {
+	inputTerm := (NEED_PER_INPUT_BYTE * totalBytes + k - 1) / k
+	need := NEED_BASE_BYTES + NEED_PER_SAMPLE_BYTES * samples + inputTerm
+	return aggSizing.requestBytes(need, aggMemGB)
+}
+
+export {
+	EST_PAIR_SAMPLE_BYTES: EST_PAIR_SAMPLE_BYTES,
+
+	plan: plan,
+	keyBucketPrefixes: keyBucketPrefixes,
+	keyPredicate: keyPredicate,
+	bucketName: bucketName,
+	labelLetters: labelLetters,
+	labelPredicate: labelPredicate,
+	bucketJobBytes: bucketJobBytes,
+	flatJobBytes: flatJobBytes
+}

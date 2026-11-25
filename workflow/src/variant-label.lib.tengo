@@ -6,16 +6,21 @@
 // "V-XXXXX-N", ranked deterministically by the hash. Must be computed
 // cross-sample so a variant's label is stable across the run.
 
+// labelPrefixExpr returns the label prefix of `hashCol`: digits removed, first 5 chars,
+// uppercase. The label and the label bucket both use it, so a prefix never spans two buckets.
+labelPrefixExpr := func(pt, hashCol) {
+	return pt.col(hashCol).
+		strReplace("\\d", "", { replaceAll: true }).
+		strSlice(0, 5).
+		strToUpper()
+}
+
 addVariantLabelColumnsPt := func(df, hashCol, variantLabelCol, pt) {
 	prefixTempCol := variantLabelCol + "_prefix_temp"
 	rankTempCol := variantLabelCol + "_rank_temp"
 
 	df = df.withColumns(
-		pt.col(hashCol).
-			strReplace("\\d", "", { replaceAll: true }).
-			strSlice(0, 5).
-			strToUpper().
-			alias(prefixTempCol)
+		labelPrefixExpr(pt, hashCol).alias(prefixTempCol)
 	)
 
 	df = df.withColumns(
@@ -35,5 +40,6 @@ addVariantLabelColumnsPt := func(df, hashCol, variantLabelCol, pt) {
 }
 
 export {
+	labelPrefixExpr: labelPrefixExpr,
 	addVariantLabelColumnsPt: addVariantLabelColumnsPt
 }
