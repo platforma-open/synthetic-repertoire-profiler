@@ -12,8 +12,7 @@
  *
  * Regenerate: UPDATE_GOLDEN=1 pnpm test, then pnpm run fmt in test/ (the golden is
  * written unformatted, and the format check runs before the tests). Regenerate only from a
- * build whose output is known to be right (the goldens were written from main at 3f61252),
- * and review the diff.
+ * build whose output is known to be right, and review the diff.
  */
 import { SamplesAndDataBlockPointer } from "@platforma-open/milaboratories.samples-and-data";
 import { TableBlockPointer } from "@platforma-open/milaboratories.table";
@@ -51,6 +50,18 @@ const KNOWN_AA = {
   knownAaSequenceColumn: "aaSequence",
   knownAaMetadataColumns: ["group", "score"],
 };
+// known_nt.tsv: N1-N4 occur in the reads, N5-N6 do not.
+const KNOWN_NT = {
+  knownNtColumns: [
+    { header: "knownId", type: "String" },
+    { header: "ntSequence", type: "String" },
+    { header: "group", type: "String" },
+    { header: "score", type: "Double" },
+  ],
+  knownNtIdColumn: "knownId",
+  knownNtSequenceColumn: "ntSequence",
+  knownNtMetadataColumns: ["group", "score"],
+};
 
 type Scenario = {
   name: string;
@@ -60,6 +71,8 @@ type Scenario = {
   tagPattern?: string;
   // Upload known_aa.tsv as the known aa set.
   knownAa?: boolean;
+  // Upload known_nt.tsv as the known nt set.
+  knownNt?: boolean;
 };
 
 // Each scenario overrides the block defaults and has a golden of its own.
@@ -81,8 +94,11 @@ const SCENARIOS: Scenario[] = [
       })),
     },
   },
+  // Both state-matrix exports off: the matrix workflow is skipped.
+  { name: "no-matrix", args: { exportStateMatrix: false } },
   { name: "known-aa", args: KNOWN_AA, knownAa: true },
   { name: "known-aa-only", args: { ...KNOWN_AA, exportOnlyKnown: true }, knownAa: true },
+  { name: "known-nt", args: { ...KNOWN_NT, exportNt: true }, knownNt: true },
   {
     // 10-nt UMI before the R1 anchor; consensus needs 2 reads per molecule (default).
     name: "umi",
@@ -155,6 +171,9 @@ blockTest.for(RUNS)(
     const knownAa = scenario.knownAa
       ? { knownAaFileHandle: await helpers.getLocalFileHandle(path.join(ASSETS, "known_aa.tsv")) }
       : {};
+    const knownNt = scenario.knownNt
+      ? { knownNtFileHandle: await helpers.getLocalFileHandle(path.join(ASSETS, "known_nt.tsv")) }
+      : {};
     await rawPrj.mutateBlockStorage(apId, {
       operation: "update-block-data",
       value: {
@@ -165,6 +184,7 @@ blockTest.for(RUNS)(
         tagPattern: scenario.tagPattern ?? PATTERN,
         runMode: "full",
         ...knownAa,
+        ...knownNt,
         ...scenario.args,
       },
     });
@@ -185,7 +205,6 @@ blockTest.for(RUNS)(
       [apId]: "<apBlock>",
       [sndId]: "<sndBlock>",
       [tableId]: "<tableBlock>",
-      [ASSETS]: "<assets>",
     };
     const driver = ml.driverKit.pFrameDriver;
     // Keep only columns this block produced: their specs name the block id after the

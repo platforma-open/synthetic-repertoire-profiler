@@ -17,11 +17,13 @@ has a read count; a 1-read molecule falls below the default consensus minimum (2
 drops, so p2_m70 is absent from s2. One read of a 3-read molecule carries a base error.
 
 Known aa set: a TSV of full-length aa sequences, four present in the reads, two absent.
+Known nt set: the same four variants and two absent ones as full-length nt sequences.
 
-usage: gen_fixture.py OUT_DIR [base|umi|known-aa]
+usage: gen_fixture.py OUT_DIR [base|umi|known-aa|known-nt]
   base     (default) parents.fasta and s{1,2,3}_R{1,2}.fastq.gz
   umi      umi_s{1,2,3}_R{1,2}.fastq.gz
   known-aa known_aa.tsv
+  known-nt known_nt.tsv
 """
 import gzip
 import random
@@ -193,5 +195,19 @@ def write_known_aa(out):
             f.write(f"{k}\t{aa}\t{g}\t{sc}\n")
 
 
-{"base": write_base, "umi": write_umi, "known-aa": write_known_aa}[
+def write_known_nt(out):
+    present = [("N1", "p1_m5", "A", 1.5), ("N2", "p1_m20", "A", 0.25),
+               ("N3", "p1_parent", "B", 2.0), ("N4", "p1_m5_m40", "B", 0.75)]
+    absent = [("N5", mutate(P1, [45], "x"), "A", 3.0), ("N6", mutate(P1, [10, 11], "y"), "C", 0.5)]
+    rows = [(k, V[v], g, sc) for k, v, g, sc in present] + absent
+    seen = {V[v] for c in SAMPLES.values() for v in c}
+    assert all(r[1] not in seen for r in rows[4:])
+    with open(f"{out}/known_nt.tsv", "w") as f:
+        f.write("knownId\tntSequence\tgroup\tscore\n")
+        for k, nt, g, sc in rows:
+            f.write(f"{k}\t{nt}\t{g}\t{sc}\n")
+
+
+{"base": write_base, "umi": write_umi, "known-aa": write_known_aa,
+ "known-nt": write_known_nt}[
     sys.argv[2] if len(sys.argv) > 2 else "base"](sys.argv[1])

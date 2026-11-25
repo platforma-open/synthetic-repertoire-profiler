@@ -3,7 +3,7 @@
  * p-frame output, as a normalised spec plus sorted row values.
  *
  * Normalisation keeps the snapshot stable across runs and across storage changes:
- * - block, sample and dataset ids are replaced by stable names;
+ * - block ids are replaced by stable names (sample and dataset ids are fixed inputs);
  * - rows are sorted; doubles are rounded to 12 significant digits, so
  *   summation-order rounding does not count as a change;
  * - data is read through the p-frame driver, so parquet layout and partitioning
