@@ -4,6 +4,7 @@
 // PColumn frame per distinct variant (sequence, label, total reads, sample count).
 
 wf := import("@platforma-sdk/workflow-tengo:workflow")
+ll := import("@platforma-sdk/workflow-tengo:ll")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
 pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
@@ -56,6 +57,15 @@ wf.body(func(args) {
 
 	inputSpec := args.resolvedInput.spec
 	inputData := args.resolvedInput.data
+	// The sample axis of the input, found by name: the model accepts it at any position.
+	sampleAxisSpec := undefined
+	for a in inputSpec.axesSpec {
+		if a.name == "pl7.app/sampleId" {
+			sampleAxisSpec = a
+			break
+		}
+	}
+	ll.assert(!is_undefined(sampleAxisSpec), "the input has no pl7.app/sampleId axis")
 	fileExtension := inputSpec.domain["pl7.app/fileExtension"]
 
 	// Opt-in nucleotide-level export (off by default). Gates the nt state matrix
@@ -402,7 +412,7 @@ wf.body(func(args) {
 			concatRun.output("table"),
 			"parquet",
 			{
-				axes: [{ column: "sampleId", spec: inputSpec.axesSpec[0] }] + table.axes,
+				axes: [{ column: "sampleId", spec: sampleAxisSpec }] + table.axes,
 				columns: table.columns,
 				storageFormat: "Parquet",
 				partitionKeyLength: 1
