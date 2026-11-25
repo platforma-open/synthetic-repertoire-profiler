@@ -203,10 +203,10 @@ self.body(func(inputs) {
 		analyzeBuilder = analyzeBuilder.addFile("parents.regions.json", parentRegionsFile)
 	}
 	if !is_undefined(knownNtFile) {
-		analyzeBuilder = analyzeBuilder.addFile("known_nt.tsv", knownNtFile)
+		analyzeBuilder = analyzeBuilder.addFile("known_nt.tsv", knownNtFile, { tag: resources.KNOWN_NT_TAG })
 	}
 	if !is_undefined(knownAaFile) {
-		analyzeBuilder = analyzeBuilder.addFile("known_aa.tsv", knownAaFile)
+		analyzeBuilder = analyzeBuilder.addFile("known_aa.tsv", knownAaFile, { tag: resources.KNOWN_AA_TAG })
 	}
 
 	analyzeBuilder = analyzeBuilder.
