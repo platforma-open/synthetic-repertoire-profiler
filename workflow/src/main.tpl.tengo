@@ -15,7 +15,6 @@ xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
 strings := import("@platforma-sdk/workflow-tengo:strings")
 columnSpecs := import(":column-specs")
 regionConfig := import(":region-config")
-smChunks := import(":state-matrix-chunks")
 aggSizing := import(":aggregate-sizing")
 json := import("json")
 times := import("times")
@@ -26,21 +25,20 @@ repertoirePipelineTpl := assets.importTemplate(":repertoire-pipeline")
 vdjAutoRegionsTpl := assets.importTemplate(":vdj-auto-regions")
 aggregateVariantsTpl := assets.importTemplate(":aggregate-variants")
 aggregateStateMatrixTpl := assets.importTemplate(":aggregate-state-matrix")
-mergeStateMatrixTpl := assets.importTemplate(":merge-state-matrix")
 computeStateHeatmapTpl := assets.importTemplate(":compute-state-heatmap")
 aggregateRegionAnnotationTpl := assets.importTemplate(":aggregate-region-annotation")
 aggregateParentTablesTpl := assets.importTemplate(":aggregate-parent-tables")
 parentSubRegionsTpl := assets.importTemplate(":parent-subregions")
-aggregateLinkersTpl := assets.importTemplate(":aggregate-linkers")
 aggregateKnownTpl := assets.importTemplate(":aggregate-known")
 processKnownSetTpl := assets.importTemplate(":process-known-set")
 computeQcTpl := assets.importTemplate(":compute-qc")
 concatPerSampleTableTpl := assets.importTemplate(":concat-per-sample-table")
 
 // The per-sample mitool steps take their CPU and memory from :resources; the user
-// overrides perProcessMemGB / perProcessCPUs replace them. Xsv imports carry no
-// defaults: they run an unsized pt.workflow() and are sized from input volume by
-// the SDK (see aggregate-sizing).
+// overrides perProcessMemGB / perProcessCPUs replace them. The cross-sample xsv
+// imports of variant-keyed tables and per-sample tables are sized by sample count
+// (importOps, see aggregate-sizing); the other xsv imports by input volume, the
+// SDK's default.
 
 // Prerun drives the file uploads (parent FASTA / known-set TSVs) so they finish
 // during staging.
@@ -87,11 +85,15 @@ wf.body(func(args) {
 	// is chosen on its own. It also carries the nt parent-residue track, which mitool
 	// writes only alongside the matrix.
 	exportNtStateMatrix := !is_undefined(args.exportNtStateMatrix) && args.exportNtStateMatrix
-	// The "Memory for aggregation" setting. It applies only on a backend that cannot size
-	// the cross-sample steps from their input (see aggregate-sizing).
+	// The "Memory for aggregation" setting. It applies only on a backend without blob sizes
+	// (see aggregate-sizing).
 	aggMemGB := args.aggregationMemGB
-	// Passed to every variant-keyed xsv import below.
-	aggMem := aggSizing.importMem(aggMemGB)
+	// Sample count of the input dataset; sizes the heat maps and the importOps imports below.
+	samples := aggSizing.countSamples(maps.getKeys(inputData.inputs()))
+	// Options of a cross-sample xsv import sized as `step`.
+	importOps := func(step) {
+		return maps.merge({ splitDataAndSpec: true }, aggSizing.importOpts(step, samples, aggMemGB))
+	}
 	// nt has a match signal only when an nt known set was supplied.
 	hasNtKnown := !is_undefined(args.knownNtFileHandle)
 
@@ -208,6 +210,8 @@ wf.body(func(args) {
 		parentRegionsJson: parentRegionsJson,
 		parentRegionsFile: parentRegionsFile,
 		emitRegionAnnotation: rc.hasRegions,
+		ntRegionCols: rc.ntRegionNames,
+		aaRegionCols: rc.aaRegionNames,
 		knownNtFile: knownNtFile,
 		knownAaFile: knownAaFile,
 		knownNtIdColumn: args.knownNtIdColumn,
@@ -335,6 +339,10 @@ wf.body(func(args) {
 		fileOutput("parsedMic"),
 		fileOutput("variantsTsv"),
 		fileOutput("aaVariantsTsv"),
+		fileOutput("ntKeys"),
+		fileOutput("ntWide"),
+		fileOutput("aaKeys"),
+		fileOutput("aaWide"),
 		fileOutput("regionAnnotationTsv"),
 		fileOutput("aaParentResiduesTsv"),
 		fileOutput("ntParentResiduesTsv"),
@@ -361,11 +369,12 @@ wf.body(func(args) {
 	if exportNtStateMatrix {
 		targetOutputs = append(targetOutputs, fileOutput("ntStateComposition"))
 	}
-	// State matrix, split by position chunk inside the per-sample job: one plain File
-	// output per level per chunk key (see state-matrix-chunks outputName).
-	for chunkKey in smChunks.keys() {
-		targetOutputs = append(targetOutputs, fileOutput(smChunks.outputName("aa", chunkKey)))
-		targetOutputs = append(targetOutputs, fileOutput(smChunks.outputName("nt", chunkKey)))
+	// State matrix as mitool wrote it, one File per level that is on.
+	if exportStateMatrix {
+		targetOutputs = append(targetOutputs, fileOutput("aaStateMatrixTsv"))
+	}
+	if exportNtStateMatrix {
+		targetOutputs = append(targetOutputs, fileOutput("ntStateMatrixTsv"))
 	}
 
 	mitoolResources := {}
@@ -417,35 +426,64 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 1
 			},
-			{ splitDataAndSpec: true, mem: aggMem }
+			importOps("perSampleTableImport")
 		)
 	}
 
-	// Cross-sample / cross-variant properties (nt + aa): one ephemeral reads the
-	// per-sample abundance parquets (totals) + raw variant TSVs (sample-independent
-	// metadata) and emits per-variant property tables.
+	// Cross-sample / cross-variant properties (nt + aa) and the linkers: one ephemeral
+	// reads the per-sample abundance parquets (totals) and the per-sample variant
+	// metadata parquets, and emits per-variant property tables and the linker tables.
 	aggVarsRun := render.createEphemeral(aggregateVariantsTpl, {
 		aggMemGB: aggMemGB,
 		ntAbundanceData: perSampleResults.outputData("ntAbundance"),
 		aaAbundanceData: perSampleResults.outputData("aaAbundance"),
-		variantsTsvData: perSampleResults.outputData("variantsTsv"),
-		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
+		ntKeysData: perSampleResults.outputData("ntKeys"),
+		ntWideData: perSampleResults.outputData("ntWide"),
+		aaKeysData: perSampleResults.outputData("aaKeys"),
+		aaWideData: perSampleResults.outputData("aaWide"),
 		ntRegionCols: rc.ntRegionNames,
 		aaRegionCols: rc.aaRegionNames,
-		hasUmi: hasUmi
+		hasUmi: hasUmi,
+		// The nt property table feeds the nt export and the nt composition heat map.
+		needNt: exportNt || exportNtStateMatrix,
+		exportNt: exportNt,
+		exportOnlyKnown: exportOnlyKnown,
+		hasNtKnown: hasNtKnown,
+		aggBuckets: args.aggBuckets
 	})
-	importProps := func(file, axis, isAa, regionNames) {
-		return xsv.importFile(
-			file,
-			"tsv",
-			{
-				axes: [axis],
-				columns: columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName, hasUmi, regionChains, chainIds),
-				storageFormat: "Parquet",
-				partitionKeyLength: 0
-			},
-			{ splitDataAndSpec: true, mem: aggMem }
-		)
+	// The variant label comes from its own TSV (variantKey, variantLabel); the other
+	// per-variant columns from the properties TSV. One result map holds both.
+	importProps := func(file, labelFile, axis, isAa, regionNames) {
+		propCols := []
+		labelCols := []
+		for c in columnSpecs.aggregatedColumns(isAa ? "aminoacid" : "nucleotide", isAa, regionNames, rc.completeFeatureName, hasUmi, regionChains, chainIds) {
+			if c.column == "variantLabel" {
+				labelCols = append(labelCols, c)
+			} else {
+				propCols = append(propCols, c)
+			}
+		}
+		importCols := func(f, cols, step) {
+			return xsv.importFile(
+				f,
+				"tsv",
+				{
+					axes: [axis],
+					columns: cols,
+					storageFormat: "Parquet",
+					partitionKeyLength: 0
+				},
+				importOps(step)
+			)
+		}
+		merged := {}
+		for k, v in importCols(file, propCols, "propertyImport") {
+			merged[k] = v
+		}
+		for k, v in importCols(labelFile, labelCols, "labelImport") {
+			merged[k] = v
+		}
+		return merged
 	}
 	ntPropsTsv := aggVarsRun.output("ntProperties")
 	aaPropsTsv := aggVarsRun.output("aaProperties")
@@ -453,25 +491,25 @@ wf.body(func(args) {
 	// entirely otherwise — nothing downstream consumes them).
 	ntPropsCols := undefined
 	if exportNt {
-		ntPropsCols = importProps(ntPropsTsv, ntVariantAxis, false, rc.ntRegionNames)
+		ntPropsCols = importProps(ntPropsTsv, aggVarsRun.output("ntLabels"), ntVariantAxis, false, rc.ntRegionNames)
 	}
-	aaPropsCols := importProps(aaPropsTsv, aaVariantAxis, true, rc.aaRegionNames)
+	aaPropsCols := importProps(aaPropsTsv, aggVarsRun.output("aaLabels"), aaVariantAxis, true, rc.aaRegionNames)
 
 	// State matrix [variantKey, parentId, position] -> state, deduped cross-sample.
 	// aa always; nt only when nt export is enabled (its per-sample TSV is an empty
 	// placeholder otherwise — see repertoire-pipeline). Same ephemeral aggregate
 	// serves both levels.
 	importStateMatrix := func(levelPrefix, variantAxis, alphabet, posLabel) {
-		// One dedup job per position chunk, then a streaming concat of the results.
-		mergeInputs := { aggMemGB: aggMemGB }
-		for idx, key in smChunks.keys() {
-			chunkRun := render.createEphemeral(aggregateStateMatrixTpl, {
-				aggMemGB: aggMemGB,
-				stateMatrixData: perSampleResults.outputData(smChunks.outputName(levelPrefix, key))
-			})
-			mergeInputs["chunk" + string(idx)] = chunkRun.output("stateMatrix")
-		}
-		smRun := render.createEphemeral(mergeStateMatrixTpl, mergeInputs)
+		// The level's abundance tables name the variants each sample keeps; its keys
+		// tables name the parent mitool gave each variant in that sample.
+		smRun := render.createEphemeral(aggregateStateMatrixTpl, {
+			aggMemGB: aggMemGB,
+			stateMatrixData: perSampleResults.outputData(levelPrefix + "StateMatrixTsv"),
+			abundanceData: perSampleResults.outputData(levelPrefix + "Abundance"),
+			keysData: perSampleResults.outputData(levelPrefix + "Keys"),
+			keysKeyColumn: levelPrefix == "aa" ? "aaVariantKey" : "variantKey",
+			aggBuckets: args.aggBuckets
+		})
 		return xsv.importFile(
 			smRun.output("stateMatrix"),
 			"tsv",
@@ -485,7 +523,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			{ splitDataAndSpec: true, mem: aggMem }
+			importOps("matrixImport")
 		)
 	}
 	aaStateMatrixCols := undefined
@@ -608,16 +646,8 @@ wf.body(func(args) {
 		)
 	}
 
-	// Linkers (nt→aa, parent→nt, parent→aa). One-side leads in the axes.
-	linkersRun := render.createEphemeral(aggregateLinkersTpl, {
-		aggMemGB: aggMemGB,
-		variantsTsvData: perSampleResults.outputData("variantsTsv"),
-		aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
-		// Export-only-matched filter: nt linkers keep assignStatus == ASSIGNED
-		// (empty when no nt known set), aa linkers keep rows with a knownAaKey.
-		exportOnlyKnown: exportOnlyKnown,
-		hasNtKnown: hasNtKnown
-	})
+	// Linkers (nt→aa, parent→nt, parent→aa), built by the variant aggregate. One-side
+	// leads in the axes.
 	importLinker := func(file, axes, name) {
 		return xsv.importFile(
 			file,
@@ -628,7 +658,7 @@ wf.body(func(args) {
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			},
-			{ splitDataAndSpec: true, mem: aggMem }
+			importOps("linkerImport")
 		)
 	}
 	// nt→aa and parent→nt linkers reference the nt variant axis, so they are
@@ -637,7 +667,7 @@ wf.body(func(args) {
 	parentNtCols := undefined
 	if exportNt {
 		ntToAaCols = importLinker(
-			linkersRun.output("ntToAa"),
+			aggVarsRun.output("ntToAa"),
 			[
 				columnSpecs.variantKeyAxisSpec(variantScope, "aminoacid", "Variant aa", "aaKey"),
 				columnSpecs.variantKeyAxisSpec(variantScope, "nucleotide", "Variant nt", "ntKey")
@@ -645,7 +675,7 @@ wf.body(func(args) {
 			"pl7.app/repertoire/aaToNt"
 		)
 		parentNtCols = importLinker(
-			linkersRun.output("parentNt"),
+			aggVarsRun.output("parentNt"),
 			[
 				columnSpecs.parentIdAxisSpec("Parent"),
 				columnSpecs.variantKeyAxisSpec(variantScope, "nucleotide", "Variant nt", "ntKey")
@@ -654,7 +684,7 @@ wf.body(func(args) {
 		)
 	}
 	parentAaCols := importLinker(
-		linkersRun.output("parentAa"),
+		aggVarsRun.output("parentAa"),
 		[
 			columnSpecs.parentIdAxisSpec("Parent"),
 			columnSpecs.variantKeyAxisSpec(variantScope, "aminoacid", "Variant aa", "aaKey")
@@ -895,7 +925,7 @@ wf.body(func(args) {
 				columns: columns,
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
-			}, { splitDataAndSpec: true, mem: aggMem })
+			}, importOps("knownImport"))
 		}
 
 		// Dynamic import-column specs for the mapped metadata fields. The column
