@@ -75,6 +75,9 @@ type Scenario = {
   knownNt?: boolean;
   // Samples of the run; default s1 to s3.
   samples?: readonly string[];
+  // Forces the bucket count of the variant aggregate and of the state-matrix dedup; the golden
+  // stays the scenario's own.
+  aggBuckets?: number;
 };
 
 // Each scenario overrides the block defaults and has a golden of its own.
@@ -120,6 +123,18 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
+const RUNS: (Scenario & { title: string })[] = SCENARIOS.map((s) => ({ ...s, title: s.name }));
+// Every scenario also runs at K=4, and `defaults` at K=256, where most buckets are empty.
+// `title` is display only: each run compares against `<name>.json`.
+RUNS.push(...SCENARIOS.map((s) => ({ ...s, aggBuckets: 4, title: `${s.name} K=4` })));
+RUNS.push(
+  ...SCENARIOS.filter((s) => s.name === "defaults").map((s) => ({
+    ...s,
+    aggBuckets: 256,
+    title: `${s.name} K=256`,
+  })),
+);
+
 const SAMPLES = ["s1", "s2", "s3"] as const;
 const sampleId = (s: string) => `GOLDEN${s.toUpperCase()}`.padEnd(24, "A");
 const DATASET_ID = "GOLDENDATASETAAAAAAAAAAA";
@@ -134,8 +149,6 @@ type Golden = {
 const FRAME_OUTPUTS = ["stateHeatmapPf", "mutationHistogramPf"] as const;
 // Its table outputs that are not exported: the QC report, one row per sample.
 const TABLE_OUTPUTS = ["qcTable"] as const;
-
-const RUNS: (Scenario & { title: string })[] = SCENARIOS.map((s) => ({ ...s, title: s.name }));
 
 blockTest.for(RUNS)(
   "golden $title: exports and frame outputs match their golden",
@@ -204,6 +217,7 @@ blockTest.for(RUNS)(
         runMode: "full",
         ...knownAa,
         ...knownNt,
+        aggBuckets: scenario.aggBuckets,
         ...scenario.args,
       },
     });
