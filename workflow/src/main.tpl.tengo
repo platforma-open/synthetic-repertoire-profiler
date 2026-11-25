@@ -823,6 +823,7 @@ wf.body(func(args) {
 	addStateHeatmap := func(prefix, compositionData, alphabet, posLabel, trace, parentResidueCols) {
 		hmRun := render.createEphemeral(computeStateHeatmapTpl, {
 			aggMemGB: aggMemGB,
+			samples: samples,
 			compositionData: compositionData,
 			hasUmi: hasUmi
 		})
