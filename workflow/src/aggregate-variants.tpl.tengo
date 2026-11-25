@@ -1,222 +1,180 @@
 // Cross-sample variant aggregation (ephemeral).
 //
-// Reads the per-sample resource maps — nt/aa abundance parquets (for totals) and
-// the raw variants/aa-variants TSVs (for sample-independent metadata) — and emits
-// per-variant property tables:
-//   ntProperties.tsv  [variantKey]      -> label, sequence, mutations, mutationCount, isProductive, totals
+// Reads the per-sample resource maps (the nt/aa abundance parquets and the per-sample variant
+// metadata parquets, keys and wide; see downstream.tpl) and emits:
+//   ntProperties.tsv  [variantKey]      -> sequence, mutations, mutationCount, isProductive, totals
 //   aaProperties.tsv  [variantKey(aa)]  -> + ntVariantCount
+//   ntLabels.tsv / aaLabels.tsv  [variantKey] -> variantLabel
+//   ntToAa.tsv    [aaKey, ntKey]     -> 1   (one aa → many nt)
+//   parentNt.tsv  [parentId, ntKey]  -> 1   (one parent → many nt)
+//   parentAa.tsv  [parentId, aaKey]  -> 1   (one parent → many aa)
 //
-// Keys are mitool's content hashes (variantKey / aaVariantKey); the aa key is
-// aliased to "variantKey" so both levels share the variant-axis column name. The
-// display LABEL is V-XXXXX(-N), derived cross-sample from a hash of the variant's
-// own sequence. mitool's `mutations` (colon-separated milib designator, on 1-based
-// positions — the same axis as the state matrix) and `mutationCount` are carried as
-// columns.
+// Key buckets: rows split into K buckets by the first 2 hex chars of the variant key (the aa
+// key on the aa level), K a power of two from 1 to 256, chosen from the total input size. Each
+// bucket runs one nt job and one aa job. Every per-key group is complete inside its bucket, so
+// the bucket parts concatenate to the full tables.
+//
+// Each job reads every sample's file and filters it to its bucket right after the read. A
+// file has one reader per job; a second reader of a file would make the engine buffer its
+// rows for that reader. Each bucket job is planned by a template of its own (variant-bucket),
+// so no template run grows with samples x buckets.
+//
+// Labels: a label ranks the variant's sequence hash among all hashes with the same 5-letter
+// prefix, which spans key buckets. So the bucket jobs write (variantKey, _seqHash), and L label
+// jobs per level, split by the first letter of the prefix, rank them in a second pass.
+//
+// A table with several parts is concatenated by one more job; a single part is returned as is.
+// The nt property table is built only when `needNt` is set, and the nt label table and the two
+// nt linker tables only when `exportNt` is; the skipped outputs are null resources. `exportNt`
+// requires `needNt`.
+//
+// The "Memory for aggregation" setting (`aggMemGB`) raises the bucket, label and concat jobs
+// only on a backend without blob sizes.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+feats := import("@platforma-sdk/workflow-tengo:feats")
 aggSizing := import(":aggregate-sizing")
+buckets := import(":aggregate-buckets")
+variantAggregate := import(":variant-aggregate")
+render := import("@platforma-sdk/workflow-tengo:render")
+assets := import("@platforma-sdk/workflow-tengo:assets")
 
-variantLabel := import(":variant-label")
+variantBucketTpl := assets.importTemplate(":variant-bucket")
 
-self.defineOutputs("ntProperties", "aaProperties")
+self.defineOutputs("ntProperties", "aaProperties", "ntToAa", "parentNt", "parentAa", "ntLabels", "aaLabels")
 
 self.awaitState("InputsLocked")
 self.awaitState("ntAbundanceData", "ResourceReady")
 self.awaitState("aaAbundanceData", "ResourceReady")
-self.awaitState("variantsTsvData", "ResourceReady")
-self.awaitState("aaVariantsTsvData", "ResourceReady")
+self.awaitState("ntKeysData", "ResourceReady")
+self.awaitState("ntWideData", "ResourceReady")
+self.awaitState("aaKeysData", "ResourceReady")
+self.awaitState("aaWideData", "ResourceReady")
+
+MAP_NAMES := ["ntab", "aaab", "ntk", "ntw", "aak", "aaw"]
 
 self.body(func(inputs) {
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+	needNt := is_undefined(inputs.needNt) || inputs.needNt
+	exportNt := is_undefined(inputs.exportNt) || inputs.exportNt
+	ll.assert(!exportNt || needNt, "exportNt requires needNt")
+	opts := {
+		hasUmi: !is_undefined(inputs.hasUmi) && inputs.hasUmi,
+		needNt: needNt,
+		exportNt: exportNt,
+		exportOnlyKnown: !is_undefined(inputs.exportOnlyKnown) && inputs.exportOnlyKnown,
+		hasNtKnown: !is_undefined(inputs.hasNtKnown) && inputs.hasNtKnown,
+		// Per-region sequence columns (nSeq<name>/aaSeq<name>); names come from main.
+		ntRegionCols: is_undefined(inputs.ntRegionCols) ? [] : inputs.ntRegionCols,
+		aaRegionCols: is_undefined(inputs.aaRegionCols) ? [] : inputs.aaRegionCols
+	}
 
-	// TSV reads disable per-file type inference (`inferSchema: false` → every
-	// column read as String). Per-sample TSVs vary: an empty one (header only)
-	// infers every column as String, while a populated one infers numeric
-	// columns (mutationCount, ntVariantCount, readCount, ...) as Int64, so the
-	// cross-sample concat below rejects the schema mismatch. Reading all columns
-	// as String makes every frame's schema identical; the aggregations below cast
-	// each numeric column they consume, so the emitted types are unchanged.
-	// Parquet keeps its embedded schema (inferSchema is not applicable / not set).
-	loadFrames := func(rmData, idPrefix, format) {
-		frames := []
-		rmMap := rmData.inputs()
-		for sKey in maps.getKeys(rmMap) {
-			opts := { id: idPrefix + "_" + string(len(frames)) }
-			if format == "tsv" {
-				opts.inferSchema = false
+	rm := {
+		ntab: inputs.ntAbundanceData.inputs(),
+		aaab: inputs.aaAbundanceData.inputs(),
+		ntk: inputs.ntKeysData.inputs(),
+		ntw: inputs.ntWideData.inputs(),
+		aak: inputs.aaKeysData.inputs(),
+		aaw: inputs.aaWideData.inputs()
+	}
+	// Sample keys in one fixed order, so frame i of every map is the same sample.
+	sampleKeys := maps.getKeys(rm.aaab)
+	ll.assert(len(sampleKeys) > 0, "no samples to aggregate")
+
+	totalBytes := undefined
+	if feats.hasBlobSize {
+		totalBytes = 0
+		for name in MAP_NAMES {
+			for sKey in sampleKeys {
+				ll.assert(!is_undefined(rm[name][sKey]), "no %v file for sample %v", name, sKey)
+				totalBytes += ll.getBlobSize(rm[name][sKey].getValue().id)
 			}
-			frames = append(frames, wf.frame({
-				file: rmMap[sKey],
-				xsvType: format
-			}, opts))
 		}
-		ll.assert(len(frames) > 0, "no frames for " + idPrefix)
-		return frames
 	}
-	concatF := func(frames) {
-		if len(frames) == 1 {
-			return frames[0]
+	p := buckets.plan(totalBytes, len(sampleKeys), inputs.aggBuckets)
+	ll.print("aggregate-variants plan: k=" + string(p.k) + " l=" + string(p.l) + " totalBytes=" + string(p.totalBytes))
+
+	aggMemGB := aggSizing.settingFor(inputs.aggMemGB)
+	bucketBytes := buckets.bucketJobBytes(len(sampleKeys), p.totalBytes, p.k, aggMemGB)
+	flatBytes := buckets.flatJobBytes(aggMemGB)
+
+	labelKeep := func(letters, catchAll) {
+		return func(col) {
+			return buckets.labelPredicate(pt, col, letters, catchAll)
 		}
-		return pt.concat(frames)
+	}
+	bucketJob := func(level, prefixes, catchAll) {
+		return render.createEphemeral(variantBucketTpl, {
+			level: level,
+			prefixes: prefixes,
+			catchAll: catchAll,
+			requestBytes: bucketBytes,
+			opts: opts,
+			ntAbundanceData: inputs.ntAbundanceData,
+			aaAbundanceData: inputs.aaAbundanceData,
+			ntKeysData: inputs.ntKeysData,
+			ntWideData: inputs.ntWideData,
+			aaKeysData: inputs.aaKeysData,
+			aaWideData: inputs.aaWideData
+		})
 	}
 
-	// Cross-sample totals from the per-sample abundance parquets ([variantKey,
-	// readCount, readFraction], one row per variantKey per sample).
-	// The per-sample parquets carry the molecule columns only on a UMI run.
-	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
-	totals := func(frames) {
-		aggs := [
-			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
-			pt.col("readFraction").cast("Double").mean().alias("readFractionMean"),
-			pt.col("readCount").count().alias("sampleCount")
-		]
-		if hasUmi {
-			aggs = append(aggs,
-				pt.col("uniqueMoleculeCount").cast("Long").sum().alias("uniqueMoleculeCountSum"),
-				pt.col("uniqueMoleculeFraction").cast("Double").mean().alias("uniqueMoleculeFractionMean")
-			)
+	parts := {
+		ntProperties: [],
+		aaProperties: [],
+		ntToAa: [],
+		parentNt: [],
+		parentAa: [],
+		ntLabelIn: [],
+		aaLabelIn: []
+	}
+	for b, prefixes in buckets.keyBucketPrefixes(p.k) {
+		if needNt {
+			ntRun := bucketJob("nt", prefixes, b == 0)
+			parts.ntProperties = append(parts.ntProperties, ntRun.output("properties"))
+			if exportNt {
+				parts.ntLabelIn = append(parts.ntLabelIn, ntRun.output("labelIn"))
+				parts.parentNt = append(parts.parentNt, ntRun.output("parent"))
+			}
 		}
-		return concatF(frames).groupBy("variantKey").agg(aggs...)
+		aaRun := bucketJob("aa", prefixes, b == 0)
+		parts.aaProperties = append(parts.aaProperties, aaRun.output("properties"))
+		parts.aaLabelIn = append(parts.aaLabelIn, aaRun.output("labelIn"))
+		parts.parentAa = append(parts.parentAa, aaRun.output("parent"))
+		if exportNt {
+			parts.ntToAa = append(parts.ntToAa, aaRun.output("ntToAa"))
+		}
 	}
 
-	withLabel := func(df) {
-		return variantLabel.addVariantLabelColumnsPt(
-			df.withColumns(
-				pt.col("sequence").hash("sha256", "base64_alphanumeric", 120).alias("_seqHash")
-			),
-			"_seqHash",
-			"variantLabel",
-			pt
-		)
+	labelParts := func(labelInFiles) {
+		files := []
+		for l, letters in buckets.labelLetters(p.l) {
+			wf := aggSizing.applyLabel(pt.workflow(), flatBytes, p.l)
+			variantAggregate.addLabels(wf, labelInFiles, labelKeep(letters, l == 0))
+			files = append(files, wf.run().getFile("labels.tsv"))
+		}
+		return files
 	}
 
-	// Per-region sequence columns (nSeq<name>/aaSeq<name>) carried through when the
-	// run defines regions. Names come from main (parsed from the regions overlay).
-	ntRegionCols := is_undefined(inputs.ntRegionCols) ? [] : inputs.ntRegionCols
-	aaRegionCols := is_undefined(inputs.aaRegionCols) ? [] : inputs.aaRegionCols
-
-	// Productive = no frame shift and no stop codon in the translation, as "true" /
-	// "false" strings (the MiXCR blocks' convention). An aa variant is productive when
-	// its sequence carries no `*`. An nt variant is productive when no sample calls it
-	// frame-shifted and the aa variant it translates to is productive. The frame-shift
-	// call can differ between samples (AA_MISMATCH looks at the sample's other
-	// synonymous members), so any one sample calling it is enough. Both are folded
-	// into the one group-by per level: ptabler's group-by keeps order and cannot
-	// stream, so each extra one holds another table of every distinct variant.
-	productiveIf := func(cond) {
-		return pt.when(cond).then(pt.lit("true")).otherwise(pt.lit("false"))
+	combine := func(files) {
+		if len(files) == 1 {
+			return files[0]
+		}
+		wf := aggSizing.applyComputed(pt.workflow(), flatBytes)
+		variantAggregate.addConcat(wf, files)
+		return wf.run().getFile("out.tsv")
 	}
-
-	// --- aa level, grouped first: the nt level reads its isProductive ---
-	// Metadata keyed by aaVariantKey, aliased to variantKey on output.
-	aaAggs := [
-		pt.col("aaSequence").first().alias("sequence"),
-		pt.col("mutations").cast("String").first().alias("mutations"),
-		pt.col("mutationCount").cast("Int").first().alias("mutationCount")
-	]
-	aaMetaSelect := [
-		pt.col("aaVariantKey").alias("variantKey"),
-		pt.col("sequence"),
-		pt.col("mutations"),
-		pt.col("mutationCount"),
-		pt.col("isProductive"),
-		pt.col("ntVariantCount")
-	]
-	aaSelect := [
-		pt.col("variantKey"),
-		pt.col("variantLabel"),
-		pt.col("sequence"),
-		pt.col("mutations"),
-		pt.col("mutationCount"),
-		pt.col("isProductive"),
-		pt.col("readCountTotal"),
-		pt.col("readFractionMean"),
-		pt.col("sampleCount"),
-		pt.col("ntVariantCount")
-	]
-	if hasUmi {
-		aaSelect = append(aaSelect, pt.col("uniqueMoleculeCountSum"), pt.col("uniqueMoleculeFractionMean"))
-	}
-	for rn in aaRegionCols {
-		aaAggs = append(aaAggs, pt.col("aaSeq" + rn).cast("String").first().alias("aaSeq" + rn))
-		aaMetaSelect = append(aaMetaSelect, pt.col("aaSeq" + rn))
-		aaSelect = append(aaSelect, pt.col("aaSeq" + rn))
-	}
-	aaGrouped := concatF(loadFrames(inputs.aaVariantsTsvData, "aav", "tsv")).
-		groupBy("aaVariantKey").agg(aaAggs...).
-		withColumns(
-			productiveIf(pt.col("sequence").strContains("*", { literal: true }).not()).alias("isProductive")
-		)
-
-	// --- nt level ---
-	ntAggs := [
-		pt.col("ntSequence").first().alias("sequence"),
-		pt.col("mutations").cast("String").first().alias("mutations"),
-		pt.col("mutationCount").cast("Int").first().alias("mutationCount"),
-		// A frame-shifted sample leaves the aa key empty; max() takes the real one.
-		pt.col("aaVariantKey").cast("String").max().alias("aaVariantKey"),
-		pt.when(pt.col("frameShift").strToUpper().eq("TRUE")).
-			then(pt.lit(1)).otherwise(pt.lit(0)).max().alias("_frameShift")
-	]
-	ntSelect := [
-		pt.col("variantKey"),
-		pt.col("variantLabel"),
-		pt.col("sequence"),
-		pt.col("mutations"),
-		pt.col("mutationCount"),
-		pt.col("isProductive"),
-		pt.col("readCountTotal"),
-		pt.col("readFractionMean"),
-		pt.col("sampleCount")
-	]
-	if hasUmi {
-		ntSelect = append(ntSelect, pt.col("uniqueMoleculeCountSum"), pt.col("uniqueMoleculeFractionMean"))
-	}
-	for rn in ntRegionCols {
-		ntAggs = append(ntAggs, pt.col("nSeq" + rn).cast("String").first().alias("nSeq" + rn))
-		ntSelect = append(ntSelect, pt.col("nSeq" + rn))
-	}
-	ntVariants := concatF(loadFrames(inputs.variantsTsvData, "ntv", "tsv"))
-	ntMeta := ntVariants.groupBy("variantKey").agg(ntAggs...).
-		join(
-			aaGrouped.select(pt.col("aaVariantKey"), pt.col("isProductive").alias("_aaProductive")),
-			{ how: "left", on: ["aaVariantKey"] }
-		).
-		withColumns(
-			productiveIf(
-				pt.col("_frameShift").eq(pt.lit(0)).and(pt.col("_aaProductive").fillNull("false").eq(pt.lit("true")))
-			).alias("isProductive")
-		)
-	withLabel(
-		totals(loadFrames(inputs.ntAbundanceData, "ntab", "parquet")).
-			join(ntMeta, { how: "left", on: ["variantKey"] })
-	).select(ntSelect...).sort(["variantKey"]).save("ntProperties.tsv", { xsvType: "tsv" })
-
-	// Synonymous-replicate count: distinct nt variants encoding this aa variant, over
-	// the whole dataset. Recounted here — the TSV's own ntVariantCount is mitool's
-	// per-sample count, and no cross-sample aggregation of it is right (first() takes
-	// one sample's subset, sum() double-counts a shared variant, max() misses variants
-	// only other samples carry). Same set as the ntToAa linker in aggregate-linkers,
-	// frame-shifted nt variants excluded the same way (they carry no aa key).
-	ntPerAa := ntVariants.
-		filter(pt.col("aaVariantKey").cast("String").fillNull("").strLenChars().gt(pt.lit(0))).
-		groupBy("aaVariantKey").
-		agg(pt.col("variantKey").nUnique().alias("ntVariantCount"))
-	aaMeta := aaGrouped.
-		join(ntPerAa, { how: "left", on: ["aaVariantKey"] }).
-		select(aaMetaSelect...)
-	withLabel(
-		totals(loadFrames(inputs.aaAbundanceData, "aaab", "parquet")).
-			join(aaMeta, { how: "left", on: ["variantKey"] })
-	).select(aaSelect...).sort(["variantKey"]).save("aaProperties.tsv", { xsvType: "tsv" })
-
-	result := wf.run()
 
 	return {
-		ntProperties: result.getFile("ntProperties.tsv"),
-		aaProperties: result.getFile("aaProperties.tsv")
+		ntProperties: needNt ? combine(parts.ntProperties) : smart.createNullResource(),
+		aaProperties: combine(parts.aaProperties),
+		ntToAa: exportNt ? combine(parts.ntToAa) : smart.createNullResource(),
+		parentNt: exportNt ? combine(parts.parentNt) : smart.createNullResource(),
+		parentAa: combine(parts.parentAa),
+		ntLabels: exportNt ? combine(labelParts(parts.ntLabelIn)) : smart.createNullResource(),
+		aaLabels: combine(labelParts(parts.aaLabelIn))
 	}
 })

@@ -1,0 +1,338 @@
+// Per-key plans of the cross-sample variant aggregate, built on one pt workflow per job.
+//
+// A bucket job reads every sample's file and keeps only the rows of its key bucket, right
+// after each read (`keep(col)` is the bucket predicate on column `col`). Every group here is
+// keyed by the bucket key, so the union of the bucket parts equals the unbucketed tables.
+//
+// Inputs:
+//   maps: { ntab, aaab, ntk, ntw, aak, aaw } -> resource-map inputs of the per-sample nt/aa
+//         abundance, keys and wide parquets
+//   sampleKeys: sample keys in one fixed order, so frame i of every map is sample i
+//   opts: { hasUmi, needNt, exportNt, exportOnlyKnown, hasNtKnown, ntRegionCols, aaRegionCols }
+//
+// The wide files have a single reader per job; a second reader of the same file would make
+// the engine buffer every wide row for it. A wide row is taken once per variant, from its
+// owner sample: the first sample whose abundance table keeps the variant.
+//
+// Keys are mitool's content hashes (variantKey / aaVariantKey); the aa key is aliased to
+// "variantKey" so both levels share the variant-axis column name. mitool's `mutations`
+// (colon-separated milib designator on 1-based positions, the axis of the state matrix) and
+// `mutationCount` are carried as columns. No trailing sort: xsv.importFile sorts by axes.
+
+ll := import("@platforma-sdk/workflow-tengo:ll")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+
+variantLabel := import(":variant-label")
+
+// loadFrames frames every sample's file of `rmMap` and keeps the bucket rows on `keyCol`.
+loadFrames := func(wf, rmMap, sampleKeys, idPrefix, keyCol, keep) {
+	frames := []
+	for sKey in sampleKeys {
+		ll.assert(!is_undefined(rmMap[sKey]), "no %v file for sample %v", idPrefix, sKey)
+		frames = append(frames, wf.frame({
+			file: rmMap[sKey],
+			xsvType: "parquet"
+		}, { id: idPrefix + "_" + string(len(frames)) }).filter(keep(keyCol)))
+	}
+	return frames
+}
+
+concatF := func(frames) {
+	if len(frames) == 1 {
+		return frames[0]
+	}
+	return pt.concat(frames)
+}
+
+// Cross-sample totals from the per-sample abundance parquets ([variantKey, readCount,
+// readFraction], one row per variantKey per sample). The per-sample parquets carry the
+// molecule columns only on a UMI run.
+totals := func(frames, hasUmi) {
+	aggs := [
+		pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
+		pt.col("readFraction").cast("Double").mean().alias("readFractionMean"),
+		pt.col("readCount").count().alias("sampleCount")
+	]
+	if hasUmi {
+		aggs = append(aggs,
+			pt.col("uniqueMoleculeCount").cast("Long").sum().alias("uniqueMoleculeCountSum"),
+			pt.col("uniqueMoleculeFraction").cast("Double").mean().alias("uniqueMoleculeFractionMean")
+		)
+	}
+	return concatF(frames).groupBy("variantKey").agg(aggs...)
+}
+
+// One wide row per key, from the key's owner sample. A sample can list a key twice (one
+// sequence under two parents); the group-by keeps its first row. Its input is already one
+// sample's rows per key, so it holds one row per key. The wide rows stream through the
+// owner join.
+owned := func(wideFrames, abundanceFrames, key, cols) {
+	keyFrames := []
+	for i, f in abundanceFrames {
+		keyFrames = append(keyFrames, f.select(
+			pt.col("variantKey").cast("String").alias(key),
+			pt.lit(i).alias("__owner")
+		))
+	}
+	owners := concatF(keyFrames).groupBy(key).agg(pt.col("__owner").min().alias("__owner"))
+	tagged := []
+	for i, f in wideFrames {
+		tagged = append(tagged, f.withColumns(pt.lit(i).alias("__owner")))
+	}
+	firsts := []
+	for c in cols {
+		firsts = append(firsts, pt.col(c).first().alias(c))
+	}
+	return concatF(tagged).
+		join(owners, { how: "inner", on: [key, "__owner"] }).
+		groupBy(key).agg(firsts...)
+}
+
+// The label hash of the variant's own sequence. The label ranks hashes within a prefix, so it
+// is computed in a second pass over every bucket's (variantKey, _seqHash).
+withSeqHash := func(df) {
+	return df.withColumns(
+		pt.col("sequence").hash("sha256", "base64_alphanumeric", 120).alias("_seqHash")
+	)
+}
+
+// Productive = no frame shift and no stop codon in the translation, as "true" / "false"
+// strings (the MiXCR blocks' convention).
+productiveIf := func(cond) {
+	return pt.when(cond).then(pt.lit("true")).otherwise(pt.lit("false"))
+}
+
+nonEmpty := func(col) {
+	return pt.col(col).cast("String").fillNull("").strLenChars().gt(pt.lit(0))
+}
+
+flag := func(cond) {
+	return pt.when(cond).then(pt.lit(1)).otherwise(pt.lit(0))
+}
+
+// Linkers: distinct key pairs, a sentinel `link` = 1 as the value.
+distinctLink := func(df, keyCols) {
+	exprs := []
+	for c in keyCols {
+		exprs = append(exprs, pt.col(c))
+	}
+	exprs = append(exprs, pt.lit(1).alias("link"))
+	return df.groupBy(keyCols...).agg(pt.col(keyCols[0]).count().alias("_n")).select(exprs...)
+}
+
+// Under export-only-matched the nt linkers keep only rows with assignStatus == ASSIGNED, and
+// none when the run has no nt known set.
+linkNtRows := func(ntKeys, opts) {
+	if !opts.exportOnlyKnown {
+		return ntKeys
+	}
+	if opts.hasNtKnown {
+		return ntKeys.filter(pt.col("assignStatus").cast("String").eq("ASSIGNED"))
+	}
+	return ntKeys.filter(pt.lit(false))
+}
+
+// addNtBucket plans the nt job of one key bucket (rows by variantKey). Saves ntProperties.tsv
+// and, with exportNt, ntLabelIn.parquet and parentNt.tsv.
+addNtBucket := func(wf, maps, sampleKeys, keep, opts) {
+	ntAbFrames := loadFrames(wf, maps.ntab, sampleKeys, "ntab", "variantKey", keep)
+	ntKeys := concatF(loadFrames(wf, maps.ntk, sampleKeys, "ntk", "variantKey", keep))
+
+	// The per-sample calls, folded over samples. An nt variant is productive when no sample
+	// calls it frame-shifted and its translation has no stop codon. The frame-shift call can
+	// differ between samples (AA_MISMATCH looks at the sample's other synonymous members), so
+	// any one sample calling it is enough. aaHasStop is "" where the sample has no aa row for
+	// the key; a variant with no aa row in any sample is not productive.
+	aaHasStop := pt.col("aaHasStop").cast("String").fillNull("")
+	ntFlags := ntKeys.
+		select(
+			pt.col("variantKey"),
+			flag(pt.col("frameShift").cast("String").strToUpper().eq("TRUE")).alias("_frameShift"),
+			flag(aaHasStop.eq("true")).alias("_aaStop"),
+			flag(aaHasStop.eq("").not()).alias("_aaKnown")
+		).
+		groupBy("variantKey").agg(
+			pt.col("_frameShift").max().alias("_frameShift"),
+			pt.col("_aaStop").max().alias("_aaStop"),
+			pt.col("_aaKnown").max().alias("_aaKnown")
+		)
+
+	ntWideCols := ["ntSequence", "mutations", "mutationCount"]
+	ntWideSelect := [
+		pt.col("variantKey"),
+		pt.col("ntSequence").alias("sequence"),
+		pt.col("mutations").cast("String").alias("mutations"),
+		pt.col("mutationCount").cast("Int").alias("mutationCount")
+	]
+	ntSelect := [
+		pt.col("variantKey"),
+		pt.col("sequence"),
+		pt.col("mutations"),
+		pt.col("mutationCount"),
+		pt.col("isProductive"),
+		pt.col("readCountTotal"),
+		pt.col("readFractionMean"),
+		pt.col("sampleCount")
+	]
+	if opts.hasUmi {
+		ntSelect = append(ntSelect, pt.col("uniqueMoleculeCountSum"), pt.col("uniqueMoleculeFractionMean"))
+	}
+	for rn in opts.ntRegionCols {
+		ntWideCols = append(ntWideCols, "nSeq" + rn)
+		ntWideSelect = append(ntWideSelect, pt.col("nSeq" + rn).cast("String").alias("nSeq" + rn))
+		ntSelect = append(ntSelect, pt.col("nSeq" + rn))
+	}
+	ntWideFrames := loadFrames(wf, maps.ntw, sampleKeys, "ntw", "variantKey", keep)
+	ntMeta := owned(ntWideFrames, ntAbFrames, "variantKey", ntWideCols).
+		select(ntWideSelect...).
+		join(ntFlags, { how: "left", on: ["variantKey"] }).
+		withColumns(
+			productiveIf(
+				pt.col("_frameShift").eq(pt.lit(0)).
+					and(pt.col("_aaKnown").eq(pt.lit(1))).
+					and(pt.col("_aaStop").eq(pt.lit(0)))
+			).alias("isProductive")
+		)
+	ntRows := withSeqHash(totals(ntAbFrames, opts.hasUmi).join(ntMeta, { how: "left", on: ["variantKey"] }))
+	ntRows.select(ntSelect...).save("ntProperties.tsv", { xsvType: "tsv" })
+
+	// The nt labels and parent→nt reference the nt variant axis, so they follow exportNt.
+	if opts.exportNt {
+		ntRows.select(pt.col("variantKey"), pt.col("_seqHash")).save("ntLabelIn.parquet", { xsvType: "parquet" })
+		distinctLink(
+			linkNtRows(ntKeys, opts).select(
+				pt.col("parentId").cast("String").alias("parentId"),
+				pt.col("variantKey").alias("ntKey")
+			),
+			["parentId", "ntKey"]
+		).save("parentNt.tsv", { xsvType: "tsv" })
+	}
+}
+
+// addAaBucket plans the aa job of one key bucket (rows by aa key). Saves aaProperties.tsv,
+// aaLabelIn.parquet, parentAa.tsv and, with exportNt, ntToAa.tsv.
+addAaBucket := func(wf, maps, sampleKeys, keep, opts) {
+	// The aa abundance parquet holds the aa key in its variantKey column.
+	aaAbFrames := loadFrames(wf, maps.aaab, sampleKeys, "aaab", "variantKey", keep)
+	aaKeys := concatF(loadFrames(wf, maps.aak, sampleKeys, "aak", "aaVariantKey", keep))
+	ntKeys := concatF(loadFrames(wf, maps.ntk, sampleKeys, "ntk", "aaVariantKey", keep))
+
+	// Metadata keyed by aaVariantKey, aliased to variantKey on output.
+	aaWideCols := ["aaSequence", "mutations", "mutationCount"]
+	aaWideSelect := [
+		pt.col("aaVariantKey"),
+		pt.col("aaSequence").alias("sequence"),
+		pt.col("mutations").cast("String").alias("mutations"),
+		pt.col("mutationCount").cast("Int").alias("mutationCount")
+	]
+	aaMetaSelect := [
+		pt.col("aaVariantKey").alias("variantKey"),
+		pt.col("sequence"),
+		pt.col("mutations"),
+		pt.col("mutationCount"),
+		pt.col("isProductive"),
+		pt.col("ntVariantCount")
+	]
+	aaSelect := [
+		pt.col("variantKey"),
+		pt.col("sequence"),
+		pt.col("mutations"),
+		pt.col("mutationCount"),
+		pt.col("isProductive"),
+		pt.col("readCountTotal"),
+		pt.col("readFractionMean"),
+		pt.col("sampleCount"),
+		pt.col("ntVariantCount")
+	]
+	if opts.hasUmi {
+		aaSelect = append(aaSelect, pt.col("uniqueMoleculeCountSum"), pt.col("uniqueMoleculeFractionMean"))
+	}
+	for rn in opts.aaRegionCols {
+		aaWideCols = append(aaWideCols, "aaSeq" + rn)
+		aaWideSelect = append(aaWideSelect, pt.col("aaSeq" + rn).cast("String").alias("aaSeq" + rn))
+		aaMetaSelect = append(aaMetaSelect, pt.col("aaSeq" + rn))
+		aaSelect = append(aaSelect, pt.col("aaSeq" + rn))
+	}
+	// An aa variant is productive when its sequence carries no `*`.
+	aaWideFrames := loadFrames(wf, maps.aaw, sampleKeys, "aaw", "aaVariantKey", keep)
+	aaGrouped := owned(aaWideFrames, aaAbFrames, "aaVariantKey", aaWideCols).
+		select(aaWideSelect...).
+		withColumns(
+			productiveIf(pt.col("sequence").strContains("*", { literal: true }).not()).alias("isProductive")
+		)
+
+	// Synonymous-variant count: distinct nt variants encoding this aa variant, over the whole
+	// dataset. Recounted here: mitool's own ntVariantCount is per sample, and no cross-sample
+	// aggregation of it is right (first() takes one sample's subset, sum() double-counts a
+	// shared variant, max() misses variants only other samples carry). Same set as the ntToAa
+	// linker below; frame-shifted nt variants carry no aa key and are excluded the same way.
+	// Two group-bys, not nUnique(): the streaming engine runs nUnique() in memory and holds
+	// every scanned nt key row, so the job's memory grows with the sample count.
+	ntPerAa := ntKeys.
+		filter(nonEmpty("aaVariantKey")).
+		groupBy("aaVariantKey", "variantKey").
+		agg(pt.col("aaVariantKey").count().alias("_n")).
+		groupBy("aaVariantKey").
+		agg(pt.col("aaVariantKey").count().alias("ntVariantCount"))
+	aaMeta := aaGrouped.
+		join(ntPerAa, { how: "left", on: ["aaVariantKey"] }).
+		select(aaMetaSelect...)
+	aaRows := withSeqHash(totals(aaAbFrames, opts.hasUmi).join(aaMeta, { how: "left", on: ["variantKey"] }))
+	aaRows.select(pt.col("variantKey"), pt.col("_seqHash")).save("aaLabelIn.parquet", { xsvType: "parquet" })
+	aaRows.select(aaSelect...).save("aaProperties.tsv", { xsvType: "tsv" })
+
+	// Under export-only-matched the aa linker keeps only rows with a knownAaKey.
+	linkAa := opts.exportOnlyKnown ? aaKeys.filter(nonEmpty("knownAaKey")) : aaKeys
+	distinctLink(
+		linkAa.select(
+			pt.col("parentId").cast("String").alias("parentId"),
+			pt.col("aaVariantKey").alias("aaKey")
+		),
+		["parentId", "aaKey"]
+	).save("parentAa.tsv", { xsvType: "tsv" })
+
+	// nt→aa references the nt variant axis, so it follows exportNt.
+	if opts.exportNt {
+		distinctLink(
+			linkNtRows(ntKeys, opts).filter(nonEmpty("aaVariantKey")).select(
+				pt.col("aaVariantKey").alias("aaKey"),
+				pt.col("variantKey").alias("ntKey")
+			),
+			["aaKey", "ntKey"]
+		).save("ntToAa.tsv", { xsvType: "tsv" })
+	}
+}
+
+// addLabels plans one label job: the rows of every bucket's label input whose label prefix is
+// in this label bucket (`keep(col)` on the hash column). Every hash of a prefix is in one
+// label bucket, so the rank within the prefix is complete. Saves labels.tsv
+// (variantKey, variantLabel).
+addLabels := func(wf, labelInFiles, keep) {
+	frames := []
+	for f in labelInFiles {
+		frames = append(frames, wf.frame({
+			file: f,
+			xsvType: "parquet"
+		}, { id: "labelIn_" + string(len(frames)) }).filter(keep("_seqHash")))
+	}
+	variantLabel.addVariantLabelColumnsPt(concatF(frames), "_seqHash", "variantLabel", pt).
+		select(pt.col("variantKey"), pt.col("variantLabel")).
+		save("labels.tsv", { xsvType: "tsv" })
+}
+
+// addConcat plans one concat job over TSV parts of one table. Values pass through as strings.
+// Saves out.tsv.
+addConcat := func(wf, tsvFiles) {
+	frames := []
+	for f in tsvFiles {
+		frames = append(frames, wf.frame(f, { xsvType: "tsv", inferSchema: false }))
+	}
+	concatF(frames).save("out.tsv", { xsvType: "tsv" })
+}
+
+export {
+	addNtBucket: addNtBucket,
+	addAaBucket: addAaBucket,
+	addLabels: addLabels,
+	addConcat: addConcat
+}
