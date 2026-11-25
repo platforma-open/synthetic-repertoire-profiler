@@ -17,16 +17,11 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 render := import("@platforma-sdk/workflow-tengo:render")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
-smChunks := import(":state-matrix-chunks")
 
 json := import("json")
 
 // Outputs produced by downstream.tpl and passed straight through.
-passthroughNames := ["variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv"]
-for chunkKey in smChunks.keys() {
-	passthroughNames = append(passthroughNames, smChunks.outputName("aa", chunkKey))
-	passthroughNames = append(passthroughNames, smChunks.outputName("nt", chunkKey))
-}
+passthroughNames := ["variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv", "ntKeys", "ntWide", "aaKeys", "aaWide"]
 
 outputNames := ["parsedMic", "stepLogs"]
 for n in passthroughNames { outputNames = append(outputNames, n) }
