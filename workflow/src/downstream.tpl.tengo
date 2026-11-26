@@ -19,7 +19,7 @@ times := import("times")
 
 // The state matrix leaves this template as mitool wrote it, one File per level, next to
 // the residue composition built from it; a null resource for a level that is off.
-outputNames := ["analyzeLogStream", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv", "ntKeys", "ntWide", "aaKeys", "aaWide"]
+outputNames := ["analyzeLogStream", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv", "ntKeys", "ntWide", "aaKeys", "aaWide", "ntKnownKeys", "aaKnownKeys"]
 self.defineOutputs(outputNames)
 
 // Progress marker prefix — mitool emits `[==PROGRESS==]<stage>: <pct>% ETA: …`
@@ -859,6 +859,28 @@ self.body(func(inputs) {
 	}
 	aaMetaDf.select(aaWideSelect...).save("aaWide.parquet")
 
+	// Known-set rows for the cross-sample known aggregate: the variants that are assigned or
+	// carry a distance to the known set, without their sequence. knownKey is the hash of the
+	// sequence on a matched row, as in the known abundance tables above, and "" elsewhere.
+	ntAssigned := pt.col("assignStatus").cast("String").eq("ASSIGNED")
+	ntMetaDf.
+		filter(ntAssigned.or(b6NonEmpty("nMutationsToKnown"))).
+		select(
+			pt.col("variantKey"),
+			pt.col("assignStatus"),
+			pt.col("knownNtKey"),
+			pt.col("nMutationsToKnown"),
+			pt.when(ntAssigned).then(b6SeqHash("ntSequence")).otherwise(pt.lit("")).alias("knownKey")
+		).save("ntKnownKeys.parquet")
+	aaMetaDf.
+		filter(b6NonEmpty("knownAaKey").or(b6NonEmpty("aaMutationsToKnown"))).
+		select(
+			pt.col("aaVariantKey"),
+			pt.col("knownAaKey"),
+			pt.col("aaMutationsToKnown"),
+			pt.when(b6NonEmpty("knownAaKey")).then(b6SeqHash("aaSequence")).otherwise(pt.lit("")).alias("knownKey")
+		).save("aaKnownKeys.parquet")
+
 	// --- Per-sample residue composition (its own pt workflow) ----------------
 	// Separate from the table workflow above: it reads the matrix, which is dense — one
 	// row per variant per parent position — so on a large repertoire it dwarfs every
@@ -1009,6 +1031,8 @@ self.body(func(inputs) {
 		ntWide: ptResult.getFile("ntWide.parquet"),
 		aaKeys: ptResult.getFile("aaKeys.parquet"),
 		aaWide: ptResult.getFile("aaWide.parquet"),
+		ntKnownKeys: ptResult.getFile("ntKnownKeys.parquet"),
+		aaKnownKeys: ptResult.getFile("aaKnownKeys.parquet"),
 		regionAnnotationTsv: emitRegionAnnotation ? analyzeCmd.getFile("out.region-annotation.tsv") : ptResult.getFile("emptyRegionAnnotation.tsv"),
 		qcJson: analyzeCmd.getFile("out.qc.json"),
 		reports: reportsMap.build(),

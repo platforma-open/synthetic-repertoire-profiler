@@ -116,7 +116,9 @@ TestLabelSlopeFollowsLettersPerJob := func() {
 	test.isEqual(1, aggSizing.labelSlope(26))
 }
 
-TestStepRequestKnownAggregate := func() {
-	// 2 x (1.4 GiB + 390 MiB x 200), rounded up to a byte.
-	test.isEqual(166584333108, aggSizing.importOpts("knownAggregate", 200, undefined).memIntercept)
+TestKnownFinishRequest := func() {
+	// 2 x (5 GiB + 20 x 100 MiB + 4 x 400 MiB)
+	test.isEqual(2 * (5 * units.GiB + 3600 * units.MiB), aggSizing.knownFinishRequestBytes(100 * units.MiB, 400 * units.MiB, undefined))
+	// Small inputs: the floor.
+	test.isEqual(16 * units.GiB, aggSizing.knownFinishRequestBytes(1 * units.MiB, 1 * units.MiB, undefined))
 }

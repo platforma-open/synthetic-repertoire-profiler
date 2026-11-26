@@ -343,6 +343,8 @@ wf.body(func(args) {
 		fileOutput("ntWide"),
 		fileOutput("aaKeys"),
 		fileOutput("aaWide"),
+		fileOutput("ntKnownKeys"),
+		fileOutput("aaKnownKeys"),
 		fileOutput("regionAnnotationTsv"),
 		fileOutput("aaParentResiduesTsv"),
 		fileOutput("ntParentResiduesTsv"),
@@ -909,8 +911,16 @@ wf.body(func(args) {
 	if !is_undefined(knownNtFile) || !is_undefined(knownAaFile) {
 		knownRun := render.createEphemeral(aggregateKnownTpl, {
 			aggMemGB: aggMemGB,
-			variantsTsvData: perSampleResults.outputData("variantsTsv"),
-			aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
+			ntKnownKeysData: perSampleResults.outputData("ntKnownKeys"),
+			aaKnownKeysData: perSampleResults.outputData("aaKnownKeys"),
+			knownNtAbundanceData: perSampleResults.outputData("knownNtAbundance"),
+			knownAaAbundanceData: perSampleResults.outputData("knownAaAbundance"),
+			// A known entry's sequence is read from the property table of its level.
+			aaProperties: aggVarsRun.output("aaProperties"),
+			ntProperties: aggVarsRun.output("ntProperties"),
+			needNt: exportNt || exportNtStateMatrix,
+			hasNtKnown: hasNtKnown,
+			aggBuckets: args.aggBuckets,
 			knownDesignedNtData: perSampleResults.outputData("knownDesignedNt"),
 			knownDesignedAaData: perSampleResults.outputData("knownDesignedAa"),
 			aaConvergenceData: perSampleResults.outputData("aaConvergence"),

@@ -175,3 +175,51 @@ TestLabelPredicate := func() {
 		operands: [plain, { type: "not", value: { type: "in_set", value: first, set: letters } }]
 	}, caught)
 }
+
+TestKnownKeyBucketsPartitionTheAlphabet := func() {
+	b62 := "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	for k in [1, 2, 4, 32, 64, 256] {
+		bs := buckets.knownKeyBuckets(k)
+		test.isEqual(k, len(bs))
+		// Every (first, second) pair of chars is in exactly one bucket.
+		hits := 0
+		for b in bs {
+			seconds := is_undefined(b.second) ? len(b62) : len(b.second)
+			hits += len(b.first) * seconds
+		}
+		test.isEqual(len(b62) * len(b62), hits)
+		seen := {}
+		for b in bs {
+			sec := is_undefined(b.second) ? [""] : b.second
+			for c1 in b.first {
+				for c2 in sec {
+					test.isTrue(is_undefined(seen[c1 + c2]))
+					seen[c1 + c2] = true
+				}
+			}
+		}
+	}
+}
+
+TestKnownKeyShareIsTheLargestBucket := func() {
+	one := buckets.knownKeyShare(1)
+	test.isEqual(one.den, one.num)
+	for k in [2, 4, 32, 64, 256] {
+		share := buckets.knownKeyShare(k)
+		largest := 0
+		for b in buckets.knownKeyBuckets(k) {
+			n := len(b.first) * (is_undefined(b.second) ? 62 : len(b.second))
+			if n > largest {
+				largest = n
+			}
+		}
+		test.isEqual(largest, share.num)
+		test.isEqual(62 * 62, share.den)
+	}
+}
+
+TestShareJobBytesFollowsTheBucketLaw := func() {
+	// 2 x (2 GiB + 1 MiB x 4000 + 6 x 64 GiB x 1/8)
+	test.isEqual(2 * (2 * GiB + 4000 * MiB + 48 * GiB), buckets.shareJobBytes(4000, 64 * GiB, 1, 8, undefined))
+	test.isEqual(16 * GiB, buckets.shareJobBytes(3, 10 * MiB, 1, 1, undefined))
+}

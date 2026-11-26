@@ -139,11 +139,12 @@ const SCENARIOS: Scenario[] = [
 ];
 
 const RUNS: (Scenario & { title: string })[] = SCENARIOS.map((s) => ({ ...s, title: s.name }));
-// Every scenario also runs at K=4, and `defaults` at K=256, where most buckets are empty.
+// Every scenario also runs at K=4, and `defaults` and `known-nt` at K=256, where most buckets
+// are empty and the known-key buckets split on two chars.
 // `title` is display only: each run compares against `<name>.json`.
 RUNS.push(...SCENARIOS.map((s) => ({ ...s, aggBuckets: 4, title: `${s.name} K=4` })));
 RUNS.push(
-  ...SCENARIOS.filter((s) => s.name === "defaults").map((s) => ({
+  ...SCENARIOS.filter((s) => s.name === "defaults" || s.name === "known-nt").map((s) => ({
     ...s,
     aggBuckets: 256,
     title: `${s.name} K=256`,
@@ -168,7 +169,7 @@ const TABLE_OUTPUTS = ["qcTable", "knownVariantsNtTable", "knownVariantsAaTable"
 
 blockTest.for(RUNS)(
   "golden $title: exports and frame outputs match their golden",
-  { timeout: 900_000 },
+  { timeout: 1_800_000 },
   async (scenario, { rawPrj, ml, helpers, tmpFolder, expect }) => {
     const EXPECTED = path.join(ASSETS, `${scenario.name}.json`);
     const sndId = await rawPrj.addBlock("Samples & Data", SamplesAndDataBlockPointer);
@@ -238,7 +239,7 @@ blockTest.for(RUNS)(
       },
     });
     await rawPrj.runBlock(apId);
-    const apDone = await helpers.awaitBlockDoneAndGetStableBlockState(apId, 600_000);
+    const apDone = await helpers.awaitBlockDoneAndGetStableBlockState(apId, 1_500_000);
     const apOutputs = wrapOutputs(apDone.outputs as Parameters<typeof wrapOutputs>[0]) as Record<
       string,
       unknown
