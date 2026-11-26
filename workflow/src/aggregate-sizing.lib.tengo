@@ -1,30 +1,84 @@
-// Memory of the cross-sample ptabler steps: the variant, linker and known-set aggregates, the
-// state-matrix dedup and merge, the composition heat map, and the variant-keyed imports.
+// Memory of the cross-sample ptabler steps: the variant and known-set aggregates, the
+// per-sample table concats, the state-matrix dedup, the composition heat maps, and the
+// cross-sample imports.
 //
-// On a backend that reports blob sizes, each step keeps pt's input-size rule, 4 GiB + 10 x
-// input, with no upper limit, and a floor of FLOOR_GIB. The "Memory for aggregation" setting
-// does not apply there: the grant already covers the measured need, so a user number could
-// only shrink how many steps the queue admits at once.
+// Input-size rule (apply): aggregate-known and the per-sample table concats. On a backend that
+// reports blob sizes, pt's 4 GiB + 10 x input, with no upper limit, and a floor of FLOOR_GIB;
+// the "Memory for aggregation" setting does not apply there. A backend without blob sizes
+// cannot evaluate the rule: a flat FLOOR_GIB, raised by the setting. Same rule as
+// mixcr-clonotyping's shard plan.
 //
-// A backend without blob sizes cannot evaluate the rule. There each step gets a flat
-// FLOOR_GIB, and the setting raises it. Same rule as mixcr-clonotyping's shard plan.
+// Sample-count rule (stepRequestBytes, importOpts): the steps in STEP_NEED. Each requests
+// max(FLOOR_GIB, 2 x need, the setting on a backend without blob sizes), need = baseGiB +
+// perSampleMiB x samples. These jobs stream their input, so input bytes do not track the need.
 //
-// Measured peak RSS per stored input byte, polars 1.33.1, 8 threads, 1 to 6 samples:
+// State-matrix dedup: its owner jobs are key-bucket jobs sized by aggregate-buckets.lib.tengo.
+// Its matrix job holds one owner row per distinct (variant, parent) pair: with blob sizes it
+// requests 2 x (MATRIX_JOIN_BASE_GIB + MATRIX_JOIN_PER_SAMPLE_MIB x samples +
+// MATRIX_JOIN_PER_OWNER_BYTE x owner-file bytes), at least FLOOR_GIB (matrixJoinRequestBytes);
+// without, the "dedup" entry of STEP_NEED, the need of the single-job plan, kept only as this
+// fallback.
 //
-//   aggregate-variants        1.1 to 2.1
-//   aggregate-linkers         1.0
-//   state-matrix dedup        0.5 GiB + 5.5 x input with every row distinct; 3.8 x on 3 samples
-//   state-matrix merge        0.9 to 3.4, collected in memory
-//   heat map                  2.0 to 6.2
-//   xsv import                2.0 to 5.7
+// aggregate-variants follows neither rule: each job requests a fixed amount (applyComputed)
+// from aggregate-buckets.lib.tengo: a key-bucket job 2 x the bucket law on samples and input
+// bytes per bucket, a label or concat job FLOOR_GIB, each at least FLOOR_GIB; without blob
+// sizes the input bytes are estimated from the sample count and the setting raises each request.
 //
-// So 10 x input covers every step by 1.6x or more.
+// Smallest passing hard limit at 50 / 100 / 200 samples, 8 threads; the larger of aa and nt.
+// Each need is at or above it at every point:
+//
+//   dedup                  the single-job plan, which held every sample's pair rows: 4 / 4 / 8 GiB
+//                          (aa; nt 8 GiB at 200); aa 13.75 / 26.75 / 53.25 GiB at 400 / 800 /
+//                          1,600 duplicated samples, 33.8 MiB per sample at 360K variants per
+//                          sample. Used without blob sizes only.
+//   dedup matrix job       3 GiB at 400 / 800 / 1,600 / 4,000 duplicated samples (7.8M distinct pairs,
+//                          71 MB of owner files, 1.3 GB matrix per sample); 6 GiB at 3 / 6 / 10
+//                          samples of 4M variants each (7.5M / 13.7M / 21.3M distinct pairs,
+//                          64 / 117 / 184 MB of owner files, 11 GB matrix per sample)
+//   heatmap                6 / 6 / 6 GiB; slope from aa, fine bisect 2.0 GiB at 50, 4.25 GiB at 200
+//                          also grows with composition rows: 100 parents, 38 GiB at 4,000 samples,
+//                          1,000 parents, 20 GiB at 200; at most 37.8 bytes per input byte
+//   matrixImport           8 / 8 / 12 GiB; slope 13.65 MiB per sample (aa ladder = nt fine)
+//   propertyImport         4 / 4 / 6 GiB
+//   knownImport            not measured; propertyImport's need (its rows are a subset)
+//   labelImport            4 / 4 / 4 GiB; slope from fine bisect
+//   linkerImport           4 / 4 / 4 GiB (ntToAa, parentNt, parentAa); slope from fine bisect
+//   perSampleTableImport   4 / 4 / 4 GiB (abundance concats); known abundance 1.25 / 2 / 2.25 GiB,
+//                          6.8 MiB per sample
+//   knownAggregate         20 / 39 / 77 GiB; holds its whole input, 1.1 x the staged bytes
+//
+// The matrix import's DuckDB budget is the limit minus the plan's Polars stage; with the input
+// hot in page cache it needs more (see its STEP_NEED entry).
 
+ll := import("@platforma-sdk/workflow-tengo:ll")
 feats := import("@platforma-sdk/workflow-tengo:feats")
 units := import("@platforma-sdk/workflow-tengo:units")
 math := import("math")
+json := import("json")
 
 FLOOR_GIB := 16
+
+// Matrix job of the state-matrix dedup, with blob sizes: need = base + per-sample x samples +
+// per-owner-byte x bytes of the owner files.
+MATRIX_JOIN_BASE_GIB := 5
+MATRIX_JOIN_PER_SAMPLE_MIB := 1
+MATRIX_JOIN_PER_OWNER_BYTE := 20
+
+// Need of each sample-count-sized step: baseGiB + perSampleMiB x samples. The request is 2 x need.
+STEP_NEED := {
+	dedup: { baseGiB: 3, perSampleMiB: 36 },
+	heatmap: { baseGiB: 5.5, perSampleMiB: 15.5 },
+	// Base 2.5 GiB above the fit: ptabler's DuckDB budget shrinks when the input is already in
+	// page cache; a hot-input run needed 24 GiB at 100 samples.
+	matrixImport: { baseGiB: 12, perSampleMiB: 14 },
+	propertyImport: { baseGiB: 3.5, perSampleMiB: 14 },
+	knownImport: { baseGiB: 3.5, perSampleMiB: 14 },
+	labelImport: { baseGiB: 4, perSampleMiB: 3.5 },
+	linkerImport: { baseGiB: 4, perSampleMiB: 3.5 },
+	perSampleTableImport: { baseGiB: 4, perSampleMiB: 7 },
+	// Without blob sizes only. 1M designed entries, 0.4M variants per sample.
+	knownAggregate: { baseGiB: 1.4, perSampleMiB: 390 }
+}
 
 // fallbackGiB returns the flat grant on a backend without blob sizes.
 fallbackGiB := func(aggMemGB) {
@@ -43,19 +97,133 @@ apply := func(wf, aggMemGB) {
 	return wf.mem(fallbackGiB(aggMemGB) * units.GiB)
 }
 
-// importMem returns the `mem` option of a variant-keyed xsv.importFile: undefined, which
-// leaves the SDK's input-size rule in charge, or the flat grant on a backend without blob
-// sizes.
-importMem := func(aggMemGB) {
+// countSamples returns the number of distinct first elements of `keys`, JSON-encoded key tuples
+// of a sample-keyed dataset.
+countSamples := func(keys) {
+	seen := {}
+	for k in keys {
+		seen[string(json.decode(k)[0])] = true
+	}
+	return len(seen)
+}
+
+// applyComputed puts `wf` on the heavy queue and requests `bytes`, an integer of at least 4 GiB.
+// Slope 0 makes pt request max(memFloor, memIntercept) with or without blob sizes.
+applyComputed := func(wf, bytes) {
+	return wf.inHeavyQueue().memSlope(0).memIntercept(bytes)
+}
+
+// labelSlope returns the request per byte of label input for one of `labelJobs` label jobs.
+// A label job needs 1 GiB + 5.24 x the label input of its letters; its letters are at most
+// ceil(26 / labelJobs) / 26 of the input.
+labelSlope := func(labelJobs) {
+	lettersPerJob := (26 + labelJobs - 1) / labelJobs
+	return int(math.ceil(10.5 * lettersPerJob / 26.0))
+}
+
+// applyLabel requests max(floorBytes, 4 GiB + labelSlope x label input) for a label job; 4 GiB
+// is pt's smallest intercept. Without blob sizes the request is floorBytes.
+applyLabel := func(wf, floorBytes, labelJobs) {
+	return wf.inHeavyQueue().memFloor(floorBytes).memIntercept(4 * units.GiB).memSlope(labelSlope(labelJobs))
+}
+
+// perSampleIntercept returns baseGiB + perSampleMiB x samples, in bytes; a float when either
+// constant is fractional.
+perSampleIntercept := func(baseGiB, perSampleMiB, samples) {
+	return baseGiB * units.GiB + perSampleMiB * units.MiB * samples
+}
+
+// requestBytes returns max(FLOOR_GIB GiB, 2 x needBytes, ceil(settingGiB) GiB) as an integer.
+// settingGiB may be undefined.
+requestBytes := func(needBytes, settingGiB) {
+	bytes := FLOOR_GIB * units.GiB
+	doubled := 2 * needBytes
+	if is_float(doubled) {
+		doubled = int(math.ceil(doubled))
+	}
+	if doubled > bytes {
+		bytes = doubled
+	}
+	if !is_undefined(settingGiB) {
+		setting := int(math.ceil(settingGiB)) * units.GiB
+		if setting > bytes {
+			bytes = setting
+		}
+	}
+	return bytes
+}
+
+// settingFor returns the "Memory for aggregation" setting on a backend without blob sizes,
+// else undefined.
+settingFor := func(aggMemGB) {
 	if feats.hasBlobSize {
 		return undefined
 	}
-	return fallbackGiB(aggMemGB) * units.GiB
+	return aggMemGB
+}
+
+// stepNeedBytes returns the need of `step` (a STEP_NEED key) for `samples` samples, in bytes.
+stepNeedBytes := func(step, samples) {
+	need := STEP_NEED[step]
+	ll.assert(!is_undefined(need), "no STEP_NEED entry for step %v", step)
+	return perSampleIntercept(need.baseGiB, need.perSampleMiB, samples)
+}
+
+// stepRequestBytes returns the request of `step` for `samples` samples, in bytes.
+stepRequestBytes := func(step, samples, aggMemGB) {
+	return requestBytes(stepNeedBytes(step, samples), settingFor(aggMemGB))
+}
+
+// matrixJoinRequestBytes returns the request of the state-matrix dedup's matrix job, in bytes.
+// ownerBytes is the sum over its owner files; undefined without blob sizes, where the job
+// requests the sized need of the "dedup" step.
+matrixJoinRequestBytes := func(samples, ownerBytes, aggMemGB) {
+	if is_undefined(ownerBytes) {
+		return stepRequestBytes("dedup", samples, aggMemGB)
+	}
+	need := MATRIX_JOIN_BASE_GIB * units.GiB + MATRIX_JOIN_PER_SAMPLE_MIB * units.MiB * samples +
+		MATRIX_JOIN_PER_OWNER_BYTE * ownerBytes
+	return requestBytes(need, undefined)
+}
+
+// applyStepOrInput puts `wf` on the heavy queue and requests the larger of the sized need of
+// `step` and 4 GiB + `slope` x input bytes. Without blob sizes the request is the step's.
+applyStepOrInput := func(wf, step, samples, aggMemGB, slope) {
+	return wf.inHeavyQueue().
+		memFloor(stepRequestBytes(step, samples, aggMemGB)).
+		memIntercept(4 * units.GiB).
+		memSlope(slope)
+}
+
+// applyOrStep puts `wf` on the heavy queue. With blob sizes pt sizes it from its input, at least
+// FLOOR_GIB; without, it requests the sized need of `step`.
+applyOrStep := func(wf, step, samples, aggMemGB) {
+	if feats.hasBlobSize {
+		return wf.inHeavyQueue().memFloor(FLOOR_GIB * units.GiB)
+	}
+	return wf.inHeavyQueue().memSlope(0).memIntercept(requestBytes(stepNeedBytes(step, samples), aggMemGB))
+}
+
+// importOpts returns the memory options of a sized xsv.importFile; no `mem` key, so the
+// intercept is the request with or without blob sizes.
+importOpts := func(step, samples, aggMemGB) {
+	return { memSlope: 0, memIntercept: stepRequestBytes(step, samples, aggMemGB) }
 }
 
 export {
 	FLOOR_GIB: FLOOR_GIB,
 	fallbackGiB: fallbackGiB,
 	apply: apply,
-	importMem: importMem
+	applyOrStep: applyOrStep,
+	applyComputed: applyComputed,
+	labelSlope: labelSlope,
+	applyLabel: applyLabel,
+	perSampleIntercept: perSampleIntercept,
+	countSamples: countSamples,
+	requestBytes: requestBytes,
+	settingFor: settingFor,
+	stepNeedBytes: stepNeedBytes,
+	matrixJoinRequestBytes: matrixJoinRequestBytes,
+	applyStepOrInput: applyStepOrInput,
+	importOpts: importOpts
 }

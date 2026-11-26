@@ -572,6 +572,9 @@ export type BlockData = {
   // where it raises their flat 16 GiB grant.
   aggregationMemGB?: number;
   perProcessCPUs?: number;
+  /** Test-only: forces the bucket count of the variant aggregate and of the state-matrix dedup
+   * (power of two, 1 to 256). No UI. */
+  aggBuckets?: number;
 
   // Preview run. `full` suppresses limitInput in args, so leaving preview
   // reproduces the unlimited recipe exactly.
@@ -667,6 +670,9 @@ export type BlockArgs = {
   perProcessMemGB?: number;
   aggregationMemGB?: number;
   perProcessCPUs?: number;
+  // Test-only bucket count for the variant aggregate and the state-matrix dedup. Absent = sized
+  // from the input.
+  aggBuckets?: number;
   limitInput?: number; // → mitool parse -n. Absent = full run.
   traceLabel: string;
 };
@@ -1477,6 +1483,17 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       throw new Error("Aggregation memory must be at least 1 GB.");
     if (data.perProcessCPUs !== undefined && data.perProcessCPUs < 1)
       throw new Error("CPUs per process must be at least 1.");
+    // The workflow's bucket planner accepts only these values.
+    if (
+      data.aggBuckets !== undefined &&
+      !(
+        Number.isInteger(data.aggBuckets) &&
+        data.aggBuckets >= 1 &&
+        data.aggBuckets <= 256 &&
+        (data.aggBuckets & (data.aggBuckets - 1)) === 0
+      )
+    )
+      throw new Error("Aggregate bucket count must be a power of two from 1 to 256.");
 
     // The cap is required: a preview with no number is a full run mislabelled,
     // and the more expensive of the two readings.
@@ -1629,6 +1646,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       perProcessMemGB: data.perProcessMemGB,
       aggregationMemGB: data.aggregationMemGB,
       perProcessCPUs: data.perProcessCPUs,
+      aggBuckets: data.aggBuckets,
       limitInput,
       // The dataset name is already in the inherited upstream trace.
       traceLabel: data.customBlockLabel || DEFAULT_BLOCK_LABEL,

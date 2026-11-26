@@ -1,60 +1,102 @@
-// Cross-sample state-matrix dedup for ONE position chunk (ephemeral). Level-neutral:
-// used for both the aa and the nt state matrix, rendered once per chunk key per level.
+// Cross-sample state-matrix dedup (ephemeral). Level-neutral: one invocation per level.
 //
-// The state matrix is a property of the variant, so it is identical in every sample a
-// variant appears in. Dedups by [variantKey, parentId, position] across samples:
 //   stateMatrix.tsv  [variantKey, parentId, position] -> state
 //
-// (mitool names the first TSV column `variantKey` in both the aa and nt exports;
-// it holds the aa/nt variant key respectively, matching the variant axis column.)
+// The rows of one (variant, parent) pair are identical in every sample that holds the
+// pair. Each pair gets one owner sample, the first that keeps it, and only the owner's
+// rows pass.
 //
-// `unique({ keep: "any" })` rather than groupBy().agg(first()): ptabler hardcodes
-// maintain_order on groupBy, which cannot stream. `keep: "any"` is exact — the state
-// matrix is a pure function of the variant, so duplicates carry identical states.
-// No trailing sort: xsv.importFile sorts by axes.
+// The owner is per pair, not per variant: mitool gives a variant the parent of the
+// first nt variant it sees in a sample, so one variant can carry different parents in
+// different samples, and each parent's rows must survive.
+//
+// The abundance tables carry the variants each sample keeps, so the productive and
+// export-only-matched filters reach the matrix through them. The keys tables carry the
+// parent of each variant in that sample.
+//
+// Two stages. The owner group-by holds every sample's pair rows until it finishes, so it
+// runs as K key-bucket jobs (aggregate-buckets), each holding the pairs of its bucket. The
+// matrix job (join-state-matrix) then streams the matrices through a join with the owner
+// files and holds one row per distinct pair.
+//
+// Both stages hold the parent ID of each pair as a string, and their sizing rules read file
+// bytes, which do not follow ID length because the files compress repeated IDs. With
+// synthetic IDs the owner job needed about 2x the memory at 80 characters and about 3x at
+// 160, against 26. A parent ID is the first word of its FASTA header, so IDs that long are
+// not expected. If they occur, join on a short hash of the ID in both jobs.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
-pt := import("@platforma-sdk/workflow-tengo:pt")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+render := import("@platforma-sdk/workflow-tengo:render")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+feats := import("@platforma-sdk/workflow-tengo:feats")
 aggSizing := import(":aggregate-sizing")
+buckets := import(":aggregate-buckets")
+
+joinStateMatrixTpl := assets.importTemplate(":join-state-matrix")
+ownersTpl := assets.importTemplate(":state-matrix-owners")
 
 self.defineOutputs("stateMatrix")
 
 self.awaitState("InputsLocked")
 self.awaitState("stateMatrixData", "ResourceReady")
+self.awaitState("abundanceData", "ResourceReady")
+self.awaitState("keysData", "ResourceReady")
 
 self.body(func(inputs) {
-	// [sampleId] -> this chunk's per-sample file.
-	rmMap := inputs.stateMatrixData.inputs()
+	// All three keyed [sampleId].
+	smMap := inputs.stateMatrixData.inputs()
+	abMap := inputs.abundanceData.inputs()
+	keysMap := inputs.keysData.inputs()
 
-	// The dedup holds every distinct key in RAM and does not spill. Raise DIGITS in
-	// state-matrix-chunks if one chunk outgrows a node.
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
-
-	frames := []
-	for sKey in maps.getKeys(rmMap) {
-		// inferSchema:false -> every column String, so empty and populated per-sample
-		// TSVs share one schema and the concat cannot hit a type mismatch.
-		frames = append(frames, wf.frame({
-			file: rmMap[sKey],
-			xsvType: "tsv"
-		}, { id: "sm_" + string(len(frames)), inferSchema: false }))
-	}
-	ll.assert(len(frames) > 0, "no state-matrix frames")
-
-	merged := frames[0]
-	if len(frames) > 1 {
-		merged = pt.concat(frames)
+	// One fixed sample order; the matrix job derives the same order from the same map.
+	sampleKeys := maps.getKeys(smMap)
+	ll.assert(len(sampleKeys) > 0, "no state-matrix frames")
+	// The owner jobs index the samples of the abundance map and the matrix job those of the
+	// matrix map, so the two must hold the same samples.
+	ll.assert(len(abMap) == len(sampleKeys), "abundance and state-matrix tables differ in samples")
+	for sKey in sampleKeys {
+		ll.assert(!is_undefined(abMap[sKey]), "no abundance table for sample %v", sKey)
+		ll.assert(!is_undefined(keysMap[sKey]), "no keys table for sample %v", sKey)
 	}
 
-	merged.
-		unique({ subset: ["variantKey", "parentId", "position"], keep: "any" }).
-		save("stateMatrix.tsv", { xsvType: "tsv" })
+	pairBytes := undefined
+	if feats.hasBlobSize {
+		pairBytes = 0
+		for m in [abMap, keysMap] {
+			for sKey in sampleKeys {
+				pairBytes += ll.getBlobSize(m[sKey].getValue().id)
+			}
+		}
+	}
+	p := buckets.plan(pairBytes, len(sampleKeys), inputs.aggBuckets, buckets.EST_PAIR_SAMPLE_BYTES)
+	ll.print("aggregate-state-matrix plan: k=" + string(p.k) + " pairBytes=" + string(p.totalBytes))
+	ownerBytes := buckets.bucketJobBytes(len(sampleKeys), p.totalBytes, p.k, aggSizing.settingFor(inputs.aggMemGB))
 
-	result := wf.run()
+	// One template per owner job (state-matrix-owners), so no template run grows with
+	// samples x buckets.
+	owners := {}
+	for b, prefixes in buckets.keyBucketPrefixes(p.k) {
+		owners[buckets.bucketName(b)] = render.createEphemeral(ownersTpl, {
+			abundanceData: inputs.abundanceData,
+			keysData: inputs.keysData,
+			keysKeyColumn: inputs.keysKeyColumn,
+			requestBytes: ownerBytes,
+			filterKeys: p.k > 1,
+			prefixes: prefixes,
+			catchAll: b == 0
+		}).output("owners")
+	}
+
+	joinRun := render.createEphemeral(joinStateMatrixTpl, {
+		aggMemGB: inputs.aggMemGB,
+		stateMatrixData: inputs.stateMatrixData,
+		owners: smart.createMapResource(owners)
+	})
 
 	return {
-		stateMatrix: result.getFile("stateMatrix.tsv")
+		stateMatrix: joinRun.output("stateMatrix")
 	}
 })

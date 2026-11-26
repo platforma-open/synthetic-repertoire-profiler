@@ -1,0 +1,62 @@
+// One owner job of the cross-sample state-matrix dedup (ephemeral); see aggregate-state-matrix.
+//
+// Writes the owner sample of every (variant, parent) pair of one key bucket: [variantKey,
+// parentId] -> __owner, the index of the first sample that keeps the pair, in the sorted sample
+// keys of the abundance map.
+//
+// A template of its own per job: the backend limits the objects one template run may
+// allocate, and the job's plan lists every sample's files.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+aggSizing := import(":aggregate-sizing")
+buckets := import(":aggregate-buckets")
+
+self.defineOutputs("owners")
+
+self.awaitState("InputsLocked")
+self.awaitState("abundanceData", "ResourceReady")
+self.awaitState("keysData", "ResourceReady")
+
+self.body(func(inputs) {
+	abMap := inputs.abundanceData.inputs()
+	keysMap := inputs.keysData.inputs()
+	// The keys tables name the key column after the level.
+	keyCol := inputs.keysKeyColumn
+	// The matrix job derives the same sample order from the same keys.
+	sampleKeys := maps.getKeys(abMap)
+
+	wf := aggSizing.applyComputed(pt.workflow(), inputs.requestBytes)
+	keyFrames := []
+	for idx, sKey in sampleKeys {
+		kept := wf.frame({
+			file: abMap[sKey],
+			xsvType: "parquet"
+		}, { id: "kept_" + string(idx) }).select(
+			pt.col("variantKey").cast("String").alias("variantKey")
+		)
+		parents := wf.frame({
+			file: keysMap[sKey],
+			xsvType: "parquet"
+		}, { id: "parents_" + string(idx) }).select(
+			pt.col(keyCol).alias("variantKey"),
+			pt.col("parentId")
+		)
+		if inputs.filterKeys {
+			kept = kept.filter(buckets.keyPredicate(pt, "variantKey", inputs.prefixes, inputs.catchAll))
+			parents = parents.filter(buckets.keyPredicate(pt, "variantKey", inputs.prefixes, inputs.catchAll))
+		}
+		keyFrames = append(keyFrames, kept.
+			join(parents, { how: "inner", on: ["variantKey"] }).
+			select(pt.col("variantKey"), pt.col("parentId"), pt.lit(idx).alias("__owner")))
+	}
+	keys := len(keyFrames) > 1 ? pt.concat(keyFrames) : keyFrames[0]
+	keys.groupBy("variantKey", "parentId").
+		agg(pt.col("__owner").min().alias("__owner")).
+		save("owners.parquet")
+
+	return {
+		owners: wf.run().getFile("owners.parquet")
+	}
+})

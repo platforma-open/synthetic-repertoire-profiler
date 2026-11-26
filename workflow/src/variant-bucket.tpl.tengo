@@ -1,0 +1,72 @@
+// One key-bucket job of the cross-sample variant aggregate (ephemeral); see aggregate-variants.
+//
+// A template of its own per job: the backend limits the objects one template run may
+// allocate, and a job's plan lists every sample's files. One template planning every bucket
+// grows with samples x buckets and passes that limit; this one grows with samples only.
+//
+// level "nt" plans the nt job of the bucket, level "aa" the aa job. An output the job does not
+// write is a null resource.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+aggSizing := import(":aggregate-sizing")
+buckets := import(":aggregate-buckets")
+variantAggregate := import(":variant-aggregate")
+
+self.defineOutputs("properties", "labelIn", "parent", "ntToAa")
+
+self.awaitState("InputsLocked")
+self.awaitState("ntAbundanceData", "ResourceReady")
+self.awaitState("aaAbundanceData", "ResourceReady")
+self.awaitState("ntKeysData", "ResourceReady")
+self.awaitState("ntWideData", "ResourceReady")
+self.awaitState("aaKeysData", "ResourceReady")
+self.awaitState("aaWideData", "ResourceReady")
+
+self.body(func(inputs) {
+	level := inputs.level
+	ll.assert(level == "nt" || level == "aa", "unknown level %v", level)
+	opts := inputs.opts
+	rm := {
+		ntab: inputs.ntAbundanceData.inputs(),
+		aaab: inputs.aaAbundanceData.inputs(),
+		ntk: inputs.ntKeysData.inputs(),
+		ntw: inputs.ntWideData.inputs(),
+		aak: inputs.aaKeysData.inputs(),
+		aaw: inputs.aaWideData.inputs()
+	}
+	// The same fixed sample order in every bucket job.
+	sampleKeys := maps.getKeys(rm.aaab)
+	keep := func(col) {
+		return buckets.keyPredicate(pt, col, inputs.prefixes, inputs.catchAll)
+	}
+
+	wf := aggSizing.applyComputed(pt.workflow(), inputs.requestBytes)
+	result := {
+		labelIn: smart.createNullResource(),
+		parent: smart.createNullResource(),
+		ntToAa: smart.createNullResource()
+	}
+	if level == "nt" {
+		variantAggregate.addNtBucket(wf, rm, sampleKeys, keep, opts)
+		run := wf.run()
+		result.properties = run.getFile("ntProperties.tsv")
+		if opts.exportNt {
+			result.labelIn = run.getFile("ntLabelIn.parquet")
+			result.parent = run.getFile("parentNt.tsv")
+		}
+	} else {
+		variantAggregate.addAaBucket(wf, rm, sampleKeys, keep, opts)
+		run := wf.run()
+		result.properties = run.getFile("aaProperties.tsv")
+		result.labelIn = run.getFile("aaLabelIn.parquet")
+		result.parent = run.getFile("parentAa.tsv")
+		if opts.exportNt {
+			result.ntToAa = run.getFile("ntToAa.tsv")
+		}
+	}
+	return result
+})

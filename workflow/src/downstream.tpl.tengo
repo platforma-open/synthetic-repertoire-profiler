@@ -11,18 +11,15 @@ exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+units := import("@platforma-sdk/workflow-tengo:units")
 resources := import(":resources")
-smChunks := import(":state-matrix-chunks")
 
 times := import("times")
 
-// The state matrix leaves this template already split by position: one File-valued
-// output per level per chunk key. See state-matrix-chunks.
-outputNames := ["analyzeLogStream", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv"]
-for chunkKey in smChunks.keys() {
-	outputNames = append(outputNames, smChunks.outputName("aa", chunkKey))
-	outputNames = append(outputNames, smChunks.outputName("nt", chunkKey))
-}
+// The state matrix leaves this template as mitool wrote it, one File per level, next to
+// the residue composition built from it; a null resource for a level that is off.
+outputNames := ["analyzeLogStream", "variantsTsv", "aaVariantsTsv", "regionAnnotationTsv", "qcJson", "reports", "paramsJson", "ntAbundance", "aaAbundance", "knownNtAbundance", "knownAaAbundance", "aaConvergence", "knownDesignedNt", "knownDesignedAa", "qcRow", "ntMutationHistogram", "aaMutationHistogram", "aaStateComposition", "ntStateComposition", "aaParentResiduesTsv", "ntParentResiduesTsv", "parentsTsv", "aaStateMatrixTsv", "ntStateMatrixTsv", "ntKeys", "ntWide", "aaKeys", "aaWide"]
 self.defineOutputs(outputNames)
 
 // Progress marker prefix — mitool emits `[==PROGRESS==]<stage>: <pct>% ETA: …`
@@ -309,11 +306,9 @@ self.body(func(inputs) {
 	// --- Per-sample tables (ptabler) --------------------------------------
 	// One pt workflow produces the nt/aa per-sample abundance (keyed by mitool's
 	// content-hash variantKey / aaVariantKey) and the per-sample QC row.
-	// Left unsized on purpose: pt sizes CPU/RAM from input volume when neither is
-	// set. Under exportOnlyKnown this workflow also joins the per-sample state
-	// matrices (one row per variant per position), so a fixed budget under-sizes it
-	// on large repertoires. See aggregate-sizing.
-	ptWf := pt.workflow()
+	// Sized from input volume at slope 3, not pt's 10: the peak was 0.9 x input
+	// on a sample of 4M variants.
+	ptWf := pt.workflow().memSlope(3)
 
 	// Abundance. variants.tsv is already ~one row per variantKey; group
 	// defensively to fold the rare same-sequence/two-parent duplicate, and sum nt
@@ -800,23 +795,85 @@ self.body(func(inputs) {
 		withColumns(qcCols...).
 		save("qcRow.parquet")
 
-	// --- Per-sample state-matrix chunking (its own pt workflow) -------------
-	// Separate from the table workflow above: the matrix is dense — one row per
-	// variant per parent position — so on a large repertoire it dwarfs every other
-	// table and would size the whole process. Its own workflow also lets it be
-	// skipped outright. Chunks slice the position axis so the cross-sample dedup
-	// runs as that many independent jobs. See state-matrix-chunks.
-	smWf := pt.workflow()
+	// --- Variant metadata for the cross-sample aggregate ----------------------
+	// Two files per level: the keys every aggregate step groups on, and the wide columns,
+	// which are the same in every sample a variant appears in. They are separate files so
+	// the wide one has a single reader in the aggregate. inferSchema:false -> every column
+	// String, so an empty and a populated sample share one schema.
+	ntRegionCols := is_undefined(params.ntRegionCols) ? [] : params.ntRegionCols
+	aaRegionCols := is_undefined(params.aaRegionCols) ? [] : params.aaRegionCols
+	ntMetaDf := ptWf.frame({
+		file: variantsFile,
+		xsvType: "tsv"
+	}, { id: "variantsMeta", inferSchema: false })
+	aaMetaDf := ptWf.frame({
+		file: aaVariantsFile,
+		xsvType: "tsv"
+	}, { id: "aaVariantsMeta", inferSchema: false })
+	hasStopExpr := func() {
+		return pt.when(pt.col("aaSequence").strContains("*", { literal: true })).
+			then(pt.lit("true")).otherwise(pt.lit("false"))
+	}
+	// One row per aa key (an aa key can repeat across parents); "true" > "false", so max
+	// is "true" when any row has a stop.
+	aaStop := aaMetaDf.select(
+		pt.col("aaVariantKey"),
+		hasStopExpr().alias("aaHasStop")
+	).groupBy("aaVariantKey").agg(pt.col("aaHasStop").max().alias("aaHasStop"))
+	// aaHasStop "" = unknown: empty aa key, or aa key absent from this sample's aa table.
+	ntMetaDf.select(
+		pt.col("variantKey"),
+		pt.col("parentId"),
+		pt.col("aaVariantKey"),
+		pt.col("frameShift"),
+		pt.col("assignStatus")
+	).
+		join(aaStop, { how: "left", on: ["aaVariantKey"] }).
+		withColumns(
+			pt.when(pt.col("aaVariantKey").fillNull("").eq(pt.lit(""))).then(pt.lit("")).
+				otherwise(pt.col("aaHasStop").fillNull("")).alias("aaHasStop")
+		).
+		select(
+			pt.col("variantKey"),
+			pt.col("parentId"),
+			pt.col("aaVariantKey"),
+			pt.col("frameShift"),
+			pt.col("assignStatus"),
+			pt.col("aaHasStop")
+		).save("ntKeys.parquet")
+	ntWideSelect := [pt.col("variantKey"), pt.col("ntSequence"), pt.col("mutations"), pt.col("mutationCount")]
+	for rn in ntRegionCols {
+		ntWideSelect = append(ntWideSelect, pt.col("nSeq" + rn))
+	}
+	ntMetaDf.select(ntWideSelect...).save("ntWide.parquet")
+
+	aaMetaDf.select(
+		pt.col("aaVariantKey"),
+		pt.col("parentId"),
+		pt.col("knownAaKey"),
+		hasStopExpr().alias("hasStop")
+	).save("aaKeys.parquet")
+	aaWideSelect := [pt.col("aaVariantKey"), pt.col("aaSequence"), pt.col("mutations"), pt.col("mutationCount")]
+	for rn in aaRegionCols {
+		aaWideSelect = append(aaWideSelect, pt.col("aaSeq" + rn))
+	}
+	aaMetaDf.select(aaWideSelect...).save("aaWide.parquet")
+
+	// --- Per-sample residue composition (its own pt workflow) ----------------
+	// Separate from the table workflow above: it reads the matrix, which is dense — one
+	// row per variant per parent position — so on a large repertoire it dwarfs every
+	// other table and would size the whole process. It does not run when both levels
+	// are off. The 8 GiB floor covers a backend without blob sizes: a 4M-variant sample
+	// needs 4 GiB.
+	smWf := pt.workflow().memFloor(8 * units.GiB)
 
 	smCols := func(f) {
 		return f.select(pt.col("variantKey"), pt.col("parentId"), pt.col("position"), pt.col("state"))
 	}
 
-	// Every chunk output must exist whether or not a matrix ran, so the skipped ones
-	// get a 0-row frame. It is built from the tiny parents table, never from the
-	// matrix: a pt frame stages its file into the workdir, so sourcing the
-	// placeholders from the matrix would copy it even when nothing reads it. Built on
-	// demand, so a run that needs no placeholder does not stage anything extra.
+	// 0-row frame with the matrix columns, for the nt level with no match signal. Built
+	// from the tiny parents table, never from the matrix: a pt frame stages its file
+	// into the workdir. Built on demand.
 	emptySm := undefined
 	emptySmFrame := func() {
 		if is_undefined(emptySm) {
@@ -831,20 +888,6 @@ self.body(func(inputs) {
 			)
 		}
 		return emptySm
-	}
-
-	// The chunk key is materialized once, then each sink selects its own value.
-	// `filter` is non-mutating, so every sink reads the same projected frame.
-	chunkStateMatrix := func(df, prefix) {
-		projected := smCols(df).withColumns(
-			smChunks.chunkKeyExpr("position").alias("__chunk")
-		)
-		chunkKeys := smChunks.keys()
-		for idx, key in chunkKeys {
-			projected.filter(smChunks.keyPredicates("__chunk", idx)...).
-				withoutColumns("__chunk").
-				save(smChunks.fileName(prefix, key), { xsvType: "tsv" })
-		}
 	}
 
 	// Per-sample residue composition: [parentId, position, state] -> readCount,
@@ -868,15 +911,6 @@ self.body(func(inputs) {
 			filter(b6NonEmpty(keyCol)).
 			groupBy(keyCol).agg(aggs...).
 			withColumns(pt.col(keyCol).alias("variantKey"))
-	}
-	// Typed 0-row counts for a skipped matrix, so the placeholder output keeps the
-	// real column types without staging variants.tsv.
-	emptyCounts := func() {
-		cols := [pt.col("variantKey"), pt.lit(0).cast("Long").alias("variantReads")]
-		if hasUmi {
-			cols = append(cols, pt.lit(0).cast("Long").alias("variantMolecules"))
-		}
-		return emptySmFrame().select(cols...)
 	}
 	saveComposition := func(smDf, counts, fileName) {
 		cellAggs := [pt.col("variantReads").sum().alias("readCount")]
@@ -926,11 +960,7 @@ self.body(func(inputs) {
 				select(pt.col("aaVariantKey").alias("variantKey"))
 			aaSmDf = aaSmDf.join(smKeptAa, { how: "inner", on: ["variantKey"] })
 		}
-		chunkStateMatrix(aaSmDf, "aa")
 		saveComposition(aaSmDf, countsFor("aaVariantKey"), "aaStateComposition.parquet")
-	} else {
-		chunkStateMatrix(emptySmFrame(), "aa")
-		saveComposition(emptySmFrame(), emptyCounts(), "aaStateComposition.parquet")
 	}
 
 	// nt: its own flag, so the aa matrix and the nt tables do not decide it.
@@ -955,14 +985,13 @@ self.body(func(inputs) {
 			}
 			ntSmDf = ntSmDf.join(ntKeptKeys, { how: "inner", on: ["variantKey"] })
 		}
-		chunkStateMatrix(ntSmDf, "nt")
 		saveComposition(ntSmDf, countsFor("variantKey"), "ntStateComposition.parquet")
-	} else {
-		chunkStateMatrix(emptySmFrame(), "nt")
-		saveComposition(emptySmFrame(), emptyCounts(), "ntStateComposition.parquet")
 	}
 
-	smResult := smWf.run()
+	smResult := undefined
+	if exportStateMatrix || exportNtStateMatrix {
+		smResult = smWf.run()
+	}
 
 	ptResult := ptWf.run()
 
@@ -976,6 +1005,10 @@ self.body(func(inputs) {
 		// (properties, linkers, known overlay) sees the same variants as the tables.
 		variantsTsv: variantsFile,
 		aaVariantsTsv: aaVariantsFile,
+		ntKeys: ptResult.getFile("ntKeys.parquet"),
+		ntWide: ptResult.getFile("ntWide.parquet"),
+		aaKeys: ptResult.getFile("aaKeys.parquet"),
+		aaWide: ptResult.getFile("aaWide.parquet"),
 		regionAnnotationTsv: emitRegionAnnotation ? analyzeCmd.getFile("out.region-annotation.tsv") : ptResult.getFile("emptyRegionAnnotation.tsv"),
 		qcJson: analyzeCmd.getFile("out.qc.json"),
 		reports: reportsMap.build(),
@@ -999,16 +1032,15 @@ self.body(func(inputs) {
 		qcRow: ptResult.getFile("qcRow.parquet"),
 		// No sampleId column: the cross-sample concat stamps it from the sample key.
 		ntMutationHistogram: ptResult.getFile("ntMutationHistogram.parquet"),
-		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet"),
-		aaStateComposition: smResult.getFile("aaStateComposition.parquet"),
-		ntStateComposition: smResult.getFile("ntStateComposition.parquet")
+		aaMutationHistogram: ptResult.getFile("aaMutationHistogram.parquet")
 	}
 
-	// One File output per level per chunk key, so each dedup job gets its own slice.
-	for chunkKey in smChunks.keys() {
-		result[smChunks.outputName("aa", chunkKey)] = smResult.getFile(smChunks.fileName("aa", chunkKey))
-		result[smChunks.outputName("nt", chunkKey)] = smResult.getFile(smChunks.fileName("nt", chunkKey))
-	}
+	// Unfiltered: the cross-sample dedup keeps only the variants the abundance tables keep.
+	result.aaStateMatrixTsv = exportStateMatrix ? analyzeCmd.getFile("out.aa-state-matrix.tsv") : smart.createNullResource()
+	result.ntStateMatrixTsv = exportNtStateMatrix ? analyzeCmd.getFile("out.nt-state-matrix.tsv") : smart.createNullResource()
+	// No sampleId column: the cross-sample concat stamps it from the sample key.
+	result.aaStateComposition = exportStateMatrix ? smResult.getFile("aaStateComposition.parquet") : smart.createNullResource()
+	result.ntStateComposition = exportNtStateMatrix ? smResult.getFile("ntStateComposition.parquet") : smart.createNullResource()
 
 	return result
 })
