@@ -7,6 +7,7 @@ and hold private ones. Edge cases written on purpose:
 - the same aa variant reached from P1 in one sample and from P2 in another;
 - two nt variants with the same aa sequence (a synonymous pair) in one sample;
 - a stop codon and a one-base deletion (frame shift);
+- a stop-codon variant in two samples, so a non-productive variant has an owner to pick;
 - read counts that differ per variant and per sample.
 
 R1 captures 110 nt: two template bases, then parent[0:108]. R2 captures 111 nt: the
@@ -16,11 +17,15 @@ UMI set: the same captures with a 10-nt UMI right before the R1 anchor. Each mol
 has a read count; a 1-read molecule falls below the default consensus minimum (2) and
 drops, so p2_m70 is absent from s2. One read of a 3-read molecule carries a base error.
 
+Empty sample: s0 holds reads that match the tag pattern but carry a random sequence in
+place of a parent, so the sample yields no variant.
+Its id sorts before the other samples.
+
 Known aa set: a TSV of full-length aa sequences, four present in the reads, two absent.
 Known nt set: the same four variants and two absent ones as full-length nt sequences.
 
 usage: gen_fixture.py OUT_DIR [base|umi|known-aa|known-nt]
-  base     (default) parents.fasta and s{1,2,3}_R{1,2}.fastq.gz
+  base     (default) parents.fasta and s{0,1,2,3}_R{1,2}.fastq.gz
   umi      umi_s{1,2,3}_R{1,2}.fastq.gz
   known-aa known_aa.tsv
   known-nt known_nt.tsv
@@ -121,7 +126,8 @@ assert translate(V["p1_m5_m40_syn"]) == translate(V["p1_m5_m40"])
 SAMPLES = {
     "s1": {"p1_parent": 6, "p1_m5": 5, "p1_m5_m40": 4, "p1_m5_m40_syn": 2, "p1_m20": 3, "p1_stop30": 2},
     "s2": {"p2_parent": 7, "p2_m20": 4, "p2_m70": 3, "p1_m5": 2, "p1_fs50": 2, "p1_m60_m61": 5},
-    "s3": {"p1_parent": 3, "p2_parent": 3, "p1_m20": 2, "p2_m20": 2, "p1_m60_m61": 1, "p1_m5_m40": 6},
+    "s3": {"p1_parent": 3, "p2_parent": 3, "p1_m20": 2, "p2_m20": 2, "p1_m60_m61": 1, "p1_m5_m40": 6,
+           "p1_stop30": 3},
 }
 
 
@@ -145,6 +151,18 @@ def write_base(out):
                     f1.write(f"@{s}.{n} {name}\n{r1}\n+\n{'I' * len(r1)}\n".encode())
                     f2.write(f"@{s}.{n} {name}\n{r2}\n+\n{'I' * len(r2)}\n".encode())
         print(s, "read pairs", n)
+    write_empty(out)
+
+
+def write_empty(out):
+    r = random.Random("empty")
+    with gzip.GzipFile(f"{out}/s0_R1.fastq.gz", "wb", mtime=0) as f1, \
+         gzip.GzipFile(f"{out}/s0_R2.fastq.gz", "wb", mtime=0) as f2:
+        for n in range(1, 7):
+            r1, r2 = reads("".join(r.choice("ACGT") for _ in range(219)))
+            f1.write(f"@s0.{n} none\n{r1}\n+\n{'I' * len(r1)}\n".encode())
+            f2.write(f"@s0.{n} none\n{r2}\n+\n{'I' * len(r2)}\n".encode())
+    print("s0 read pairs", 6)
 
 
 # variant -> reads per molecule

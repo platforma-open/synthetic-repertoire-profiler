@@ -8,12 +8,16 @@
  *   summation-order rounding does not count as a change;
  * - data is read through the p-frame driver, so parquet layout and partitioning
  *   do not count either.
+ *
+ * A table output is stored the same way: one entry per value column, each row being
+ * the table's axis values followed by that column's value.
  */
 import type {
   PColumnIdAndSpec,
   PColumnSpec,
   PFrameDriver,
   PFrameHandle,
+  PTableHandle,
   PTableVector,
 } from "@platforma-sdk/model";
 import { isValueNA } from "@platforma-sdk/model";
@@ -109,5 +113,33 @@ export async function readFrame(
   const cols = (await driver.listColumns(handle)).filter((c) => keep(c.spec));
   const out: GoldenColumn[] = [];
   for (const c of cols) out.push(await readColumn(driver, handle, c, ids));
+  return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/** A data-table output, read through its full table: every column, no filter. */
+export async function readTable(
+  driver: PFrameDriver,
+  handle: PTableHandle,
+  ids: Replacements,
+): Promise<GoldenColumn[]> {
+  const specs = await driver.getSpec(handle);
+  const data = await driver.getData(
+    handle,
+    specs.map((_, i) => i),
+  );
+  const n = data.length > 0 ? data[0].data.length : 0;
+  const axes = specs.flatMap((c, i) => (c.type === "axis" ? [i] : []));
+  const out: GoldenColumn[] = [];
+  for (const [i, c] of specs.entries()) {
+    if (c.type !== "column") continue;
+    const rows: string[] = [];
+    for (let r = 0; r < n; r++) rows.push([...axes, i].map((j) => cell(data[j], r)).join("\t"));
+    rows.sort();
+    out.push({
+      key: columnKey(c.spec, ids),
+      spec: replaceIds(normalizeSpec(c.spec), ids),
+      rows: replaceIds(rows, ids) as string[],
+    });
+  }
   return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }

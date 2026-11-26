@@ -4,7 +4,7 @@
  *
  * Chain: Samples & Data (3 samples, fixed ids) → Amplicon Profiling → Table. Table
  * publishes every result-pool column as one p-frame, which is how this test reads the
- * block's exports; the block's own p-frame outputs are read from its state.
+ * block's exports; the block's own p-frame and table outputs are read from its state.
  *
  * Two checks per run, against test/assets/golden/<scenario>.json:
  * - contract: the set of exported columns and each column's full spec;
@@ -16,14 +16,14 @@
  */
 import { SamplesAndDataBlockPointer } from "@platforma-open/milaboratories.samples-and-data";
 import { TableBlockPointer } from "@platforma-open/milaboratories.table";
-import type { PColumnSpec, PFrameHandle } from "@platforma-sdk/model";
+import type { PColumnSpec, PFrameHandle, PTableHandle } from "@platforma-sdk/model";
 import { wrapOutputs } from "@platforma-sdk/model";
 import { awaitStableState, blockTest } from "@platforma-sdk/test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { SyntheticRepertoireProfilerBlockPointer } from "this-block";
 import type { GoldenColumn, Replacements } from "./golden";
-import { readFrame } from "./golden";
+import { readFrame, readTable } from "./golden";
 
 const ASSETS = path.resolve(__dirname, "../assets/golden");
 const UPDATE = process.env.UPDATE_GOLDEN === "1";
@@ -73,6 +73,8 @@ type Scenario = {
   knownAa?: boolean;
   // Upload known_nt.tsv as the known nt set.
   knownNt?: boolean;
+  // Samples of the run; default s1 to s3.
+  samples?: readonly string[];
 };
 
 // Each scenario overrides the block defaults and has a golden of its own.
@@ -106,16 +108,32 @@ const SCENARIOS: Scenario[] = [
     fastqPrefix: "umi_",
     tagPattern: "^*(UMI:N{10})CTTGTAAGGCCAGCG(R1:N{110})\\^*CCAGACATCCATCGT(R2:N{111})",
   },
+  {
+    // s0 has no read that matches the tag pattern, and its id sorts first: the cross-sample
+    // jobs get a sample with no rows, and the known-set job, which reads the designed tables
+    // from the first sample, reads them from the empty one.
+    name: "empty-sample",
+    args: { ...KNOWN_AA, ...KNOWN_NT, exportNt: true },
+    knownAa: true,
+    knownNt: true,
+    samples: ["s0", "s1", "s2", "s3"],
+  },
 ];
 
 const SAMPLES = ["s1", "s2", "s3"] as const;
 const sampleId = (s: string) => `GOLDEN${s.toUpperCase()}`.padEnd(24, "A");
 const DATASET_ID = "GOLDENDATASETAAAAAAAAAAA";
 
-type Golden = { exports: GoldenColumn[]; outputs: Record<string, GoldenColumn[]> };
+type Golden = {
+  exports: GoldenColumn[];
+  outputs: Record<string, GoldenColumn[]>;
+  tables: Record<string, GoldenColumn[]>;
+};
 
 // The frame outputs of the block under test that are part of the golden.
 const FRAME_OUTPUTS = ["stateHeatmapPf", "mutationHistogramPf"] as const;
+// Its table outputs that are not exported: the QC report, one row per sample.
+const TABLE_OUTPUTS = ["qcTable"] as const;
 
 const RUNS: (Scenario & { title: string })[] = SCENARIOS.map((s) => ({ ...s, title: s.name }));
 
@@ -132,9 +150,10 @@ blockTest.for(RUNS)(
     const tableId = await rawPrj.addBlock("Table", TableBlockPointer);
 
     const prefix = scenario.fastqPrefix ?? "";
+    const samples = scenario.samples ?? SAMPLES;
     const data: Record<string, { R1: string; R2: string }> = {};
     const labels: Record<string, string> = {};
-    for (const s of SAMPLES) {
+    for (const s of samples) {
       data[sampleId(s)] = {
         R1: await helpers.getLocalFileHandle(path.join(ASSETS, `${prefix}${s}_R1.fastq.gz`)),
         R2: await helpers.getLocalFileHandle(path.join(ASSETS, `${prefix}${s}_R2.fastq.gz`)),
@@ -145,7 +164,7 @@ blockTest.for(RUNS)(
       operation: "update-block-data",
       value: {
         metadata: [],
-        sampleIds: SAMPLES.map(sampleId),
+        sampleIds: samples.map(sampleId),
         sampleLabelColumnLabel: "Sample",
         sampleLabels: labels,
         datasets: [
@@ -214,12 +233,19 @@ blockTest.for(RUNS)(
     const actual: Golden = {
       exports: await readFrame(driver, tableOutputs.pFrame, ids, fromAp),
       outputs: {},
+      tables: {},
     };
     for (const name of FRAME_OUTPUTS) {
       const handle = apOutputs[name];
       if (typeof handle !== "string")
         throw new Error(`block output ${name} is not a p-frame handle`);
       actual.outputs[name] = await readFrame(driver, handle as PFrameHandle, ids);
+    }
+    for (const name of TABLE_OUTPUTS) {
+      const handle = (apOutputs[name] as { fullTableHandle?: PTableHandle } | undefined)
+        ?.fullTableHandle;
+      if (typeof handle !== "string") throw new Error(`block output ${name} has no table handle`);
+      actual.tables[name] = await readTable(driver, handle, ids);
     }
 
     if (UPDATE || !existsSync(EXPECTED)) {
@@ -238,17 +264,20 @@ blockTest.for(RUNS)(
     expect(actual.exports.map((c) => c.key)).toEqual(expected.exports.map((c) => c.key));
     for (const [i, c] of actual.exports.entries())
       expect(c.spec, `spec of ${c.key}`).toEqual(expected.exports[i].spec);
-    // Data: same rows for every exported column and every frame output.
+    // Data: same rows for every exported column, frame output and table output.
     for (const [i, c] of actual.exports.entries())
       expect(c.rows, `rows of ${c.key}`).toEqual(expected.exports[i].rows);
-    for (const name of FRAME_OUTPUTS) {
+    for (const [name, cols, want] of [
+      ...FRAME_OUTPUTS.map((n) => [n, actual.outputs[n], expected.outputs[n]] as const),
+      ...TABLE_OUTPUTS.map((n) => [n, actual.tables[n], expected.tables[n]] as const),
+    ]) {
       expect(
-        actual.outputs[name].map((c) => c.key),
+        cols.map((c) => c.key),
         `columns of ${name}`,
-      ).toEqual(expected.outputs[name].map((c) => c.key));
-      for (const [i, c] of actual.outputs[name].entries()) {
-        expect(c.spec, `${name} spec of ${c.key}`).toEqual(expected.outputs[name][i].spec);
-        expect(c.rows, `${name} rows of ${c.key}`).toEqual(expected.outputs[name][i].rows);
+      ).toEqual(want.map((c) => c.key));
+      for (const [i, c] of cols.entries()) {
+        expect(c.spec, `${name} spec of ${c.key}`).toEqual(want[i].spec);
+        expect(c.rows, `${name} rows of ${c.key}`).toEqual(want[i].rows);
       }
     }
   },
