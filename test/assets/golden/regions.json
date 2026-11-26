@@ -7455,6 +7455,8 @@
           "GOLDENS3AAAAAAAAAAAAAAAA\t0"
         ]
       }
-    ]
+    ],
+    "knownVariantsNtTable": [],
+    "knownVariantsAaTable": []
   }
 }

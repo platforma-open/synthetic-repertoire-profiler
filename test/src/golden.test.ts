@@ -29,6 +29,7 @@ const ASSETS = path.resolve(__dirname, "../assets/golden");
 const UPDATE = process.env.UPDATE_GOLDEN === "1";
 
 const PATTERN = "^*CTTGTAAGGCCAGCG(R1:N{110})\\^*CCAGACATCCATCGT(R2:N{111})";
+const UMI_PATTERN = "^*(UMI:N{10})CTTGTAAGGCCAGCG(R1:N{110})\\^*CCAGACATCCATCGT(R2:N{111})";
 // FR/CDR-like custom scheme; lengths sum to the 219-nt parent.
 const REGIONS = [
   { name: "FR1", length: 30 },
@@ -105,11 +106,25 @@ const SCENARIOS: Scenario[] = [
   { name: "known-aa-only", args: { ...KNOWN_AA, exportOnlyKnown: true }, knownAa: true },
   { name: "known-nt", args: { ...KNOWN_NT, exportNt: true }, knownNt: true },
   {
+    // Export-only-matched with an nt known set: the nt distance and abundance are filtered.
+    name: "known-nt-only",
+    args: { ...KNOWN_NT, exportNt: true, exportOnlyKnown: true },
+    knownNt: true,
+  },
+  {
     // 10-nt UMI before the R1 anchor; consensus needs 2 reads per molecule (default).
     name: "umi",
     args: {},
     fastqPrefix: "umi_",
-    tagPattern: "^*(UMI:N{10})CTTGTAAGGCCAGCG(R1:N{110})\\^*CCAGACATCCATCGT(R2:N{111})",
+    tagPattern: UMI_PATTERN,
+  },
+  {
+    // UMI run with an nt known set: the known tables carry molecule totals.
+    name: "known-nt-umi",
+    args: { ...KNOWN_NT, exportNt: true },
+    knownNt: true,
+    fastqPrefix: "umi_",
+    tagPattern: UMI_PATTERN,
   },
   {
     // s0 has no read that matches the tag pattern, and its id sorts first: the cross-sample
@@ -147,8 +162,9 @@ type Golden = {
 
 // The frame outputs of the block under test that are part of the golden.
 const FRAME_OUTPUTS = ["stateHeatmapPf", "mutationHistogramPf"] as const;
-// Its table outputs that are not exported: the QC report, one row per sample.
-const TABLE_OUTPUTS = ["qcTable"] as const;
+// Its table outputs: the QC report, one row per sample, and the known-variant tables, which
+// exist only with the matching known set (stored as no columns otherwise).
+const TABLE_OUTPUTS = ["qcTable", "knownVariantsNtTable", "knownVariantsAaTable"] as const;
 
 blockTest.for(RUNS)(
   "golden $title: exports and frame outputs match their golden",
@@ -256,8 +272,12 @@ blockTest.for(RUNS)(
       actual.outputs[name] = await readFrame(driver, handle as PFrameHandle, ids);
     }
     for (const name of TABLE_OUTPUTS) {
-      const handle = (apOutputs[name] as { fullTableHandle?: PTableHandle } | undefined)
-        ?.fullTableHandle;
+      const table = apOutputs[name] as { fullTableHandle?: PTableHandle } | undefined;
+      if (table === undefined && name !== "qcTable") {
+        actual.tables[name] = [];
+        continue;
+      }
+      const handle = table?.fullTableHandle;
       if (typeof handle !== "string") throw new Error(`block output ${name} has no table handle`);
       actual.tables[name] = await readTable(driver, handle, ids);
     }
