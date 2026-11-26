@@ -1,0 +1,2771 @@
+{
+  "exports": [
+    {
+      "key": "{\"axes\":[{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/feature\":\"amplicon-sequence\"},\"name\":\"pl7.app/sequence\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/isAssemblingFeature": "true",
+          "pl7.app/isMainSequence": "true",
+          "pl7.app/label": "Sequence aa",
+          "pl7.app/table/fontFamily": "monospace",
+          "pl7.app/table/orderPriority": "80000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "domain": {
+          "pl7.app/alphabet": "aminoacid",
+          "pl7.app/feature": "amplicon-sequence"
+        },
+        "kind": "PColumn",
+        "name": "pl7.app/sequence",
+        "valueType": "String"
+      },
+      "rows": [
+        "1de6d2c5077d6daa\tGTFSSYAISWVRQAPGQGLEWMGGIIPIFGTANYAQITADKSTSTAYMELSSLRSEDTAVSHCAKHMGYQLRE",
+        "30eb9297ee1024dd\tGTFSSYAISWVRQAPGQGLEWMGGIIPIFGTANYAQITADKSTSTAYMELSSLRSEDTAVYYCAKHMGYQVRE",
+        "3646871795079364\tGTFSSYAISWVRQAPGQGLEWMGGIIPIFGTANYAQITADKSTSTAYMELSSLRSEDTAVYYCAKHMGYQLRE",
+        "7af80f371d265831\tGTFSSDAISWVRQAPGQGLEWMGGIIPIFGTANYAQITADKSTSTAYMELSSLRSEDTAVYYCAKHMGYQLRE",
+        "ac0dac9cacbd51eb\tGTFSSYAISWVRQAPGQGLESMGGIIPIFGTANYAQITADKSTSTAYMELSSLRSEDTAVYYCAKHMGYQLRE",
+        "b56bf15d47afb93a\tGTFSSFAISWVRQAPGQGLEWMGGIIPIFGTANYAQITADNSTSTAYMELSSLRSEDTAVYYCAKHMGYQLRE"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{\"pl7.app/alphabet\":\"aminoacid\"},\"name\":\"pl7.app/repertoire/mutationCount\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/label": "AA mutations",
+          "pl7.app/min": "0",
+          "pl7.app/table/orderPriority": "94000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "domain": {
+          "pl7.app/alphabet": "aminoacid"
+        },
+        "kind": "PColumn",
+        "name": "pl7.app/repertoire/mutationCount",
+        "valueType": "Int"
+      },
+      "rows": [
+        "1de6d2c5077d6daa\t2",
+        "30eb9297ee1024dd\t1",
+        "3646871795079364\t0",
+        "7af80f371d265831\t1",
+        "ac0dac9cacbd51eb\t1",
+        "b56bf15d47afb93a\t2"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{\"pl7.app/alphabet\":\"aminoacid\"},\"name\":\"pl7.app/repertoire/mutations\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/description": "Changes from the parent, 1-based, colon-separated. Examples: SA42G - A at position 42 changed to G. DT17 - T at position 17 deleted. I5C - C inserted before position 5",
+          "pl7.app/label": "Mutations",
+          "pl7.app/table/fontFamily": "monospace",
+          "pl7.app/table/orderPriority": "95000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "domain": {
+          "pl7.app/alphabet": "aminoacid"
+        },
+        "kind": "PColumn",
+        "name": "pl7.app/repertoire/mutations",
+        "valueType": "String"
+      },
+      "rows": [
+        "1de6d2c5077d6daa\tSY61S:SY62H",
+        "30eb9297ee1024dd\tSL71V",
+        "3646871795079364\tNA",
+        "7af80f371d265831\tSY6D",
+        "ac0dac9cacbd51eb\tSW21S",
+        "b56bf15d47afb93a\tSY6F:SK41N"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{},\"name\":\"pl7.app/label\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/label": "Variant Id",
+          "pl7.app/table/orderPriority": "100000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "kind": "PColumn",
+        "name": "pl7.app/label",
+        "valueType": "String"
+      },
+      "rows": [
+        "1de6d2c5077d6daa\tV-YZEXF",
+        "30eb9297ee1024dd\tV-STEFB",
+        "3646871795079364\tV-NMXLC",
+        "7af80f371d265831\tV-ONKFK",
+        "ac0dac9cacbd51eb\tV-ATMEJ",
+        "b56bf15d47afb93a\tV-LMERC"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{},\"name\":\"pl7.app/ntVariantCount\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/label": "Synonymous NT variants",
+          "pl7.app/min": "1",
+          "pl7.app/table/orderPriority": "84000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "kind": "PColumn",
+        "name": "pl7.app/ntVariantCount",
+        "valueType": "Int"
+      },
+      "rows": [
+        "1de6d2c5077d6daa\t1",
+        "30eb9297ee1024dd\t1",
+        "3646871795079364\t2",
+        "7af80f371d265831\t1",
+        "ac0dac9cacbd51eb\t2",
+        "b56bf15d47afb93a\t2"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{},\"name\":\"pl7.app/readCountTotal\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/abundance/normalized": "false",
+          "pl7.app/abundance/unit": "reads",
+          "pl7.app/isAbundance": "true",
+          "pl7.app/label": "Supporting Reads",
+          "pl7.app/min": "1",
+          "pl7.app/table/orderPriority": "90000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "kind": "PColumn",
+        "name": "pl7.app/readCountTotal",
+        "valueType": "Long"
+      },
+      "rows": [
+        "1de6d2c5077d6daa\t6",
+        "30eb9297ee1024dd\t3",
+        "3646871795079364\t19",
+        "7af80f371d265831\t7",
+        "ac0dac9cacbd51eb\t11",
+        "b56bf15d47afb93a\t12"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{},\"name\":\"pl7.app/readFractionMean\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/format": ".2p",
+          "pl7.app/label": "Mean Fraction of Reads",
+          "pl7.app/max": "1",
+          "pl7.app/min": "0",
+          "pl7.app/table/orderPriority": "88000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "kind": "PColumn",
+        "name": "pl7.app/readFractionMean",
+        "valueType": "Double"
+      },
+      "rows": [
+        "1de6d2c5077d6daa\t0.148459383754",
+        "30eb9297ee1024dd\t0.142857142857",
+        "3646871795079364\t0.328758169935",
+        "7af80f371d265831\t0.172619047619",
+        "ac0dac9cacbd51eb\t0.191923436041",
+        "b56bf15d47afb93a\t0.326470588235"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{},\"name\":\"pl7.app/sampleCount\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/label": "Number of Samples",
+          "pl7.app/min": "1",
+          "pl7.app/table/orderPriority": "85000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "kind": "PColumn",
+        "name": "pl7.app/sampleCount",
+        "valueType": "Int"
+      },
+      "rows": [
+        "1de6d2c5077d6daa\t2",
+        "30eb9297ee1024dd\t1",
+        "3646871795079364\t3",
+        "7af80f371d265831\t2",
+        "ac0dac9cacbd51eb\t3",
+        "b56bf15d47afb93a\t2"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{},\"name\":\"pl7.app/vdj/sequence/productive\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/description": "No frame shift and no stop codon in the translation.",
+          "pl7.app/discreteValues": ["true", "false"],
+          "pl7.app/isDiscreteFilter": "true",
+          "pl7.app/label": "Productive",
+          "pl7.app/table/orderPriority": "93000",
+          "pl7.app/table/visibility": "optional",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "kind": "PColumn",
+        "name": "pl7.app/vdj/sequence/productive",
+        "valueType": "String"
+      },
+      "rows": [
+        "1de6d2c5077d6daa\ttrue",
+        "30eb9297ee1024dd\ttrue",
+        "3646871795079364\ttrue",
+        "7af80f371d265831\ttrue",
+        "ac0dac9cacbd51eb\ttrue",
+        "b56bf15d47afb93a\ttrue"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"},{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{},\"name\":\"pl7.app/readCount\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/abundance/isPrimary": "true",
+          "pl7.app/abundance/normalized": "false",
+          "pl7.app/abundance/unit": "reads",
+          "pl7.app/isAbundance": "true",
+          "pl7.app/isAnchor": "true",
+          "pl7.app/label": "Number of Reads",
+          "pl7.app/min": "1",
+          "pl7.app/table/orderPriority": "90000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Sample"
+            },
+            "domain": {
+              "pl7.app/blockId": "<sndBlock>"
+            },
+            "name": "pl7.app/sampleId",
+            "type": "String"
+          },
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "kind": "PColumn",
+        "name": "pl7.app/readCount",
+        "valueType": "Long"
+      },
+      "rows": [
+        "GOLDENS1AAAAAAAAAAAAAAAA\t3646871795079364\t6",
+        "GOLDENS1AAAAAAAAAAAAAAAA\t7af80f371d265831\t5",
+        "GOLDENS1AAAAAAAAAAAAAAAA\tac0dac9cacbd51eb\t3",
+        "GOLDENS1AAAAAAAAAAAAAAAA\tb56bf15d47afb93a\t6",
+        "GOLDENS2AAAAAAAAAAAAAAAA\t1de6d2c5077d6daa\t5",
+        "GOLDENS2AAAAAAAAAAAAAAAA\t30eb9297ee1024dd\t3",
+        "GOLDENS2AAAAAAAAAAAAAAAA\t3646871795079364\t7",
+        "GOLDENS2AAAAAAAAAAAAAAAA\t7af80f371d265831\t2",
+        "GOLDENS2AAAAAAAAAAAAAAAA\tac0dac9cacbd51eb\t4",
+        "GOLDENS3AAAAAAAAAAAAAAAA\t1de6d2c5077d6daa\t1",
+        "GOLDENS3AAAAAAAAAAAAAAAA\t3646871795079364\t6",
+        "GOLDENS3AAAAAAAAAAAAAAAA\tac0dac9cacbd51eb\t4",
+        "GOLDENS3AAAAAAAAAAAAAAAA\tb56bf15d47afb93a\t6"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"},{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{},\"name\":\"pl7.app/readFraction\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/abundance/isPrimary": "true",
+          "pl7.app/abundance/normalized": "true",
+          "pl7.app/abundance/unit": "reads",
+          "pl7.app/format": ".2p",
+          "pl7.app/isAbundance": "true",
+          "pl7.app/label": "Fraction of reads",
+          "pl7.app/max": "1",
+          "pl7.app/min": "0",
+          "pl7.app/table/orderPriority": "89000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Sample"
+            },
+            "domain": {
+              "pl7.app/blockId": "<sndBlock>"
+            },
+            "name": "pl7.app/sampleId",
+            "type": "String"
+          },
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "kind": "PColumn",
+        "name": "pl7.app/readFraction",
+        "valueType": "Double"
+      },
+      "rows": [
+        "GOLDENS1AAAAAAAAAAAAAAAA\t3646871795079364\t0.3",
+        "GOLDENS1AAAAAAAAAAAAAAAA\t7af80f371d265831\t0.25",
+        "GOLDENS1AAAAAAAAAAAAAAAA\tac0dac9cacbd51eb\t0.15",
+        "GOLDENS1AAAAAAAAAAAAAAAA\tb56bf15d47afb93a\t0.3",
+        "GOLDENS2AAAAAAAAAAAAAAAA\t1de6d2c5077d6daa\t0.238095238095",
+        "GOLDENS2AAAAAAAAAAAAAAAA\t30eb9297ee1024dd\t0.142857142857",
+        "GOLDENS2AAAAAAAAAAAAAAAA\t3646871795079364\t0.333333333333",
+        "GOLDENS2AAAAAAAAAAAAAAAA\t7af80f371d265831\t0.0952380952381",
+        "GOLDENS2AAAAAAAAAAAAAAAA\tac0dac9cacbd51eb\t0.190476190476",
+        "GOLDENS3AAAAAAAAAAAAAAAA\t1de6d2c5077d6daa\t0.0588235294118",
+        "GOLDENS3AAAAAAAAAAAAAAAA\t3646871795079364\t0.352941176471",
+        "GOLDENS3AAAAAAAAAAAAAAAA\tac0dac9cacbd51eb\t0.235294117647",
+        "GOLDENS3AAAAAAAAAAAAAAAA\tb56bf15d47afb93a\t0.352941176471"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{},\"name\":\"pl7.app/repertoire/parentId\"},{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/blockId\":\"<apBlock>\",\"pl7.app/identitySource\":\"derived\",\"pl7.app/modality\":\"amplicon\",\"pl7.app/repertoire/extractionRunId\":\"<apBlock>\"},\"name\":\"pl7.app/variantKey\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/parentLink\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/isLinkerColumn": "true",
+          "pl7.app/table/visibility": "hidden",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Parent"
+            },
+            "name": "pl7.app/repertoire/parentId",
+            "type": "String"
+          },
+          {
+            "annotations": {
+              "pl7.app/label": "Variant aa",
+              "pl7.app/table/fontFamily": "monospace",
+              "pl7.app/table/orderPriority": "110000",
+              "pl7.app/table/visibility": "default"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/blockId": "<apBlock>",
+              "pl7.app/identitySource": "derived",
+              "pl7.app/modality": "amplicon",
+              "pl7.app/repertoire/extractionRunId": "<apBlock>"
+            },
+            "name": "pl7.app/variantKey",
+            "type": "String"
+          }
+        ],
+        "kind": "PColumn",
+        "name": "pl7.app/repertoire/parentLink",
+        "valueType": "Int"
+      },
+      "rows": [
+        "P1\t1de6d2c5077d6daa\t1",
+        "P1\t3646871795079364\t1",
+        "P1\t7af80f371d265831\t1",
+        "P1\tac0dac9cacbd51eb\t1",
+        "P1\tb56bf15d47afb93a\t1",
+        "P2\t30eb9297ee1024dd\t1",
+        "P2\t3646871795079364\t1",
+        "P2\tac0dac9cacbd51eb\t1"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{},\"name\":\"pl7.app/repertoire/parentId\"},{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\",\"pl7.app/repertoire/numbering\":\"naive\"},\"name\":\"pl7.app/repertoire/position\"}],\"domain\":{\"pl7.app/alphabet\":\"aminoacid\"},\"name\":\"pl7.app/repertoire/parentResidue\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/label": "Parent AA",
+          "pl7.app/table/fontFamily": "monospace",
+          "pl7.app/table/orderPriority": "70000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Parent"
+            },
+            "name": "pl7.app/repertoire/parentId",
+            "type": "String"
+          },
+          {
+            "annotations": {
+              "pl7.app/label": "Position aa"
+            },
+            "domain": {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/repertoire/numbering": "naive"
+            },
+            "name": "pl7.app/repertoire/position",
+            "type": "String"
+          }
+        ],
+        "domain": {
+          "pl7.app/alphabet": "aminoacid"
+        },
+        "kind": "PColumn",
+        "name": "pl7.app/repertoire/parentResidue",
+        "valueType": "String"
+      },
+      "rows": [
+        "P1\t1\tG",
+        "P1\t10\tW",
+        "P1\t11\tV",
+        "P1\t12\tR",
+        "P1\t13\tQ",
+        "P1\t14\tA",
+        "P1\t15\tP",
+        "P1\t16\tG",
+        "P1\t17\tQ",
+        "P1\t18\tG",
+        "P1\t19\tL",
+        "P1\t2\tT",
+        "P1\t20\tE",
+        "P1\t21\tW",
+        "P1\t22\tM",
+        "P1\t23\tG",
+        "P1\t24\tG",
+        "P1\t25\tI",
+        "P1\t26\tI",
+        "P1\t27\tP",
+        "P1\t28\tI",
+        "P1\t29\tF",
+        "P1\t3\tF",
+        "P1\t30\tG",
+        "P1\t31\tT",
+        "P1\t32\tA",
+        "P1\t33\tN",
+        "P1\t34\tY",
+        "P1\t35\tA",
+        "P1\t36\tQ",
+        "P1\t37\tI",
+        "P1\t38\tT",
+        "P1\t39\tA",
+        "P1\t4\tS",
+        "P1\t40\tD",
+        "P1\t41\tK",
+        "P1\t42\tS",
+        "P1\t43\tT",
+        "P1\t44\tS",
+        "P1\t45\tT",
+        "P1\t46\tA",
+        "P1\t47\tY",
+        "P1\t48\tM",
+        "P1\t49\tE",
+        "P1\t5\tS",
+        "P1\t50\tL",
+        "P1\t51\tS",
+        "P1\t52\tS",
+        "P1\t53\tL",
+        "P1\t54\tR",
+        "P1\t55\tS",
+        "P1\t56\tE",
+        "P1\t57\tD",
+        "P1\t58\tT",
+        "P1\t59\tA",
+        "P1\t6\tY",
+        "P1\t60\tV",
+        "P1\t61\tY",
+        "P1\t62\tY",
+        "P1\t63\tC",
+        "P1\t64\tA",
+        "P1\t65\tK",
+        "P1\t66\tH",
+        "P1\t67\tM",
+        "P1\t68\tG",
+        "P1\t69\tY",
+        "P1\t7\tA",
+        "P1\t70\tQ",
+        "P1\t71\tL",
+        "P1\t72\tR",
+        "P1\t73\tE",
+        "P1\t8\tI",
+        "P1\t9\tS",
+        "P2\t1\tG",
+        "P2\t10\tW",
+        "P2\t11\tV",
+        "P2\t12\tR",
+        "P2\t13\tQ",
+        "P2\t14\tA",
+        "P2\t15\tP",
+        "P2\t16\tG",
+        "P2\t17\tQ",
+        "P2\t18\tG",
+        "P2\t19\tL",
+        "P2\t2\tT",
+        "P2\t20\tE",
+        "P2\t21\tW",
+        "P2\t22\tM",
+        "P2\t23\tG",
+        "P2\t24\tG",
+        "P2\t25\tI",
+        "P2\t26\tI",
+        "P2\t27\tP",
+        "P2\t28\tI",
+        "P2\t29\tF",
+        "P2\t3\tF",
+        "P2\t30\tG",
+        "P2\t31\tT",
+        "P2\t32\tA",
+        "P2\t33\tN",
+        "P2\t34\tY",
+        "P2\t35\tA",
+        "P2\t36\tQ",
+        "P2\t37\tI",
+        "P2\t38\tT",
+        "P2\t39\tA",
+        "P2\t4\tS",
+        "P2\t40\tD",
+        "P2\t41\tK",
+        "P2\t42\tS",
+        "P2\t43\tT",
+        "P2\t44\tS",
+        "P2\t45\tT",
+        "P2\t46\tA",
+        "P2\t47\tY",
+        "P2\t48\tM",
+        "P2\t49\tE",
+        "P2\t5\tS",
+        "P2\t50\tL",
+        "P2\t51\tS",
+        "P2\t52\tS",
+        "P2\t53\tL",
+        "P2\t54\tR",
+        "P2\t55\tS",
+        "P2\t56\tE",
+        "P2\t57\tD",
+        "P2\t58\tT",
+        "P2\t59\tA",
+        "P2\t6\tY",
+        "P2\t60\tV",
+        "P2\t61\tY",
+        "P2\t62\tY",
+        "P2\t63\tC",
+        "P2\t64\tA",
+        "P2\t65\tK",
+        "P2\t66\tH",
+        "P2\t67\tM",
+        "P2\t68\tG",
+        "P2\t69\tY",
+        "P2\t7\tA",
+        "P2\t70\tQ",
+        "P2\t71\tL",
+        "P2\t72\tR",
+        "P2\t73\tE",
+        "P2\t8\tI",
+        "P2\t9\tS"
+      ]
+    },
+    {
+      "key": "{\"axes\":[{\"domain\":{},\"name\":\"pl7.app/repertoire/parentId\"}],\"domain\":{\"pl7.app/alphabet\":\"aminoacid\"},\"name\":\"pl7.app/repertoire/parentSequence\"}",
+      "spec": {
+        "annotations": {
+          "pl7.app/label": "Parent Sequence aa",
+          "pl7.app/table/fontFamily": "monospace",
+          "pl7.app/table/orderPriority": "75000",
+          "pl7.app/table/visibility": "default",
+          "pl7.app/trace": [
+            {
+              "id": "<sndBlock>",
+              "importance": 10,
+              "label": "Samples & Data",
+              "type": "milaboratories.samples-and-data"
+            },
+            {
+              "id": "GOLDENDATASETAAAAAAAAAAA",
+              "importance": 100,
+              "label": "Golden",
+              "type": "milaboratories.samples-and-data/dataset"
+            },
+            {
+              "id": "<apBlock>",
+              "importance": 20,
+              "label": "Amplicon Profiling",
+              "type": "milaboratories.synthetic-repertoire-profiler"
+            },
+            {
+              "id": "<apBlock>.aa",
+              "importance": 80,
+              "label": "AA Variants",
+              "type": "milaboratories.synthetic-repertoire-profiler.level"
+            }
+          ]
+        },
+        "axesSpec": [
+          {
+            "annotations": {
+              "pl7.app/label": "Parent"
+            },
+            "name": "pl7.app/repertoire/parentId",
+            "type": "String"
+          }
+        ],
+        "domain": {
+          "pl7.app/alphabet": "aminoacid"
+        },
+        "kind": "PColumn",
+        "name": "pl7.app/repertoire/parentSequence",
+        "valueType": "String"
+      },
+      "rows": [
+        "P1\tGTFSSYAISWVRQAPGQGLEWMGGIIPIFGTANYAQITADKSTSTAYMELSSLRSEDTAVYYCAKHMGYQLRE",
+        "P2\tGTFSSYAISWVRQAPGQGLEWMGGIIPIFGTANYAQITADKSTSTAYMELSSLRSEDTAVYYCAKHMGYQLRE"
+      ]
+    }
+  ],
+  "outputs": {
+    "stateHeatmapPf": [
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/label\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/isLabel": "true",
+            "pl7.app/label": "Sample"
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/label",
+          "valueType": "String"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\ts1",
+          "GOLDENS2AAAAAAAAAAAAAAAA\ts2",
+          "GOLDENS3AAAAAAAAAAAAAAAA\ts3"
+        ]
+      }
+    ],
+    "mutationHistogramPf": [
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"},{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\"},\"name\":\"pl7.app/repertoire/mutationCount\"}],\"domain\":{\"pl7.app/alphabet\":\"aminoacid\"},\"name\":\"pl7.app/readCount\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/abundance/aggregated": "true",
+            "pl7.app/abundance/normalized": "false",
+            "pl7.app/abundance/unit": "reads",
+            "pl7.app/isAbundance": "true",
+            "pl7.app/label": "Reads",
+            "pl7.app/min": "1",
+            "pl7.app/table/orderPriority": "90000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              },
+              {
+                "id": "<apBlock>.aa",
+                "importance": 80,
+                "label": "AA Variants",
+                "type": "milaboratories.synthetic-repertoire-profiler.level"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            },
+            {
+              "annotations": {
+                "pl7.app/label": "AA mutations",
+                "pl7.app/table/orderPriority": "110000",
+                "pl7.app/table/visibility": "default"
+              },
+              "domain": {
+                "pl7.app/alphabet": "aminoacid"
+              },
+              "name": "pl7.app/repertoire/mutationCount",
+              "type": "Int"
+            }
+          ],
+          "domain": {
+            "pl7.app/alphabet": "aminoacid"
+          },
+          "kind": "PColumn",
+          "name": "pl7.app/readCount",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0\t6",
+          "GOLDENS1AAAAAAAAAAAAAAAA\t1\t8",
+          "GOLDENS1AAAAAAAAAAAAAAAA\t2\t6",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0\t7",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t1\t9",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t2\t5",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0\t6",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t1\t4",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t2\t7"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"},{\"domain\":{\"pl7.app/alphabet\":\"aminoacid\"},\"name\":\"pl7.app/repertoire/mutationCount\"}],\"domain\":{\"pl7.app/alphabet\":\"aminoacid\"},\"name\":\"pl7.app/repertoire/variantCount\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/label": "Unique Variants",
+            "pl7.app/min": "1",
+            "pl7.app/table/orderPriority": "100000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              },
+              {
+                "id": "<apBlock>.aa",
+                "importance": 80,
+                "label": "AA Variants",
+                "type": "milaboratories.synthetic-repertoire-profiler.level"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            },
+            {
+              "annotations": {
+                "pl7.app/label": "AA mutations",
+                "pl7.app/table/orderPriority": "110000",
+                "pl7.app/table/visibility": "default"
+              },
+              "domain": {
+                "pl7.app/alphabet": "aminoacid"
+              },
+              "name": "pl7.app/repertoire/mutationCount",
+              "type": "Int"
+            }
+          ],
+          "domain": {
+            "pl7.app/alphabet": "aminoacid"
+          },
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/variantCount",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0\t1",
+          "GOLDENS1AAAAAAAAAAAAAAAA\t1\t2",
+          "GOLDENS1AAAAAAAAAAAAAAAA\t2\t1",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0\t1",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t1\t3",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t2\t1",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0\t1",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t1\t1",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t2\t2"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/label\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/isLabel": "true",
+            "pl7.app/label": "Sample"
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/label",
+          "valueType": "String"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\ts1",
+          "GOLDENS2AAAAAAAAAAAAAAAA\ts2",
+          "GOLDENS3AAAAAAAAAAAAAAAA\ts3"
+        ]
+      }
+    ]
+  },
+  "tables": {
+    "qcTable": [
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/label\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/isLabel": "true",
+            "pl7.app/label": "Sample"
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/label",
+          "valueType": "String"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\ts1",
+          "GOLDENS2AAAAAAAAAAAAAAAA\ts2",
+          "GOLDENS3AAAAAAAAAAAAAAAA\ts3"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/aaMutationsExceededReadFraction\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Fraction of total reads on aa mutation-limit variants.",
+            "pl7.app/format": ".2p",
+            "pl7.app/label": "AA Mutation-Limit Reads (%)",
+            "pl7.app/max": "1",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "85000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/aaMutationsExceededReadFraction",
+          "valueType": "Double"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/aaMutationsExceededReads\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Reads on aa mutation-limit variants.",
+            "pl7.app/label": "AA Mutation-Limit Reads",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "86000",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/aaMutationsExceededReads",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/aaMutationsExceededVariants\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "In-frame variants dropped by mutation filter",
+            "pl7.app/label": "AA Mutation-Limit Variants",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "87000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/aaMutationsExceededVariants",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/aaVariants\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Distinct amino-acid variants.",
+            "pl7.app/label": "AA Variants",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "99000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/aaVariants",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t5",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t5",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t5"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/ambiguousReadFraction\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Fraction of total reads on ambiguous variants.",
+            "pl7.app/format": ".2p",
+            "pl7.app/label": "Ambiguous Reads (%)",
+            "pl7.app/max": "1",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "72000",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/ambiguousReadFraction",
+          "valueType": "Double"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/ambiguousReads\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Reads on ambiguous variants.",
+            "pl7.app/label": "Ambiguous Reads",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "73000",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/ambiguousReads",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/ambiguousVariants\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Variants matching more than one known-set entry.",
+            "pl7.app/label": "Ambiguous Variants",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "74000",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/ambiguousVariants",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/assignedReadFraction\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Fraction of total reads on assigned variants.",
+            "pl7.app/format": ".2p",
+            "pl7.app/label": "Assigned Reads (%)",
+            "pl7.app/max": "1",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "78000",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/assignedReadFraction",
+          "valueType": "Double"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/assignedReads\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Reads on assigned variants.",
+            "pl7.app/label": "Assigned Reads",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "79000",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/assignedReads",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/assignedVariants\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Variants matched to a known-set entry (assignment run only).",
+            "pl7.app/label": "Assigned Variants",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "80000",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/assignedVariants",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/frameShiftReadFraction\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Fraction of total reads on frame-shift variants.",
+            "pl7.app/format": ".2p",
+            "pl7.app/label": "Frame-Shift Reads (%)",
+            "pl7.app/max": "1",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "88000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/frameShiftReadFraction",
+          "valueType": "Double"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0.0869565217391",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/frameShiftReads\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Reads on frame-shift variants.",
+            "pl7.app/label": "Frame-Shift Reads",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "89000",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/frameShiftReads",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t2",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/frameShiftVariants\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Variants whose mutations shift the reading frame.",
+            "pl7.app/label": "Frame-Shift Variants",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "90000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/frameShiftVariants",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t1",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/lowCoverageReadFraction\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Fraction of the reads entering assembly that the Min variant reads gate discarded.",
+            "pl7.app/format": ".2p",
+            "pl7.app/label": "Low-Coverage Reads (%)",
+            "pl7.app/max": "1",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "81000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/lowCoverageReadFraction",
+          "valueType": "Double"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/lowCoverageReads\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Reads carried by the variants the Min variant reads gate discarded. These are counted nowhere else in this table.",
+            "pl7.app/label": "Low-Coverage Reads",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "81500",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/lowCoverageReads",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/lowCoverageVariants\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Variants discarded by the Min variant reads gate, before mutation calling. Zero when the gate is off.",
+            "pl7.app/label": "Low-Coverage Variants",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "82000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/lowCoverageVariants",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/ntIndelReadFraction\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Fraction of processed reads rejected for carrying an indel.",
+            "pl7.app/format": ".2p",
+            "pl7.app/label": "NT Indel Reads (%)",
+            "pl7.app/max": "1",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "83000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/ntIndelReadFraction",
+          "valueType": "Double"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/ntIndelReads\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Reads rejected at alignment for carrying an insertion or deletion (substitutions-only filter).",
+            "pl7.app/label": "NT Indel Reads",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "84000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/ntIndelReads",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/ntVariants\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Distinct nucleotide variants assembled.",
+            "pl7.app/label": "NT Variants",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "100000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/ntVariants",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t6",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t6",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t7"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/stopCodonReadFraction\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Fraction of total reads on stop-codon variants.",
+            "pl7.app/format": ".2p",
+            "pl7.app/label": "Stop-Codon Reads (%)",
+            "pl7.app/max": "1",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "87500",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/stopCodonReadFraction",
+          "valueType": "Double"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0.0909090909091",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0.15"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/stopCodonReads\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Reads on stop-codon variants.",
+            "pl7.app/label": "Stop-Codon Reads",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "87700",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/stopCodonReads",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t2",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t3"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/stopCodonVariants\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "In-frame variants whose translation carries a stop codon.",
+            "pl7.app/label": "Stop-Codon Variants",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "87900",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/stopCodonVariants",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t1",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t1"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/totalReads\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Reads assigned to variants.",
+            "pl7.app/label": "Total Reads",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "98000",
+            "pl7.app/table/visibility": "default",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/totalReads",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t22",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t23",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t20"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/unassignedReadFraction\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Fraction of total reads on unassigned variants.",
+            "pl7.app/format": ".2p",
+            "pl7.app/label": "Unassigned Reads (%)",
+            "pl7.app/max": "1",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "75000",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/unassignedReadFraction",
+          "valueType": "Double"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/unassignedReads\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Reads on unassigned (novel) variants.",
+            "pl7.app/label": "Unassigned Reads",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "76000",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/unassignedReads",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      },
+      {
+        "key": "{\"axes\":[{\"domain\":{\"pl7.app/blockId\":\"<sndBlock>\"},\"name\":\"pl7.app/sampleId\"}],\"domain\":{},\"name\":\"pl7.app/repertoire/qc/unassignedVariants\"}",
+        "spec": {
+          "annotations": {
+            "pl7.app/description": "Novel variants with no known-set match.",
+            "pl7.app/label": "Unassigned Variants",
+            "pl7.app/min": "0",
+            "pl7.app/table/orderPriority": "77000",
+            "pl7.app/table/visibility": "optional",
+            "pl7.app/trace": [
+              {
+                "id": "<sndBlock>",
+                "importance": 10,
+                "label": "Samples & Data",
+                "type": "milaboratories.samples-and-data"
+              },
+              {
+                "id": "GOLDENDATASETAAAAAAAAAAA",
+                "importance": 100,
+                "label": "Golden",
+                "type": "milaboratories.samples-and-data/dataset"
+              },
+              {
+                "id": "<apBlock>",
+                "importance": 20,
+                "label": "Amplicon Profiling",
+                "type": "milaboratories.synthetic-repertoire-profiler"
+              }
+            ]
+          },
+          "axesSpec": [
+            {
+              "annotations": {
+                "pl7.app/label": "Sample"
+              },
+              "domain": {
+                "pl7.app/blockId": "<sndBlock>"
+              },
+              "name": "pl7.app/sampleId",
+              "type": "String"
+            }
+          ],
+          "kind": "PColumn",
+          "name": "pl7.app/repertoire/qc/unassignedVariants",
+          "valueType": "Long"
+        },
+        "rows": [
+          "GOLDENS1AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS2AAAAAAAAAAAAAAAA\t0",
+          "GOLDENS3AAAAAAAAAAAAAAAA\t0"
+        ]
+      }
+    ]
+  }
+}
