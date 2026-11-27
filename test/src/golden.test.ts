@@ -139,17 +139,17 @@ const SCENARIOS: Scenario[] = [
 ];
 
 const RUNS: (Scenario & { title: string })[] = SCENARIOS.map((s) => ({ ...s, title: s.name }));
-// Every scenario also runs at K=4, and `defaults` and `known-nt` at K=256, where most buckets
-// are empty and the known-key buckets split on two chars.
+// Every scenario also runs at K=4. `defaults` runs at K=256, where most buckets are empty, and
+// `known-nt` at K=64, the smallest count where the known-key buckets split on two chars.
 // `title` is display only: each run compares against `<name>.json`.
 RUNS.push(...SCENARIOS.map((s) => ({ ...s, aggBuckets: 4, title: `${s.name} K=4` })));
-RUNS.push(
-  ...SCENARIOS.filter((s) => s.name === "defaults" || s.name === "known-nt").map((s) => ({
-    ...s,
-    aggBuckets: 256,
-    title: `${s.name} K=256`,
-  })),
-);
+for (const [name, aggBuckets] of [
+  ["defaults", 256],
+  ["known-nt", 64],
+] as const) {
+  const s = SCENARIOS.find((x) => x.name === name)!;
+  RUNS.push({ ...s, aggBuckets, title: `${name} K=${aggBuckets}` });
+}
 
 const SAMPLES = ["s1", "s2", "s3"] as const;
 const sampleId = (s: string) => `GOLDEN${s.toUpperCase()}`.padEnd(24, "A");
