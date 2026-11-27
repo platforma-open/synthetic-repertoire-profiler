@@ -44,7 +44,7 @@ self.body(func(inputs) {
 		return buckets.keyPredicate(pt, col, inputs.prefixes, inputs.catchAll)
 	}
 
-	wf := aggSizing.applyComputed(pt.workflow(), inputs.requestBytes)
+	wf := aggSizing.applyComputed(pt.workflow().name("ptabler variant bucket " + level), inputs.requestBytes)
 	result := {
 		labelIn: smart.createNullResource(),
 		parent: smart.createNullResource(),

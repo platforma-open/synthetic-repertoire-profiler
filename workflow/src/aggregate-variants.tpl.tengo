@@ -152,7 +152,7 @@ self.body(func(inputs) {
 	labelParts := func(labelInFiles) {
 		files := []
 		for l, letters in buckets.labelLetters(p.l) {
-			wf := aggSizing.applyLabel(pt.workflow(), flatBytes, p.l)
+			wf := aggSizing.applyLabel(pt.workflow().name("ptabler variant labels"), flatBytes, p.l)
 			variantAggregate.addLabels(wf, labelInFiles, labelKeep(letters, l == 0))
 			files = append(files, wf.run().getFile("labels.parquet"))
 		}
@@ -163,7 +163,7 @@ self.body(func(inputs) {
 		if len(files) == 1 {
 			return files[0]
 		}
-		wf := aggSizing.applyComputed(pt.workflow(), flatBytes)
+		wf := aggSizing.applyComputed(pt.workflow().name("ptabler variant concat"), flatBytes)
 		variantAggregate.addConcat(wf, files)
 		return wf.run().getFile("out.parquet")
 	}

@@ -102,7 +102,7 @@ self.body(func(inputs) {
 		if len(files) == 1 {
 			return files[0]
 		}
-		wf := aggSizing.applyComputed(pt.workflow(), buckets.flatJobBytes(aggMemGB))
+		wf := aggSizing.applyComputed(pt.workflow().name("ptabler known concat"), buckets.flatJobBytes(aggMemGB))
 		variantAggregate.addConcat(wf, files)
 		return wf.run().getFile("out.parquet")
 	}

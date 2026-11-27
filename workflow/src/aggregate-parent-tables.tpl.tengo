@@ -27,7 +27,7 @@ self.body(func(inputs) {
 
 	rmMap := inputs.tableData.inputs()
 	// Left unsized on purpose — pt sizes CPU/RAM from input volume. See aggregate-state-matrix.
-	wf := pt.workflow().
+	wf := pt.workflow().name("ptabler parent tables").
 		inMediumQueue()
 
 	sKeys := maps.getKeys(rmMap)

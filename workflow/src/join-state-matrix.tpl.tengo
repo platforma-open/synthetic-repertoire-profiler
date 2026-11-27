@@ -38,7 +38,7 @@ self.body(func(inputs) {
 			ownerBytes += ll.getBlobSize(ownMap[bKey].id)
 		}
 	}
-	wf := aggSizing.applyComputed(pt.workflow(),
+	wf := aggSizing.applyComputed(pt.workflow().name("ptabler state matrix join"),
 		aggSizing.matrixJoinRequestBytes(len(sampleKeys), ownerBytes, inputs.aggMemGB))
 
 	ownFrames := []

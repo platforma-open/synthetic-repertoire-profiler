@@ -37,7 +37,7 @@ self.body(func(inputs) {
 	ll.assert(len(metaCols) > 0, "process-known-set: no metadata columns mapped")
 
 	// Need is 0.35 GiB + 0.3 GiB per million known rows; pt sizes it from the file.
-	wf := pt.workflow().memFloor(4 * units.GiB).cpu(1)
+	wf := pt.workflow().name("ptabler known set").memFloor(4 * units.GiB).cpu(1)
 
 	frame := wf.frame({ file: inputs.knownFile, xsvType: "tsv" }, { id: "known" })
 

@@ -33,7 +33,7 @@ self.body(func(inputs) {
 	kind := inputs.kind
 	dataMap := inputs.data.inputs()
 	sampleKeys := maps.getKeys(dataMap)
-	wf := aggSizing.applyComputed(pt.workflow(), inputs.requestBytes)
+	wf := aggSizing.applyComputed(pt.workflow().name("ptabler known " + kind), inputs.requestBytes)
 
 	// Every sample's rows of the bucket.
 	rows := func(keep) {

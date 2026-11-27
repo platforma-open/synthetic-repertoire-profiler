@@ -27,7 +27,7 @@ self.body(func(inputs) {
 	// The matrix job derives the same sample order from the same keys.
 	sampleKeys := maps.getKeys(abMap)
 
-	wf := aggSizing.applyComputed(pt.workflow(), inputs.requestBytes)
+	wf := aggSizing.applyComputed(pt.workflow().name("ptabler state matrix owners"), inputs.requestBytes)
 	keyFrames := []
 	for idx, sKey in sampleKeys {
 		kept := wf.frame({

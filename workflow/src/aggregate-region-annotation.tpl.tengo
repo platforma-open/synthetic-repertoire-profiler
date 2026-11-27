@@ -19,7 +19,7 @@ self.body(func(inputs) {
 	rmMap := inputs.regionAnnotationData.inputs()
 	// Left unsized on purpose — pt sizes CPU/RAM from input volume when neither is
 	// set. See aggregate-sizing.
-	wf := pt.workflow().
+	wf := pt.workflow().name("ptabler region annotation").
 		inMediumQueue()
 
 	sKeys := maps.getKeys(rmMap)

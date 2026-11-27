@@ -56,7 +56,7 @@ self.body(func(inputs) {
 		}
 		designedBytes = ll.getBlobSize(inputs.designedNt.id) + ll.getBlobSize(inputs.designedAa.id)
 	}
-	wf := aggSizing.applyComputed(pt.workflow(),
+	wf := aggSizing.applyComputed(pt.workflow().name("ptabler known finish " + level),
 		aggSizing.knownFinishRequestBytes(heldBytes, designedBytes, inputs.aggMemGB))
 
 	parts := func(m, idPrefix) {

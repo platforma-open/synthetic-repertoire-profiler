@@ -277,7 +277,7 @@ self.body(func(inputs) {
 	variantsFile := analyzeCmd.getFile("out.variants.tsv")
 	aaVariantsFile := analyzeCmd.getFile("out.aa-variants.tsv")
 	if filterNonProductive {
-		prodWf := pt.workflow()
+		prodWf := pt.workflow().name("ptabler productive filter")
 		prodAa := prodWf.frame({
 			file: aaVariantsFile,
 			xsvType: "tsv"
@@ -308,7 +308,7 @@ self.body(func(inputs) {
 	// content-hash variantKey / aaVariantKey) and the per-sample QC row.
 	// Sized from input volume at slope 3, not pt's 10: the peak was 0.9 x input
 	// on a sample of 4M variants.
-	ptWf := pt.workflow().memSlope(3)
+	ptWf := pt.workflow().name("ptabler sample tables").memSlope(3)
 
 	// Abundance. variants.tsv is already ~one row per variantKey; group
 	// defensively to fold the rare same-sequence/two-parent duplicate, and sum nt
@@ -887,7 +887,7 @@ self.body(func(inputs) {
 	// other table and would size the whole process. It does not run when both levels
 	// are off. The 8 GiB floor covers a backend without blob sizes: a 4M-variant sample
 	// needs 4 GiB.
-	smWf := pt.workflow().memFloor(8 * units.GiB)
+	smWf := pt.workflow().name("ptabler sample state matrix").memFloor(8 * units.GiB)
 
 	smCols := func(f) {
 		return f.select(pt.col("variantKey"), pt.col("parentId"), pt.col("position"), pt.col("state"))
