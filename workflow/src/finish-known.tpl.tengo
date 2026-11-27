@@ -87,7 +87,7 @@ self.body(func(inputs) {
 
 	links.
 		select(pt.col("knownKey"), pt.col("variantKey").alias(level + "Key"), pt.lit(1).alias("link")).
-		save("linker.tsv", { xsvType: "tsv" })
+		save("linker.parquet")
 
 	// Every designed nt entry by known key; the same sequence listed twice is one entry.
 	designedNtKeyed := func(id) {
@@ -103,7 +103,7 @@ self.body(func(inputs) {
 
 	sequences := undefined
 	if inputs.sequenceFrom == "properties" {
-		sequences = tsv(inputs.sequenceFile, "sequences").
+		sequences = wf.frame({ file: inputs.sequenceFile, xsvType: "parquet" }, { id: "sequences" }).
 			select(pt.col("variantKey"), pt.col("sequence")).
 			join(links.select(pt.col("knownKey"), pt.col("variantKey")), { how: "inner", on: ["variantKey"] }).
 			groupBy("knownKey").
@@ -119,7 +119,7 @@ self.body(func(inputs) {
 		join(labels, { how: "left", on: ["knownKey"] }).
 		join(sequences, { how: "left", on: ["knownKey"] }).
 		select(knownSelect()...).
-		save("known.tsv", { xsvType: "tsv" })
+		save("known.parquet")
 
 	result := {
 		knownNtAll: smart.createNullResource(),
@@ -132,7 +132,7 @@ self.body(func(inputs) {
 		designedNtKeyed("designedAll").
 			join(totals, { how: "left", on: ["knownKey"] }).
 			select(knownSelect()...).
-			save("knownNtAll.tsv", { xsvType: "tsv" })
+			save("knownNtAll.parquet")
 	} else {
 		// Each designed nt entry and its translated aa group. mitool's `knownAaKey` joins the
 		// two designed tables; both sides are re-keyed with the hash of their sequence.
@@ -150,7 +150,7 @@ self.body(func(inputs) {
 			agg(pt.col("knownKeyAa").count().alias("_n"))
 		aaToNt.
 			select(pt.col("knownKeyAa"), pt.col("knownKeyNt"), pt.lit(1).alias("link")).
-			save("knownAaToNt.tsv", { xsvType: "tsv" })
+			save("knownAaToNt.parquet")
 
 		// Designed nt members per known aa, for the matched known aa only. aaToNt holds each
 		// pair once, so the member count is a row count.
@@ -163,18 +163,18 @@ self.body(func(inputs) {
 			agg(pt.col("knownKeyNt").count().alias("declaredMemberCount")).
 			select(pt.col("knownKeyAa").alias("knownKey"), pt.col("declaredMemberCount")).
 			join(matchedKeys, { how: "inner", on: ["knownKey"] }).
-			save("knownSynCount.tsv", { xsvType: "tsv" })
+			save("knownSynCount.parquet")
 		matchedKeys.save("matchedKeys.parquet")
 	}
 
 	run := wf.run()
-	result.linker = run.getFile("linker.tsv")
-	result.known = run.getFile("known.tsv")
+	result.linker = run.getFile("linker.parquet")
+	result.known = run.getFile("known.parquet")
 	if level == "nt" {
-		result.knownNtAll = run.getFile("knownNtAll.tsv")
+		result.knownNtAll = run.getFile("knownNtAll.parquet")
 	} else {
-		result.knownAaToNt = run.getFile("knownAaToNt.tsv")
-		result.knownSynCount = run.getFile("knownSynCount.tsv")
+		result.knownAaToNt = run.getFile("knownAaToNt.parquet")
+		result.knownSynCount = run.getFile("knownSynCount.parquet")
 		result.matchedKeys = run.getFile("matchedKeys.parquet")
 	}
 	return result

@@ -132,8 +132,8 @@ linkNtRows := func(ntKeys, opts) {
 	return ntKeys.filter(pt.lit(false))
 }
 
-// addNtBucket plans the nt job of one key bucket (rows by variantKey). Saves ntProperties.tsv
-// and, with exportNt, ntLabelIn.parquet and parentNt.tsv.
+// addNtBucket plans the nt job of one key bucket (rows by variantKey). Saves ntProperties.parquet
+// and, with exportNt, ntLabelIn.parquet and parentNt.parquet.
 addNtBucket := func(wf, maps, sampleKeys, keep, opts) {
 	ntAbFrames := loadFrames(wf, maps.ntab, sampleKeys, "ntab", "variantKey", keep)
 	ntKeys := concatF(loadFrames(wf, maps.ntk, sampleKeys, "ntk", "variantKey", keep))
@@ -194,7 +194,7 @@ addNtBucket := func(wf, maps, sampleKeys, keep, opts) {
 			).alias("isProductive")
 		)
 	ntRows := withSeqHash(totals(ntAbFrames, opts.hasUmi).join(ntMeta, { how: "left", on: ["variantKey"] }))
-	ntRows.select(ntSelect...).save("ntProperties.tsv", { xsvType: "tsv" })
+	ntRows.select(ntSelect...).save("ntProperties.parquet")
 
 	// The nt labels and parent→nt reference the nt variant axis, so they follow exportNt.
 	if opts.exportNt {
@@ -205,12 +205,12 @@ addNtBucket := func(wf, maps, sampleKeys, keep, opts) {
 				pt.col("variantKey").alias("ntKey")
 			),
 			["parentId", "ntKey"]
-		).save("parentNt.tsv", { xsvType: "tsv" })
+		).save("parentNt.parquet")
 	}
 }
 
-// addAaBucket plans the aa job of one key bucket (rows by aa key). Saves aaProperties.tsv,
-// aaLabelIn.parquet, parentAa.tsv and, with exportNt, ntToAa.tsv.
+// addAaBucket plans the aa job of one key bucket (rows by aa key). Saves aaProperties.parquet,
+// aaLabelIn.parquet, parentAa.parquet and, with exportNt, ntToAa.parquet.
 addAaBucket := func(wf, maps, sampleKeys, keep, opts) {
 	// The aa abundance parquet holds the aa key in its variantKey column.
 	aaAbFrames := loadFrames(wf, maps.aaab, sampleKeys, "aaab", "variantKey", keep)
@@ -279,7 +279,7 @@ addAaBucket := func(wf, maps, sampleKeys, keep, opts) {
 		select(aaMetaSelect...)
 	aaRows := withSeqHash(totals(aaAbFrames, opts.hasUmi).join(aaMeta, { how: "left", on: ["variantKey"] }))
 	aaRows.select(pt.col("variantKey"), pt.col("_seqHash")).save("aaLabelIn.parquet", { xsvType: "parquet" })
-	aaRows.select(aaSelect...).save("aaProperties.tsv", { xsvType: "tsv" })
+	aaRows.select(aaSelect...).save("aaProperties.parquet")
 
 	// Under export-only-matched the aa linker keeps only rows with a knownAaKey.
 	linkAa := opts.exportOnlyKnown ? aaKeys.filter(nonEmpty("knownAaKey")) : aaKeys
@@ -289,7 +289,7 @@ addAaBucket := func(wf, maps, sampleKeys, keep, opts) {
 			pt.col("aaVariantKey").alias("aaKey")
 		),
 		["parentId", "aaKey"]
-	).save("parentAa.tsv", { xsvType: "tsv" })
+	).save("parentAa.parquet")
 
 	// nt→aa references the nt variant axis, so it follows exportNt.
 	if opts.exportNt {
@@ -299,13 +299,13 @@ addAaBucket := func(wf, maps, sampleKeys, keep, opts) {
 				pt.col("variantKey").alias("ntKey")
 			),
 			["aaKey", "ntKey"]
-		).save("ntToAa.tsv", { xsvType: "tsv" })
+		).save("ntToAa.parquet")
 	}
 }
 
 // addLabels plans one label job: the rows of every bucket's label input whose label prefix is
 // in this label bucket (`keep(col)` on the hash column). Every hash of a prefix is in one
-// label bucket, so the rank within the prefix is complete. Saves labels.tsv
+// label bucket, so the rank within the prefix is complete. Saves labels.parquet
 // (variantKey, variantLabel).
 addLabels := func(wf, labelInFiles, keep) {
 	frames := []
@@ -317,17 +317,17 @@ addLabels := func(wf, labelInFiles, keep) {
 	}
 	variantLabel.addVariantLabelColumnsPt(concatF(frames), "_seqHash", "variantLabel", pt).
 		select(pt.col("variantKey"), pt.col("variantLabel")).
-		save("labels.tsv", { xsvType: "tsv" })
+		save("labels.parquet")
 }
 
-// addConcat plans one concat job over TSV parts of one table. Values pass through as strings.
-// Saves out.tsv.
-addConcat := func(wf, tsvFiles) {
+// addConcat plans one concat job over the parquet parts of one table. The parts come from
+// one plan, so they share a schema. Saves out.parquet.
+addConcat := func(wf, files) {
 	frames := []
-	for f in tsvFiles {
-		frames = append(frames, wf.frame(f, { xsvType: "tsv", inferSchema: false }))
+	for f in files {
+		frames = append(frames, wf.frame(f, { xsvType: "parquet" }))
 	}
-	concatF(frames).save("out.tsv", { xsvType: "tsv" })
+	concatF(frames).save("out.parquet")
 }
 
 export {

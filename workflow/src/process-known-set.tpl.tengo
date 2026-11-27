@@ -58,7 +58,7 @@ self.body(func(inputs) {
 		groupBy("knownKey").
 		agg(aggs...)
 
-	assignedKeys := wf.frame({ file: inputs.assignedKeysFile, xsvType: "tsv" }, { id: "assigned" }).
+	assignedKeys := wf.frame({ file: inputs.assignedKeysFile, xsvType: "parquet" }, { id: "assigned" }).
 		select(pt.col("knownKey")).
 		groupBy("knownKey").
 		agg(pt.col("knownKey").first().alias("_present"))

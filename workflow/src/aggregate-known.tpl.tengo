@@ -3,12 +3,12 @@
 // Assignment runs at budget 0 (exact match), so an ASSIGNED variant's own sequence is the
 // matched known sequence, and the known-variant key is the hash of that sequence.
 //
-//   knownLinkerNt.tsv / knownLinkerAa.tsv  [knownVariantKey, variantKey] -> 1
-//   ntDistance.tsv / aaDistance.tsv        [variantKey] -> mutations to the nearest known entry
-//   knownNt.tsv / knownAa.tsv              [knownVariantKey] -> id, sequence, totals over samples
-//   knownNtAll.tsv                         every designed nt entry, totals where detected
-//   knownAaToNt.tsv, knownSynCount.tsv     from the designed tables
-//   knownConvergence.tsv                   [knownVariantKey(aa)] -> mean synonymous spread
+//   knownLinkerNt.parquet / knownLinkerAa.parquet  [knownVariantKey, variantKey] -> 1
+//   ntDistance.parquet / aaDistance.parquet        [variantKey] -> mutations to the nearest known entry
+//   knownNt.parquet / knownAa.parquet              [knownVariantKey] -> id, sequence, totals over samples
+//   knownNtAll.parquet                         every designed nt entry, totals where detected
+//   knownAaToNt.parquet, knownSynCount.parquet     from the designed tables
+//   knownConvergence.parquet                   [knownVariantKey(aa)] -> mean synonymous spread
 //
 // No job holds rows in proportion to the sample count times a table's rows. Three kinds of job:
 //
@@ -104,7 +104,7 @@ self.body(func(inputs) {
 		}
 		wf := aggSizing.applyComputed(pt.workflow(), buckets.flatJobBytes(aggMemGB))
 		variantAggregate.addConcat(wf, files)
-		return wf.run().getFile("out.tsv")
+		return wf.run().getFile("out.parquet")
 	}
 
 	// One template per bucket job; see known-bucket.

@@ -74,10 +74,10 @@ self.body(func(inputs) {
 			groupBy(keyCol).
 			agg(pt.col(inputs.distanceCol).cast("Int").first().alias("distance")).
 			select(pt.col(keyCol).alias("variantKey"), pt.col("distance")).
-			save("distance.tsv", { xsvType: "tsv" })
+			save("distance.parquet")
 		run := wf.run()
 		result.links = run.getFile("links.parquet")
-		result.distance = run.getFile("distance.tsv")
+		result.distance = run.getFile("distance.parquet")
 		return result
 	}
 
@@ -107,8 +107,8 @@ self.body(func(inputs) {
 				pt.col("cv").cast("Double").mean().alias("convCV")
 			).
 			select(pt.col("knownKey"), pt.col("convStdDev"), pt.col("convCV")).
-			save("convergence.tsv", { xsvType: "tsv" })
-		result.out = wf.run().getFile("convergence.tsv")
+			save("convergence.parquet")
+		result.out = wf.run().getFile("convergence.parquet")
 	}
 	return result
 })

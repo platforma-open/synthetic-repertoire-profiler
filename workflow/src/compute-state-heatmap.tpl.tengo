@@ -4,7 +4,7 @@
 // Reads the per-sample composition files that each sample's job already wrote
 // ([parentId, position, state] -> readCount, …) and sums them over samples:
 //
-//   stateHeatmap.tsv   [parentId, position, state] -> readCount, frequency
+//   stateHeatmap.parquet   [parentId, position, state] -> readCount, frequency
 //                       (+ moleculeCount, moleculeFrequency on a UMI run)
 //
 // `frequency` is recomputed from the summed counts over the (parentId, position)
@@ -73,11 +73,11 @@ self.body(func(inputs) {
 	if hasUmi {
 		freqCols = append(freqCols, freqOf("moleculeCount", "moleculeFrequency"))
 	}
-	cells.withColumns(freqCols...).save("stateHeatmap.tsv", { xsvType: "tsv" })
+	cells.withColumns(freqCols...).save("stateHeatmap.parquet")
 
 	result := wf.run()
 
 	return {
-		stateHeatmap: result.getFile("stateHeatmap.tsv")
+		stateHeatmap: result.getFile("stateHeatmap.parquet")
 	}
 })
