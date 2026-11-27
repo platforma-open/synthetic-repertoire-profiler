@@ -21,7 +21,7 @@ self.body(func(inputs) {
 	ll.assert(len(pids) > 0, "byParent must name at least one parent")
 
 	// A handful of parents and one row each — the smallest queue is the right home.
-	wf := pt.workflow().
+	wf := pt.workflow().name("ptabler parent subregions").
 		inLightQueue()
 
 	// inferSchema:false → parentId reads as String, matching the .eq() comparisons below.

@@ -1,313 +1,225 @@
-// Known-set overlay aggregation (ephemeral) — only when a known set is given.
+// Known-set overlay aggregation (ephemeral), only when a known set is given.
 //
-// v1 assignment runs at budget 0 (exact match), so an ASSIGNED variant's own
-// sequence IS the matched known sequence. We therefore derive the known-variant
-// key directly as a hash of the matched variant's sequence (no need to read /
-// translate the known TSV — that is needed only for unmatched designed entries +
-// metadata, handled separately). knownVariantId is the ID mitool emits.
+// Assignment runs at budget 0 (exact match), so an ASSIGNED variant's own sequence is the
+// matched known sequence, and the known-variant key is the hash of that sequence.
 //
-// Emits, from the per-sample variants/aa-variants TSVs:
-//   knownLinkerNt.tsv [knownVariantKey(nt), variantKey(nt)] -> 1
-//   knownLinkerAa.tsv [knownVariantKey(aa), variantKey(aa)] -> 1
-//   ntDistance.tsv    [variantKey(nt)]  -> nMutationsToKnown
-//   aaDistance.tsv    [variantKey(aa)]  -> aaMutationsToKnown
-//   knownNt.tsv       [knownVariantKey(nt)] -> knownVariantId
-//   knownAa.tsv       [knownVariantKey(aa)] -> knownVariantId
+//   knownLinkerNt.parquet / knownLinkerAa.parquet  [knownVariantKey, variantKey] -> 1
+//   ntDistance.parquet / aaDistance.parquet        [variantKey] -> mutations to the nearest known entry
+//   knownNt.parquet / knownAa.parquet              [knownVariantKey] -> id, sequence, totals over samples
+//   knownNtAll.parquet                         every designed nt entry, totals where detected
+//   knownAaToNt.parquet, knownSynCount.parquet     from the designed tables
+//   knownConvergence.parquet                   [knownVariantKey(aa)] -> mean synonymous spread
+//
+// No job holds rows in proportion to the sample count times a table's rows. Three kinds of job:
+//
+// The bucket jobs are one template each (known-bucket).
+//
+//   variant-key jobs   per level, K buckets on the variant key: read every sample's known-keys
+//                      file (downstream.tpl; no sequence column) and write the bucket's
+//                      (known key, variant key, id) links and its distance rows.
+//   known-key jobs     K buckets on the known key: sum the per-sample known abundance tables
+//                      into totals, and average the per-sample convergence tables, after an
+//                      inner join with the bucket's matched aa keys (one file, from the aa
+//                      finish job).
+//   finish jobs        finish-known.tpl, one per level: hold the links and totals, one row per
+//                      matched variant, and take each sequence from the property table of the
+//                      variant aggregate.
+//
+// Every group is keyed by its job's bucket key, so the bucket parts concatenate to the full
+// tables. The nt jobs run only with an nt known set; their outputs are null resources without.
+// No trailing sort: xsv.importFile sorts by axes.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 pt := import("@platforma-sdk/workflow-tengo:pt")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+render := import("@platforma-sdk/workflow-tengo:render")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+feats := import("@platforma-sdk/workflow-tengo:feats")
+units := import("@platforma-sdk/workflow-tengo:units")
 aggSizing := import(":aggregate-sizing")
-json := import("json")
+buckets := import(":aggregate-buckets")
+variantAggregate := import(":variant-aggregate")
+
+finishKnownTpl := assets.importTemplate(":finish-known")
+knownBucketTpl := assets.importTemplate(":known-bucket")
 
 self.defineOutputs("knownLinkerNt", "knownLinkerAa", "ntDistance", "aaDistance", "knownNt", "knownAa", "knownAaToNt", "knownSynCount", "knownConvergence", "knownNtAll")
 
 self.awaitState("InputsLocked")
-self.awaitState("variantsTsvData", "ResourceReady")
-self.awaitState("aaVariantsTsvData", "ResourceReady")
+self.awaitState("ntKnownKeysData", "ResourceReady")
+self.awaitState("aaKnownKeysData", "ResourceReady")
+self.awaitState("knownNtAbundanceData", "ResourceReady")
+self.awaitState("knownAaAbundanceData", "ResourceReady")
+self.awaitState("aaConvergenceData", "ResourceReady")
 self.awaitState("knownDesignedNtData", "ResourceReady")
 self.awaitState("knownDesignedAaData", "ResourceReady")
-self.awaitState("aaConvergenceData", "ResourceReady")
+
+// Bytes per sample assumed on a backend without blob sizes: 1M designed entries, 0.4M variants
+// per sample.
+EST_KEYS_SAMPLE_BYTES := 6 * units.MiB
+EST_TOTALS_SAMPLE_BYTES := 7 * units.MiB
+EST_CONVERGENCE_SAMPLE_BYTES := 14 * units.MiB
 
 self.body(func(inputs) {
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
-
-	// Export-only-matched: the distance-to-known columns are variant-axis keyed and
-	// part of the exported `variants` frame, so under the filter they are restricted
-	// to matched variants (nt: ASSIGNED; aa: has knownAaKey) instead of all variants
-	// carrying a distance (which includes AMBIGUOUS near-misses). Everything else
-	// this template emits (known tables, linkers, unmatched designed) is inherently
-	// keyed on the known axis / already ASSIGNED-only, so it is unaffected.
+	hasNtKnown := !is_undefined(inputs.hasNtKnown) && inputs.hasNtKnown
+	// Under export-only-matched the distance tables keep only the matched variants, the ones
+	// the export keeps.
 	exportOnlyKnown := !is_undefined(inputs.exportOnlyKnown) && inputs.exportOnlyKnown
-	// The per-sample TSVs carry moleculeCount only on a UMI run.
 	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
-	abundAggs := func(...head) {
-		// head first, then the abundance columns — bound here rather than concatenated at
-		// the call site, so the spread never has to bind tighter than `+`.
-		aggs := []
-		for h in head { aggs = append(aggs, h) }
-		aggs = append(aggs,
-			pt.col("readCount").cast("Long").sum().alias("readCountTotal"),
-			pt.col("sampleId").nUnique().alias("sampleCount"))
-		if hasUmi {
-			aggs = append(aggs, pt.col("moleculeCount").cast("Long").sum().alias("moleculeCountTotal"))
-		}
-		return aggs
-	}
-	abundSelect := func(...head) {
-		cols := []
-		for h in head { cols = append(cols, h) }
-		if hasUmi {
-			cols = append(cols, pt.col("moleculeCountTotal"))
-		}
-		return append(cols, pt.col("readCountTotal"), pt.col("sampleCount"))
-	}
+	aggMemGB := aggSizing.settingFor(inputs.aggMemGB)
 
-	// Tags each row with its sampleId (from the resource-map key) so the known
-	// table can count samples + sum reads across the run.
-	loadConcatX := func(rmData, idPrefix, xsvType) {
-		frames := []
-		rmMap := rmData.inputs()
-		for sKey in maps.getKeys(rmMap) {
-			sampleId := json.decode(sKey)[0]
-			opts := { id: idPrefix + "_" + string(len(frames)) }
-			// Disable per-file type inference on TSV reads so every sample's frame
-			// shares an identical all-String schema. An empty per-sample TSV (header
-			// only) otherwise infers all columns as String while a populated one
-			// infers numeric columns as Int64, and the concat rejects the mismatch.
-			// Every numeric column consumed below is cast explicitly, so all-String
-			// reads are safe. Parquet keeps its embedded schema.
-			if xsvType == "tsv" {
-				opts.inferSchema = false
+	rm := {
+		ntKeys: inputs.ntKnownKeysData.inputs(),
+		aaKeys: inputs.aaKnownKeysData.inputs(),
+		ntTotals: inputs.knownNtAbundanceData.inputs(),
+		aaTotals: inputs.knownAaAbundanceData.inputs(),
+		convergence: inputs.aaConvergenceData.inputs(),
+		designedNt: inputs.knownDesignedNtData.inputs(),
+		designedAa: inputs.knownDesignedAaData.inputs()
+	}
+	sampleKeys := maps.getKeys(rm.aaKeys)
+	samples := len(sampleKeys)
+	ll.assert(samples > 0, "no samples to aggregate")
+
+	// planFor chooses the bucket count of the jobs reading the per-sample map `name`.
+	planFor := func(name, estSampleBytes) {
+		totalBytes := undefined
+		if feats.hasBlobSize {
+			totalBytes = 0
+			for sKey in sampleKeys {
+				ll.assert(!is_undefined(rm[name][sKey]), "no %v file for sample %v", name, sKey)
+				totalBytes += ll.getBlobSize(rm[name][sKey].getValue().id)
 			}
-			frames = append(frames, wf.frame({
-				file: rmMap[sKey],
-				xsvType: xsvType
-			}, opts).withColumns(pt.lit(sampleId).alias("sampleId")))
 		}
-		ll.assert(len(frames) > 0, "no frames for " + idPrefix)
-		if len(frames) == 1 {
-			return frames[0]
+		p := buckets.plan(totalBytes, samples, inputs.aggBuckets, estSampleBytes)
+		ll.print("aggregate-known plan: " + name + " k=" + string(p.k) + " totalBytes=" + string(p.totalBytes))
+		return p
+	}
+
+	combine := func(files) {
+		if len(files) == 1 {
+			return files[0]
 		}
-		return pt.concat(frames)
-	}
-	loadConcat := func(rmData, idPrefix) {
-		return loadConcatX(rmData, idPrefix, "tsv")
-	}
-
-	nonEmpty := func(col) {
-		return pt.col(col).cast("String").fillNull("").strLenChars().gt(pt.lit(0))
-	}
-	seqHash := func(col) {
-		return pt.col(col).hash("sha256", "base64_alphanumeric", 120)
+		wf := aggSizing.applyComputed(pt.workflow().name("ptabler known concat"), buckets.flatJobBytes(aggMemGB))
+		variantAggregate.addConcat(wf, files)
+		return wf.run().getFile("out.parquet")
 	}
 
-	vdf := loadConcat(inputs.variantsTsvData, "ntv")
-	adf := loadConcat(inputs.aaVariantsTsvData, "aav")
-
-	// --- nt overlay (ASSIGNED rows; budget 0 → variant seq == known seq) ---
-	ntAssigned := vdf.
-		filter(pt.col("assignStatus").cast("String").eq("ASSIGNED")).
-		withColumns(seqHash("ntSequence").alias("knownKey"))
-
-	ntAssigned.
-		groupBy("knownKey", "variantKey").
-		agg(pt.col("variantKey").count().alias("_n")).
-		select(
-			pt.col("knownKey"),
-			pt.col("variantKey").alias("ntKey"),
-			pt.lit(1).alias("link")
-		).
-		sort(["knownKey", "ntKey"]).save("knownLinkerNt.tsv", { xsvType: "tsv" })
-
-	// known nt table: per known entry — id (label), sequence, linked-variant
-	// abundance (budget-0 exact match ⇒ the assigned variant IS the known one).
-	ntAssigned.
-		groupBy("knownKey").
-		agg(abundAggs(
-			pt.col("knownNtKey").cast("String").first().alias("label"),
-			pt.col("ntSequence").first().alias("sequence")
-		)...).
-		select(abundSelect(
-			pt.col("knownKey"),
-			pt.col("label"),
-			pt.col("sequence")
-		)...).
-		sort(["knownKey"]).save("knownNt.tsv", { xsvType: "tsv" })
-
-	// nt distance-to-nearest (ASSIGNED + AMBIGUOUS carry a distance). Under the
-	// export-only-matched filter, keep only ASSIGNED (the exported nt variants).
-	ntDistFilter := nonEmpty("nMutationsToKnown")
-	if exportOnlyKnown {
-		ntDistFilter = pt.col("assignStatus").cast("String").eq("ASSIGNED")
+	// One template per bucket job; see known-bucket.
+	data := {
+		ntKeys: inputs.ntKnownKeysData,
+		aaKeys: inputs.aaKnownKeysData,
+		ntTotals: inputs.knownNtAbundanceData,
+		aaTotals: inputs.knownAaAbundanceData,
+		convergence: inputs.aaConvergenceData
 	}
-	vdf.
-		filter(ntDistFilter).
-		groupBy("variantKey").
-		agg(pt.col("nMutationsToKnown").cast("Int").first().alias("distance")).
-		select(pt.col("variantKey"), pt.col("distance")).
-		sort(["variantKey"]).save("ntDistance.tsv", { xsvType: "tsv" })
 
-	// --- aa overlay ---
-	// aa metadata, one row per assigned aa variant: knownKey = hash(aaSequence),
-	// label = the assigned aa-known ID.
-	aaMeta := adf.
-		filter(nonEmpty("knownAaKey")).
-		groupBy("aaVariantKey").
-		agg(
-			pt.col("knownAaKey").cast("String").first().alias("label"),
-			pt.col("aaSequence").first().alias("sequence")
-		).
-		withColumns(seqHash("sequence").alias("knownKey"))
-
-	aaMeta.
-		select(
-			pt.col("knownKey"),
-			pt.col("aaVariantKey").alias("aaKey"),
-			pt.lit(1).alias("link")
-		).
-		sort(["knownKey", "aaKey"]).save("knownLinkerAa.tsv", { xsvType: "tsv" })
-
-	// known aa table with abundance. aa-variants.tsv has no readCount, so the
-	// abundance is the summed reads of the nt members (variants.tsv) of each
-	// assigned aa variant — joined nt→aa on aaVariantKey.
-	// Keep every column abundAggs reads — the projection is the only place they can be lost.
-	aaMembers := [
-		pt.col("aaVariantKey"),
-		pt.col("readCount").cast("Long").alias("readCount"),
-		pt.col("sampleId")
-	]
-	if hasUmi {
-		aaMembers = append(aaMembers, pt.col("moleculeCount").cast("Long").alias("moleculeCount"))
+	// variantKeyJobs runs the variant-key jobs of one level. `matchedBy` names how a row shows
+	// that it carries a known key; `distanceCol` holds the distance.
+	variantKeyJobs := func(name, keyCol, idCol, matchedBy, distanceCol) {
+		p := planFor(name, EST_KEYS_SAMPLE_BYTES)
+		request := buckets.bucketJobBytes(samples, p.totalBytes, p.k, aggMemGB)
+		links := {}
+		distances := []
+		for b, prefixes in buckets.keyBucketPrefixes(p.k) {
+			run := render.createEphemeral(knownBucketTpl, {
+				kind: "links",
+				data: data[name],
+				requestBytes: request,
+				prefixes: prefixes,
+				catchAll: b == 0,
+				keyCol: keyCol,
+				idCol: idCol,
+				matchedBy: matchedBy,
+				distanceCol: distanceCol,
+				exportOnlyKnown: exportOnlyKnown
+			})
+			links[buckets.bucketName(b)] = run.output("links")
+			distances = append(distances, run.output("distance"))
+		}
+		return { links: links, distance: combine(distances) }
 	}
-	vdf.
-		select(aaMembers...).
-		join(aaMeta, { how: "inner", on: ["aaVariantKey"] }).
-		groupBy("knownKey").
-		agg(abundAggs(
-			pt.col("label").first().alias("label"),
-			pt.col("sequence").first().alias("sequence")
-		)...).
-		select(abundSelect(
-			pt.col("knownKey"),
-			pt.col("label"),
-			pt.col("sequence")
-		)...).
-		sort(["knownKey"]).save("knownAa.tsv", { xsvType: "tsv" })
 
-	// aa distance-to-nearest. Under the export-only-matched filter, keep only
-	// variants carrying a knownAaKey (the exported aa variants).
-	aaDistFilter := nonEmpty("aaMutationsToKnown")
-	if exportOnlyKnown {
-		aaDistFilter = nonEmpty("knownAaKey")
+	// knownKeyJobs runs one job of `kind` per known-key bucket of the per-sample map `name` and
+	// returns the output of every job, by bucket name.
+	knownKeyJobs := func(name, estSampleBytes, kind, extra) {
+		p := planFor(name, estSampleBytes)
+		share := buckets.knownKeyShare(p.k)
+		request := buckets.shareJobBytes(samples, p.totalBytes, share.num, share.den, aggMemGB)
+		files := {}
+		for b, bucket in buckets.knownKeyBuckets(p.k) {
+			jobInputs := {
+				kind: kind,
+				data: data[name],
+				requestBytes: request,
+				first: bucket.first,
+				catchAll: b == 0
+			}
+			if !is_undefined(bucket.second) {
+				jobInputs.second = bucket.second
+			}
+			for k, v in extra {
+				jobInputs[k] = v
+			}
+			files[buckets.bucketName(b)] = render.createEphemeral(knownBucketTpl, jobInputs).output("out")
+		}
+		return files
 	}
-	adf.
-		filter(aaDistFilter).
-		groupBy("aaVariantKey").
-		agg(pt.col("aaMutationsToKnown").cast("Int").first().alias("distance")).
-		select(pt.col("aaVariantKey").alias("variantKey"), pt.col("distance")).
-		sort(["variantKey"]).save("aaDistance.tsv", { xsvType: "tsv" })
 
-	// --- knownAaToNt linker -------------------------------------------------
-	// From the DESIGNED export (the full designed set, incl. zero-read members),
-	// not the observed variants: each designed nt entry → its translated aa group.
-	// mitool's `knownAaKey` (its own VariantKey hash) bridges nt→aa; we re-key both
-	// sides with the block's hash(sequence) so the linker lands on the same nt/aa
-	// known axes as the rest of the overlay. Designed TSVs are sample-independent;
-	// loadConcat stacks every sample's copy, so we dedup.
-	designedNt := loadConcat(inputs.knownDesignedNtData, "dNt").
-		select(pt.col("ntSequence"), pt.col("knownAaKey"))
-	designedAa := loadConcat(inputs.knownDesignedAaData, "dAa").
-		select(pt.col("knownAaId").alias("knownAaKey"), pt.col("aaSequence"))
-
-	aaToNt := designedNt.
-		join(designedAa, { how: "inner", on: ["knownAaKey"] }).
-		withColumns(
-			seqHash("ntSequence").alias("knownKeyNt"),
-			seqHash("aaSequence").alias("knownKeyAa")
-		).
-		groupBy("knownKeyAa", "knownKeyNt").
-		agg(pt.col("knownKeyAa").count().alias("_n"))
-
-	// linker [knownKeyAa, knownKeyNt] -> 1
-	aaToNt.
-		select(pt.col("knownKeyAa"), pt.col("knownKeyNt"), pt.lit(1).alias("link")).
-		sort(["knownKeyAa", "knownKeyNt"]).
-		save("knownAaToNt.tsv", { xsvType: "tsv" })
-
-	// Assigned (observed) known-aa keys — restrict the per-known-aa count and
-	// convergence to these so they land only on entries already in the Known
-	// Variants (AA) table (no phantom rows for designed-but-unobserved aa).
-	assignedAaKeys := aaMeta.
-		groupBy("knownKey").
-		agg(pt.col("knownKey").first().alias("_a")).
-		select(pt.col("knownKey"))
-
-	// declared synonymous-member count per known aa (# of designed nt members),
-	// restricted to assigned known-aa.
-	aaToNt.
-		groupBy("knownKeyAa").
-		agg(pt.col("knownKeyNt").nUnique().alias("declaredMemberCount")).
-		select(pt.col("knownKeyAa").alias("knownKey"), pt.col("declaredMemberCount")).
-		join(assignedAaKeys, { how: "inner", on: ["knownKey"] }).
-		sort(["knownKey"]).
-		save("knownSynCount.tsv", { xsvType: "tsv" })
-
-	// Cross-sample convergence summary per known-aa: mean of the per-sample
-	// declared synonymous spread (SD/CV), restricted to assigned known-aa.
-	loadConcatX(inputs.aaConvergenceData, "conv", "parquet").
-		groupBy("knownKey").
-		agg(
-			pt.col("stdDev").cast("Double").mean().alias("convStdDev"),
-			pt.col("cv").cast("Double").mean().alias("convCV")
-		).
-		join(assignedAaKeys, { how: "inner", on: ["knownKey"] }).
-		select(pt.col("knownKey"), pt.col("convStdDev"), pt.col("convCV")).
-		sort(["knownKey"]).
-		save("knownConvergence.tsv", { xsvType: "tsv" })
-
-	// --- combined designed-nt table (block-local view) ----------------------
-	// EVERY designed nt entry (block key = hash(designed ntSequence)) with the
-	// matched abundance left-joined: detected entries carry readCountTotal +
-	// sampleCount, undetected (dropout) entries carry null (shown blank). This
-	// merges the former separate "Known Variants (NT)" and "Unmatched Designed
-	// (NT)" tables into one. The EXPORT overlay stays matched-only (knownNt.tsv).
-	designedNtKeyed := loadConcat(inputs.knownDesignedNtData, "dNtU").
-		select(pt.col("knownNtId"), pt.col("ntSequence")).
-		withColumns(seqHash("ntSequence").alias("knownKey")).
-		groupBy("knownKey").
-		agg(
-			pt.col("knownNtId").first().alias("label"),
-			pt.col("ntSequence").first().alias("sequence")
-		)
-	matchedNtAbund := ntAssigned.
-		groupBy("knownKey").
-		agg(
-			abundAggs()...
-		)
-	designedNtKeyed.
-		join(matchedNtAbund, { how: "left", on: ["knownKey"] }).
-		select(abundSelect(
-			pt.col("knownKey"),
-			pt.col("label"),
-			pt.col("sequence")
-		)...).
-		sort(["knownKey"]).
-		save("knownNtAll.tsv", { xsvType: "tsv" })
-
-	result := wf.run()
-
-	return {
-		knownLinkerNt: result.getFile("knownLinkerNt.tsv"),
-		knownLinkerAa: result.getFile("knownLinkerAa.tsv"),
-		ntDistance: result.getFile("ntDistance.tsv"),
-		aaDistance: result.getFile("aaDistance.tsv"),
-		knownNt: result.getFile("knownNt.tsv"),
-		knownAa: result.getFile("knownAa.tsv"),
-		knownAaToNt: result.getFile("knownAaToNt.tsv"),
-		knownSynCount: result.getFile("knownSynCount.tsv"),
-		knownConvergence: result.getFile("knownConvergence.tsv"),
-		knownNtAll: result.getFile("knownNtAll.tsv")
+	// Totals of one level over the samples.
+	totalsJobs := func(name) {
+		return knownKeyJobs(name, EST_TOTALS_SAMPLE_BYTES, "totals", { hasUmi: hasUmi })
 	}
+
+	finish := func(level, keys, totals, sequenceFile, sequenceFrom) {
+		return render.createEphemeral(finishKnownTpl, {
+			level: level,
+			aggMemGB: inputs.aggMemGB,
+			hasUmi: hasUmi,
+			links: smart.createMapResource(keys.links),
+			totals: smart.createMapResource(totals),
+			sequenceFile: sequenceFile,
+			sequenceFrom: sequenceFrom,
+			// The designed tables are the same in every sample, so one sample's copy is read.
+			designedNt: rm.designedNt[sampleKeys[0]],
+			designedAa: rm.designedAa[sampleKeys[0]]
+		})
+	}
+
+	aaKeys := variantKeyJobs("aaKeys", "aaVariantKey", "knownAaKey", "id", "aaMutationsToKnown")
+	aaFinish := finish("aa", aaKeys, totalsJobs("aaTotals"), inputs.aaProperties, "properties")
+
+	// Mean synonymous spread per known aa over the samples, for the matched known aa only.
+	convergence := knownKeyJobs("convergence", EST_CONVERGENCE_SAMPLE_BYTES, "convergence", {
+		matchedKeys: aaFinish.output("matchedKeys")
+	})
+
+	result := {
+		knownLinkerAa: aaFinish.output("linker"),
+		aaDistance: aaKeys.distance,
+		knownAa: aaFinish.output("known"),
+		knownAaToNt: aaFinish.output("knownAaToNt"),
+		knownSynCount: aaFinish.output("knownSynCount"),
+		knownConvergence: combine(maps.getValues(convergence)),
+		knownLinkerNt: smart.createNullResource(),
+		ntDistance: smart.createNullResource(),
+		knownNt: smart.createNullResource(),
+		knownNtAll: smart.createNullResource()
+	}
+	if hasNtKnown {
+		ntKeys := variantKeyJobs("ntKeys", "variantKey", "knownNtKey", "assignStatus", "nMutationsToKnown")
+		// Without the nt property table the nt sequence comes from the designed table: at
+		// budget 0 a detected entry's sequence is its designed one.
+		needNt := !is_undefined(inputs.needNt) && inputs.needNt
+		ntFinish := finish("nt", ntKeys, totalsJobs("ntTotals"),
+			needNt ? inputs.ntProperties : rm.designedNt[sampleKeys[0]],
+			needNt ? "properties" : "designed")
+		result.knownLinkerNt = ntFinish.output("linker")
+		result.ntDistance = ntKeys.distance
+		result.knownNt = ntFinish.output("known")
+		result.knownNtAll = ntFinish.output("knownNtAll")
+	}
+	return result
 })

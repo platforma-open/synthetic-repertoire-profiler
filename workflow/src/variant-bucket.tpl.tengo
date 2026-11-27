@@ -44,7 +44,7 @@ self.body(func(inputs) {
 		return buckets.keyPredicate(pt, col, inputs.prefixes, inputs.catchAll)
 	}
 
-	wf := aggSizing.applyComputed(pt.workflow(), inputs.requestBytes)
+	wf := aggSizing.applyComputed(pt.workflow().name("ptabler variant bucket " + level), inputs.requestBytes)
 	result := {
 		labelIn: smart.createNullResource(),
 		parent: smart.createNullResource(),
@@ -53,19 +53,19 @@ self.body(func(inputs) {
 	if level == "nt" {
 		variantAggregate.addNtBucket(wf, rm, sampleKeys, keep, opts)
 		run := wf.run()
-		result.properties = run.getFile("ntProperties.tsv")
+		result.properties = run.getFile("ntProperties.parquet")
 		if opts.exportNt {
 			result.labelIn = run.getFile("ntLabelIn.parquet")
-			result.parent = run.getFile("parentNt.tsv")
+			result.parent = run.getFile("parentNt.parquet")
 		}
 	} else {
 		variantAggregate.addAaBucket(wf, rm, sampleKeys, keep, opts)
 		run := wf.run()
-		result.properties = run.getFile("aaProperties.tsv")
+		result.properties = run.getFile("aaProperties.parquet")
 		result.labelIn = run.getFile("aaLabelIn.parquet")
-		result.parent = run.getFile("parentAa.tsv")
+		result.parent = run.getFile("parentAa.parquet")
 		if opts.exportNt {
-			result.ntToAa = run.getFile("ntToAa.tsv")
+			result.ntToAa = run.getFile("ntToAa.parquet")
 		}
 	}
 	return result

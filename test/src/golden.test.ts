@@ -29,6 +29,7 @@ const ASSETS = path.resolve(__dirname, "../assets/golden");
 const UPDATE = process.env.UPDATE_GOLDEN === "1";
 
 const PATTERN = "^*CTTGTAAGGCCAGCG(R1:N{110})\\^*CCAGACATCCATCGT(R2:N{111})";
+const UMI_PATTERN = "^*(UMI:N{10})CTTGTAAGGCCAGCG(R1:N{110})\\^*CCAGACATCCATCGT(R2:N{111})";
 // FR/CDR-like custom scheme; lengths sum to the 219-nt parent.
 const REGIONS = [
   { name: "FR1", length: 30 },
@@ -105,11 +106,25 @@ const SCENARIOS: Scenario[] = [
   { name: "known-aa-only", args: { ...KNOWN_AA, exportOnlyKnown: true }, knownAa: true },
   { name: "known-nt", args: { ...KNOWN_NT, exportNt: true }, knownNt: true },
   {
+    // Export-only-matched with an nt known set: the nt distance and abundance are filtered.
+    name: "known-nt-only",
+    args: { ...KNOWN_NT, exportNt: true, exportOnlyKnown: true },
+    knownNt: true,
+  },
+  {
     // 10-nt UMI before the R1 anchor; consensus needs 2 reads per molecule (default).
     name: "umi",
     args: {},
     fastqPrefix: "umi_",
-    tagPattern: "^*(UMI:N{10})CTTGTAAGGCCAGCG(R1:N{110})\\^*CCAGACATCCATCGT(R2:N{111})",
+    tagPattern: UMI_PATTERN,
+  },
+  {
+    // UMI run with an nt known set: the known tables carry molecule totals.
+    name: "known-nt-umi",
+    args: { ...KNOWN_NT, exportNt: true },
+    knownNt: true,
+    fastqPrefix: "umi_",
+    tagPattern: UMI_PATTERN,
   },
   {
     // s0 has no read that matches the tag pattern, and its id sorts first: the cross-sample
@@ -124,16 +139,17 @@ const SCENARIOS: Scenario[] = [
 ];
 
 const RUNS: (Scenario & { title: string })[] = SCENARIOS.map((s) => ({ ...s, title: s.name }));
-// Every scenario also runs at K=4, and `defaults` at K=256, where most buckets are empty.
+// Every scenario also runs at K=4. `defaults` runs at K=256, where most buckets are empty, and
+// `known-nt` at K=64, the smallest count where the known-key buckets split on two chars.
 // `title` is display only: each run compares against `<name>.json`.
 RUNS.push(...SCENARIOS.map((s) => ({ ...s, aggBuckets: 4, title: `${s.name} K=4` })));
-RUNS.push(
-  ...SCENARIOS.filter((s) => s.name === "defaults").map((s) => ({
-    ...s,
-    aggBuckets: 256,
-    title: `${s.name} K=256`,
-  })),
-);
+for (const [name, aggBuckets] of [
+  ["defaults", 256],
+  ["known-nt", 64],
+] as const) {
+  const s = SCENARIOS.find((x) => x.name === name)!;
+  RUNS.push({ ...s, aggBuckets, title: `${name} K=${aggBuckets}` });
+}
 
 const SAMPLES = ["s1", "s2", "s3"] as const;
 const sampleId = (s: string) => `GOLDEN${s.toUpperCase()}`.padEnd(24, "A");
@@ -147,12 +163,13 @@ type Golden = {
 
 // The frame outputs of the block under test that are part of the golden.
 const FRAME_OUTPUTS = ["stateHeatmapPf", "mutationHistogramPf"] as const;
-// Its table outputs that are not exported: the QC report, one row per sample.
-const TABLE_OUTPUTS = ["qcTable"] as const;
+// Its table outputs: the QC report, one row per sample, and the known-variant tables, which
+// exist only with the matching known set (stored as no columns otherwise).
+const TABLE_OUTPUTS = ["qcTable", "knownVariantsNtTable", "knownVariantsAaTable"] as const;
 
 blockTest.for(RUNS)(
   "golden $title: exports and frame outputs match their golden",
-  { timeout: 900_000 },
+  { timeout: 1_800_000 },
   async (scenario, { rawPrj, ml, helpers, tmpFolder, expect }) => {
     const EXPECTED = path.join(ASSETS, `${scenario.name}.json`);
     const sndId = await rawPrj.addBlock("Samples & Data", SamplesAndDataBlockPointer);
@@ -222,7 +239,7 @@ blockTest.for(RUNS)(
       },
     });
     await rawPrj.runBlock(apId);
-    const apDone = await helpers.awaitBlockDoneAndGetStableBlockState(apId, 600_000);
+    const apDone = await helpers.awaitBlockDoneAndGetStableBlockState(apId, 1_500_000);
     const apOutputs = wrapOutputs(apDone.outputs as Parameters<typeof wrapOutputs>[0]) as Record<
       string,
       unknown
@@ -256,8 +273,12 @@ blockTest.for(RUNS)(
       actual.outputs[name] = await readFrame(driver, handle as PFrameHandle, ids);
     }
     for (const name of TABLE_OUTPUTS) {
-      const handle = (apOutputs[name] as { fullTableHandle?: PTableHandle } | undefined)
-        ?.fullTableHandle;
+      const table = apOutputs[name] as { fullTableHandle?: PTableHandle } | undefined;
+      if (table === undefined && name !== "qcTable") {
+        actual.tables[name] = [];
+        continue;
+      }
+      const handle = table?.fullTableHandle;
       if (typeof handle !== "string") throw new Error(`block output ${name} has no table handle`);
       actual.tables[name] = await readTable(driver, handle, ids);
     }

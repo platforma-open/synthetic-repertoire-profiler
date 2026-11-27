@@ -17,7 +17,7 @@ self.awaitState("InputsLocked")
 self.awaitState("tableData", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+	wf := aggSizing.apply(pt.workflow().name("ptabler concat per-sample table"), inputs.aggMemGB)
 
 	rmMap := inputs.tableData.inputs()
 	frames := []

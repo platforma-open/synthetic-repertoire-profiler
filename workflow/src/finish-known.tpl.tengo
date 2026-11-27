@@ -1,0 +1,181 @@
+// Last stage of the known-set aggregate (ephemeral), one invocation per level; see
+// aggregate-known.
+//
+// `links` holds one parquet per variant-key bucket, [knownKey, variantKey, label], one row per
+// matched variant; `totals` one per known-key bucket, [knownKey] -> totals over samples. The
+// job holds both, and they follow the designed set, not the sample count.
+//
+// A known entry's sequence is the sequence of its matched variant (budget 0). With
+// sequenceFrom "properties", `sequenceFile` is the property table of the variant aggregate,
+// [variantKey, sequence, ...], and streams through a join with the links. With "designed" it
+// is the designed nt table.
+//
+// level "aa" also writes the tables built from the designed set alone and the list of the
+// matched known keys; level "nt" writes the table of every designed nt entry. The outputs of the other level are null resources.
+// No trailing sort: xsv.importFile sorts by axes.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+feats := import("@platforma-sdk/workflow-tengo:feats")
+aggSizing := import(":aggregate-sizing")
+
+self.defineOutputs("linker", "known", "knownNtAll", "knownAaToNt", "knownSynCount", "matchedKeys")
+
+self.awaitState("InputsLocked")
+self.awaitState("links", "ResourceReady")
+self.awaitState("links", { wildcard: "*" }, "ResourceReady")
+self.awaitState("totals", "ResourceReady")
+self.awaitState("totals", { wildcard: "*" }, "ResourceReady")
+self.awaitState("sequenceFile", "ResourceReady")
+self.awaitState("designedNt", "ResourceReady")
+self.awaitState("designedAa", "ResourceReady")
+
+seqHash := func(col) {
+	return pt.col(col).hash("sha256", "base64_alphanumeric", 120)
+}
+
+self.body(func(inputs) {
+	level := inputs.level
+	ll.assert(level == "nt" || level == "aa", "unknown level %v", level)
+	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
+	// A map resource arrives as a plain map of its values.
+	linkMap := inputs.links
+	totalsMap := inputs.totals
+
+	heldBytes := undefined
+	designedBytes := undefined
+	if feats.hasBlobSize {
+		heldBytes = 0
+		for m in [linkMap, totalsMap] {
+			for name in maps.getKeys(m) {
+				heldBytes += ll.getBlobSize(m[name].id)
+			}
+		}
+		designedBytes = ll.getBlobSize(inputs.designedNt.id) + ll.getBlobSize(inputs.designedAa.id)
+	}
+	wf := aggSizing.applyComputed(pt.workflow().name("ptabler known finish " + level),
+		aggSizing.knownFinishRequestBytes(heldBytes, designedBytes, inputs.aggMemGB))
+
+	parts := func(m, idPrefix) {
+		frames := []
+		for name in maps.getKeys(m) {
+			frames = append(frames, wf.frame({
+				file: m[name],
+				xsvType: "parquet"
+			}, { id: idPrefix + "_" + name }))
+		}
+		ll.assert(len(frames) > 0, "no %v parts", idPrefix)
+		return len(frames) == 1 ? frames[0] : pt.concat(frames)
+	}
+	// inferSchema:false -> every column String, so an empty table reads like a populated one.
+	tsv := func(file, id) {
+		return wf.frame({ file: file, xsvType: "tsv" }, { id: id, inferSchema: false })
+	}
+	links := parts(linkMap, "links")
+	totals := parts(totalsMap, "totals")
+
+	knownSelect := func() {
+		cols := [pt.col("knownKey"), pt.col("label"), pt.col("sequence")]
+		if hasUmi {
+			cols = append(cols, pt.col("moleculeCountTotal"))
+		}
+		return append(cols, pt.col("readCountTotal"), pt.col("sampleCount"))
+	}
+
+	links.
+		select(pt.col("knownKey"), pt.col("variantKey").alias(level + "Key"), pt.lit(1).alias("link")).
+		save("linker.parquet")
+
+	// Every designed nt entry by known key; the same sequence listed twice is one entry.
+	designedNtKeyed := func(id) {
+		return tsv(inputs.designedNt, id).
+			select(pt.col("knownNtId"), pt.col("ntSequence")).
+			withColumns(seqHash("ntSequence").alias("knownKey")).
+			groupBy("knownKey").
+			agg(
+				pt.col("knownNtId").first().alias("label"),
+				pt.col("ntSequence").first().alias("sequence")
+			)
+	}
+
+	sequences := undefined
+	if inputs.sequenceFrom == "properties" {
+		sequences = wf.frame({ file: inputs.sequenceFile, xsvType: "parquet" }, { id: "sequences" }).
+			select(pt.col("variantKey"), pt.col("sequence")).
+			join(links.select(pt.col("knownKey"), pt.col("variantKey")), { how: "inner", on: ["variantKey"] }).
+			groupBy("knownKey").
+			agg(pt.col("sequence").first().alias("sequence"))
+	} else {
+		ll.assert(inputs.sequenceFrom == "designed", "unknown sequenceFrom %v", inputs.sequenceFrom)
+		sequences = designedNtKeyed("sequences").select(pt.col("knownKey"), pt.col("sequence"))
+	}
+	labels := links.groupBy("knownKey").agg(pt.col("label").first().alias("label"))
+
+	// One row per known entry with reads: id, sequence and the totals over samples.
+	totals.
+		join(labels, { how: "left", on: ["knownKey"] }).
+		join(sequences, { how: "left", on: ["knownKey"] }).
+		select(knownSelect()...).
+		save("known.parquet")
+
+	result := {
+		knownNtAll: smart.createNullResource(),
+		knownAaToNt: smart.createNullResource(),
+		knownSynCount: smart.createNullResource(),
+		matchedKeys: smart.createNullResource()
+	}
+	if level == "nt" {
+		// Every designed nt entry, with the totals where it was detected and nulls elsewhere.
+		designedNtKeyed("designedAll").
+			join(totals, { how: "left", on: ["knownKey"] }).
+			select(knownSelect()...).
+			save("knownNtAll.parquet")
+	} else {
+		// Each designed nt entry and its translated aa group. mitool's `knownAaKey` joins the
+		// two designed tables; both sides are re-keyed with the hash of their sequence.
+		aaToNt := tsv(inputs.designedNt, "designedNt").
+			select(pt.col("ntSequence"), pt.col("knownAaKey")).
+			join(
+				tsv(inputs.designedAa, "designedAa").select(pt.col("knownAaId").alias("knownAaKey"), pt.col("aaSequence")),
+				{ how: "inner", on: ["knownAaKey"] }
+			).
+			withColumns(
+				seqHash("ntSequence").alias("knownKeyNt"),
+				seqHash("aaSequence").alias("knownKeyAa")
+			).
+			groupBy("knownKeyAa", "knownKeyNt").
+			agg(pt.col("knownKeyAa").count().alias("_n"))
+		aaToNt.
+			select(pt.col("knownKeyAa"), pt.col("knownKeyNt"), pt.lit(1).alias("link")).
+			save("knownAaToNt.parquet")
+
+		// Designed nt members per known aa, for the matched known aa only. aaToNt holds each
+		// pair once, so the member count is a row count.
+		matchedKeys := links.
+			groupBy("knownKey").
+			agg(pt.col("knownKey").count().alias("_n")).
+			select(pt.col("knownKey"))
+		aaToNt.
+			groupBy("knownKeyAa").
+			agg(pt.col("knownKeyNt").count().alias("declaredMemberCount")).
+			select(pt.col("knownKeyAa").alias("knownKey"), pt.col("declaredMemberCount")).
+			join(matchedKeys, { how: "inner", on: ["knownKey"] }).
+			save("knownSynCount.parquet")
+		matchedKeys.save("matchedKeys.parquet")
+	}
+
+	run := wf.run()
+	result.linker = run.getFile("linker.parquet")
+	result.known = run.getFile("known.parquet")
+	if level == "nt" {
+		result.knownNtAll = run.getFile("knownNtAll.parquet")
+	} else {
+		result.knownAaToNt = run.getFile("knownAaToNt.parquet")
+		result.knownSynCount = run.getFile("knownSynCount.parquet")
+		result.matchedKeys = run.getFile("matchedKeys.parquet")
+	}
+	return result
+})

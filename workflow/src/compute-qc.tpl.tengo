@@ -13,7 +13,7 @@ self.awaitState("InputsLocked")
 self.awaitState("qcRowsData", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := pt.workflow().mem(2 * units.GiB).cpu(1)
+	wf := pt.workflow().name("ptabler qc").mem(2 * units.GiB).cpu(1)
 
 	rmMap := inputs.qcRowsData.inputs()
 	frames := []

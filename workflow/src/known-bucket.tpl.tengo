@@ -1,0 +1,114 @@
+// One bucket job of the known-set aggregate (ephemeral); see aggregate-known.
+//
+// A template of its own per job: the backend limits the objects one template run may
+// allocate, and the job's plan lists every sample's files.
+//
+// `data` is the per-sample map the job reads. kind:
+//   "links"        a variant-key bucket (`prefixes`): writes the bucket's (known key, variant
+//                  key, id) links and its distance rows.
+//   "totals"       a known-key bucket (`first`, `second`): sums the per-sample known abundance
+//                  tables.
+//   "convergence"  a known-key bucket: averages the per-sample convergence tables over the
+//                  known aa keys listed in `matchedKeys`.
+// An output the job does not write is a null resource.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+aggSizing := import(":aggregate-sizing")
+buckets := import(":aggregate-buckets")
+
+self.defineOutputs("links", "distance", "out")
+
+self.awaitState("InputsLocked")
+self.awaitState("data", "ResourceReady")
+
+nonEmpty := func(col) {
+	return pt.col(col).cast("String").fillNull("").strLenChars().gt(pt.lit(0))
+}
+
+self.body(func(inputs) {
+	kind := inputs.kind
+	dataMap := inputs.data.inputs()
+	sampleKeys := maps.getKeys(dataMap)
+	wf := aggSizing.applyComputed(pt.workflow().name("ptabler known " + kind), inputs.requestBytes)
+
+	// Every sample's rows of the bucket.
+	rows := func(keep) {
+		frames := []
+		for idx, sKey in sampleKeys {
+			frames = append(frames, wf.frame({
+				file: dataMap[sKey],
+				xsvType: "parquet"
+			}, { id: "in_" + string(idx) }).filter(keep))
+		}
+		return len(frames) == 1 ? frames[0] : pt.concat(frames)
+	}
+
+	result := {
+		links: smart.createNullResource(),
+		distance: smart.createNullResource(),
+		out: smart.createNullResource()
+	}
+
+	if kind == "links" {
+		keyCol := inputs.keyCol
+		// The rows that carry a known key.
+		matched := inputs.matchedBy == "assignStatus" ?
+			pt.col("assignStatus").cast("String").eq("ASSIGNED") :
+			nonEmpty(inputs.idCol)
+		all := rows(buckets.keyPredicate(pt, keyCol, inputs.prefixes, inputs.catchAll))
+		all.filter(matched).
+			groupBy(keyCol).
+			agg(
+				pt.col("knownKey").first().alias("knownKey"),
+				pt.col(inputs.idCol).cast("String").first().alias("label")
+			).
+			select(pt.col("knownKey"), pt.col(keyCol).alias("variantKey"), pt.col("label")).
+			save("links.parquet")
+		// Under export-only-matched the distance table keeps only the matched variants, the
+		// ones the export keeps.
+		all.filter(inputs.exportOnlyKnown ? matched : nonEmpty(inputs.distanceCol)).
+			groupBy(keyCol).
+			agg(pt.col(inputs.distanceCol).cast("Int").first().alias("distance")).
+			select(pt.col(keyCol).alias("variantKey"), pt.col("distance")).
+			save("distance.parquet")
+		run := wf.run()
+		result.links = run.getFile("links.parquet")
+		result.distance = run.getFile("distance.parquet")
+		return result
+	}
+
+	keep := buckets.knownKeyPredicate(pt, "knownKey", { first: inputs.first, second: inputs.second }, inputs.catchAll)
+	if kind == "totals" {
+		// One row per known key the sample detected.
+		aggs := [
+			pt.col("knownVariantReadCount").cast("Long").sum().alias("readCountTotal"),
+			pt.col("knownVariantReadCount").count().alias("sampleCount")
+		]
+		if inputs.hasUmi {
+			aggs = append(aggs, pt.col("knownVariantMoleculeCount").cast("Long").sum().alias("moleculeCountTotal"))
+		}
+		rows(keep).groupBy("knownKey").agg(aggs...).save("totals.parquet")
+		result.out = wf.run().getFile("totals.parquet")
+	} else {
+		ll.assert(kind == "convergence", "unknown kind %v", kind)
+		matchedKeys := wf.frame({
+			file: inputs.matchedKeys,
+			xsvType: "parquet"
+		}, { id: "matchedKeys" }).filter(keep)
+		rows(keep).
+			join(matchedKeys, { how: "inner", on: ["knownKey"] }).
+			groupBy("knownKey").
+			agg(
+				pt.col("stdDev").cast("Double").mean().alias("convStdDev"),
+				pt.col("cv").cast("Double").mean().alias("convCV")
+			).
+			select(pt.col("knownKey"), pt.col("convStdDev"), pt.col("convCV")).
+			save("convergence.parquet")
+		result.out = wf.run().getFile("convergence.parquet")
+	}
+	return result
+})

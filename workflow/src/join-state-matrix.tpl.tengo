@@ -38,7 +38,7 @@ self.body(func(inputs) {
 			ownerBytes += ll.getBlobSize(ownMap[bKey].id)
 		}
 	}
-	wf := aggSizing.applyComputed(pt.workflow(),
+	wf := aggSizing.applyComputed(pt.workflow().name("ptabler state matrix join"),
 		aggSizing.matrixJoinRequestBytes(len(sampleKeys), ownerBytes, inputs.aggMemGB))
 
 	ownFrames := []
@@ -66,9 +66,9 @@ self.body(func(inputs) {
 	matrix.
 		join(owners, { how: "inner", on: ["variantKey", "parentId", "__owner"] }).
 		select(pt.col("variantKey"), pt.col("parentId"), pt.col("position"), pt.col("state")).
-		save("stateMatrix.tsv", { xsvType: "tsv" })
+		save("stateMatrix.parquet")
 
 	return {
-		stateMatrix: wf.run().getFile("stateMatrix.tsv")
+		stateMatrix: wf.run().getFile("stateMatrix.parquet")
 	}
 })

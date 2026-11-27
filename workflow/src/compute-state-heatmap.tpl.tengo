@@ -4,7 +4,7 @@
 // Reads the per-sample composition files that each sample's job already wrote
 // ([parentId, position, state] -> readCount, …) and sums them over samples:
 //
-//   stateHeatmap.tsv   [parentId, position, state] -> readCount, frequency
+//   stateHeatmap.parquet   [parentId, position, state] -> readCount, frequency
 //                       (+ moleculeCount, moleculeFrequency on a UMI run)
 //
 // `frequency` is recomputed from the summed counts over the (parentId, position)
@@ -26,7 +26,10 @@ self.awaitState("InputsLocked")
 self.awaitState("compositionData", "ResourceReady")
 
 self.body(func(inputs) {
-	wf := aggSizing.apply(pt.workflow(), inputs.aggMemGB)
+	// Sized by sample count (heatmap step) or by input, whichever is larger: the job holds
+	// every per-sample composition row, so a library of many parents outgrows the sample rule.
+	// The largest measured need is 37.8 bytes per input byte (1,000 parents).
+	wf := aggSizing.applyStepOrInput(pt.workflow().name("ptabler state heatmap"), "heatmap", inputs.samples, inputs.aggMemGB, 80)
 
 	hasUmi := !is_undefined(inputs.hasUmi) && inputs.hasUmi
 
@@ -70,11 +73,11 @@ self.body(func(inputs) {
 	if hasUmi {
 		freqCols = append(freqCols, freqOf("moleculeCount", "moleculeFrequency"))
 	}
-	cells.withColumns(freqCols...).save("stateHeatmap.tsv", { xsvType: "tsv" })
+	cells.withColumns(freqCols...).save("stateHeatmap.parquet")
 
 	result := wf.run()
 
 	return {
-		stateHeatmap: result.getFile("stateHeatmap.tsv")
+		stateHeatmap: result.getFile("stateHeatmap.parquet")
 	}
 })

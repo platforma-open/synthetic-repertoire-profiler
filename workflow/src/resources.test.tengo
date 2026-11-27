@@ -22,23 +22,63 @@ _ram := func(row, sizeBytes) {
 	return is_string(node) ? node : _evalSize(node, sizeBytes)
 }
 
-TestParseAndSortAreFlat := func() {
+TestParseIsFlat := func() {
 	test.isEqual("8GiB", _ram(rs.lookup("parse"), _gib(100)))
-	test.isEqual("8GiB", _ram(rs.lookup("sort"), _gib(100)))
 }
 
 TestAnalyzeIsSizedFromTheMic := func() {
-	// max(8, 4 + 9 x GiB), rounded up.
-	test.isEqual(_gib(8), _ram(rs.lookup("analyze"), _gib(1) / 4))
-	test.isEqual(_gib(9), _ram(rs.lookup("analyze"), _gib(1) / 2))
-	test.isEqual(_gib(31), _ram(rs.lookup("analyze"), _gib(3)))
-	test.isEqual(_gib(23), _ram(rs.lookup("analyze"), _gib(21) / 10))
-	test.isEqual(_gib(184), _ram(rs.lookup("analyze"), _gib(20)))
+	// max(12, 8 + 32 x GiB), rounded up.
+	test.isEqual(_gib(12), _ram(rs.lookup("analyze"), _gib(1) / 8))
+	test.isEqual(_gib(16), _ram(rs.lookup("analyze"), _gib(1) / 4))
+	test.isEqual(_gib(24), _ram(rs.lookup("analyze"), _gib(1) / 2))
+	test.isEqual(_gib(40), _ram(rs.lookup("analyze"), _gib(1)))
+	test.isEqual(_gib(104), _ram(rs.lookup("analyze"), _gib(3)))
+}
+
+// Analyze memory for a .mic and known-set files of the given sizes; 0 leaves a file out.
+_analyzeRam := func(micBytes, ntBytes, aaBytes) {
+	sizes := { "input.mic": micBytes, "known_nt.tsv": ntBytes, "known_aa.tsv": aaBytes }
+	inputs := {}
+	inputs[rs.INPUT_TAG] = ["input.mic"]
+	all := ["input.mic"]
+	if ntBytes > 0 {
+		inputs[rs.KNOWN_NT_TAG] = ["known_nt.tsv"]
+		all = append(all, "known_nt.tsv")
+	}
+	if aaBytes > 0 {
+		inputs[rs.KNOWN_AA_TAG] = ["known_aa.tsv"]
+		all = append(all, "known_aa.tsv")
+	}
+	resolved := f.resolveAst(rs.ram(rs.lookup("analyze")), inputs, all)
+	resolver := {
+		size: func(files) {
+			total := 0
+			for name in files {
+				total += sizes[name]
+			}
+			return total
+		},
+		lineCount: func(files) { return 0 }
+	}
+	return f.evaluateResource(resolved, resolver, "test")
+}
+
+TestAnalyzeAddsTheKnownSet := func() {
+	// max(12, 8 + 32 x mic + 124 x nt + 69 x aa), rounded up.
+	test.isEqual(_gib(24), _analyzeRam(_gib(1) / 2, 0, 0))
+	test.isEqual(_gib(148), _analyzeRam(_gib(1) / 2, _gib(1), 0))
+	test.isEqual(_gib(93), _analyzeRam(_gib(1) / 2, 0, _gib(1)))
+	test.isEqual(_gib(217), _analyzeRam(_gib(1) / 2, _gib(1), _gib(1)))
 }
 
 TestUmiStepsAreSizedFromTheMic := func() {
-	test.isEqual(_gib(8), _ram(rs.lookup("refine-tags"), _gib(1)))
-	test.isEqual(_gib(44), _ram(rs.lookup("consensus"), _gib(10)))
+	// max(floor, 4 + slope x GiB): slope 7, 5 and 8; floor 8, 8 and 28.
+	test.isEqual(_gib(8), _ram(rs.lookup("refine-tags"), _gib(1) / 2))
+	test.isEqual(_gib(11), _ram(rs.lookup("refine-tags"), _gib(1)))
+	test.isEqual(_gib(8), _ram(rs.lookup("sort"), _gib(1) / 2))
+	test.isEqual(_gib(54), _ram(rs.lookup("sort"), _gib(10)))
+	test.isEqual(_gib(28), _ram(rs.lookup("consensus"), _gib(1)))
+	test.isEqual(_gib(84), _ram(rs.lookup("consensus"), _gib(10)))
 }
 
 TestMemoryOverrideMakesTheGrantFlat := func() {
@@ -50,7 +90,7 @@ TestMemoryOverrideMakesTheGrantFlat := func() {
 TestCpuOverrideKeepsTheMemoryRule := func() {
 	row := rs.effective(rs.lookup("analyze"), { perProcessCPUs: 12 })
 	test.isEqual(12, row.cpu)
-	test.isEqual(_gib(31), _ram(row, _gib(3)))
+	test.isEqual(_gib(104), _ram(row, _gib(3)))
 }
 
 TestNoOverrides := func() {

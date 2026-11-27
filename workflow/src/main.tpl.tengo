@@ -343,6 +343,8 @@ wf.body(func(args) {
 		fileOutput("ntWide"),
 		fileOutput("aaKeys"),
 		fileOutput("aaWide"),
+		fileOutput("ntKnownKeys"),
+		fileOutput("aaKnownKeys"),
 		fileOutput("regionAnnotationTsv"),
 		fileOutput("aaParentResiduesTsv"),
 		fileOutput("ntParentResiduesTsv"),
@@ -466,7 +468,7 @@ wf.body(func(args) {
 		importCols := func(f, cols, step) {
 			return xsv.importFile(
 				f,
-				"tsv",
+				"parquet",
 				{
 					axes: [axis],
 					columns: cols,
@@ -485,15 +487,15 @@ wf.body(func(args) {
 		}
 		return merged
 	}
-	ntPropsTsv := aggVarsRun.output("ntProperties")
-	aaPropsTsv := aggVarsRun.output("aaProperties")
+	ntPropsFile := aggVarsRun.output("ntProperties")
+	aaPropsFile := aggVarsRun.output("aaProperties")
 	// aa properties always; nt properties only when exported (skip the import
 	// entirely otherwise — nothing downstream consumes them).
 	ntPropsCols := undefined
 	if exportNt {
-		ntPropsCols = importProps(ntPropsTsv, aggVarsRun.output("ntLabels"), ntVariantAxis, false, rc.ntRegionNames)
+		ntPropsCols = importProps(ntPropsFile, aggVarsRun.output("ntLabels"), ntVariantAxis, false, rc.ntRegionNames)
 	}
-	aaPropsCols := importProps(aaPropsTsv, aggVarsRun.output("aaLabels"), aaVariantAxis, true, rc.aaRegionNames)
+	aaPropsCols := importProps(aaPropsFile, aggVarsRun.output("aaLabels"), aaVariantAxis, true, rc.aaRegionNames)
 
 	// State matrix [variantKey, parentId, position] -> state, deduped cross-sample.
 	// aa always; nt only when nt export is enabled (its per-sample TSV is an empty
@@ -512,7 +514,7 @@ wf.body(func(args) {
 		})
 		return xsv.importFile(
 			smRun.output("stateMatrix"),
-			"tsv",
+			"parquet",
 			{
 				axes: [
 					variantAxis,
@@ -651,7 +653,7 @@ wf.body(func(args) {
 	importLinker := func(file, axes, name) {
 		return xsv.importFile(
 			file,
-			"tsv",
+			"parquet",
 			{
 				axes: axes,
 				columns: columnSpecs.linkerColumns(name),
@@ -823,12 +825,13 @@ wf.body(func(args) {
 	addStateHeatmap := func(prefix, compositionData, alphabet, posLabel, trace, parentResidueCols) {
 		hmRun := render.createEphemeral(computeStateHeatmapTpl, {
 			aggMemGB: aggMemGB,
+			samples: samples,
 			compositionData: compositionData,
 			hasUmi: hasUmi
 		})
 		hmCols := xsv.importFile(
 			hmRun.output("stateHeatmap"),
-			"tsv",
+			"parquet",
 			{
 				axes: [
 					columnSpecs.parentIdAxisSpec("Parent"),
@@ -908,8 +911,16 @@ wf.body(func(args) {
 	if !is_undefined(knownNtFile) || !is_undefined(knownAaFile) {
 		knownRun := render.createEphemeral(aggregateKnownTpl, {
 			aggMemGB: aggMemGB,
-			variantsTsvData: perSampleResults.outputData("variantsTsv"),
-			aaVariantsTsvData: perSampleResults.outputData("aaVariantsTsv"),
+			ntKnownKeysData: perSampleResults.outputData("ntKnownKeys"),
+			aaKnownKeysData: perSampleResults.outputData("aaKnownKeys"),
+			knownNtAbundanceData: perSampleResults.outputData("knownNtAbundance"),
+			knownAaAbundanceData: perSampleResults.outputData("knownAaAbundance"),
+			// A known entry's sequence is read from the property table of its level.
+			aaProperties: aggVarsRun.output("aaProperties"),
+			ntProperties: aggVarsRun.output("ntProperties"),
+			needNt: exportNt || exportNtStateMatrix,
+			hasNtKnown: hasNtKnown,
+			aggBuckets: args.aggBuckets,
 			knownDesignedNtData: perSampleResults.outputData("knownDesignedNt"),
 			knownDesignedAaData: perSampleResults.outputData("knownDesignedAa"),
 			aaConvergenceData: perSampleResults.outputData("aaConvergence"),
@@ -919,10 +930,30 @@ wf.body(func(args) {
 			exportOnlyKnown: exportOnlyKnown,
 			hasUmi: hasUmi
 		})
-		importKnown := func(file, axes, columns) {
-			return xsv.importFile(file, "tsv", {
+		// The known-set aggregate writes parquet; the metadata table of process-known-set is a TSV.
+		// A parquet column that is not a string holds a null where the TSV held an empty
+		// cell, and an empty-string naRegex cannot be matched against it.
+		typedColumns := func(columns) {
+			res := []
+			for c in columns {
+				if !is_undefined(c.naRegex) && c.spec.valueType != "String" {
+					typed := {}
+					for k, v in c {
+						if k != "naRegex" {
+							typed[k] = v
+						}
+					}
+					c = typed
+				}
+				res = append(res, c)
+			}
+			return res
+		}
+		importKnown := func(file, axes, columns, ...xsvType) {
+			format := len(xsvType) > 0 ? xsvType[0] : "parquet"
+			return xsv.importFile(file, format, {
 				axes: axes,
-				columns: columns,
+				columns: format == "parquet" ? typedColumns(columns) : columns,
 				storageFormat: "Parquet",
 				partitionKeyLength: 0
 			}, importOps("knownImport"))
@@ -965,7 +996,7 @@ wf.body(func(args) {
 				sequenceColumn: seqCol,
 				metadataColumns: descriptors
 			})
-			return importKnown(metaRun.output("metadata"), [axis], metadataImportColumns(descriptors))
+			return importKnown(metaRun.output("metadata"), [axis], metadataImportColumns(descriptors), "tsv")
 		}
 		// nt overlay — only when an nt known set ran (otherwise the nt tables are
 		// empty; skip importing them).

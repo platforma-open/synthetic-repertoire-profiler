@@ -10,6 +10,12 @@
 // are dealt round-robin; a prefix not starting with A-Z, including an empty one, goes to label
 // bucket 0.
 //
+// Known keys (the known-set aggregate) are 20 chars of base64 without `+` and `/`, so they split
+// on their own alphabet of 62 symbols: K1 = min(K, 32) groups of first chars times K / K1 groups
+// of second chars, each dealt round-robin. A bucket's share of the keys is at most
+// ceil(62 / K1) x ceil(62 / K2) / 62^2, which the job is sized for. A key that is null or does
+// not start with two such chars goes to bucket 0.
+//
 // K is the smallest power of two with totalBytes / K <= TARGET_BUCKET_BYTES, at most
 // MAX_KEY_BUCKETS. Without blob sizes, totalBytes is samples x EST_SAMPLE_BYTES for the variant
 // aggregate and samples x EST_PAIR_SAMPLE_BYTES for the dedup owner jobs. L = min(K, 26).
@@ -40,6 +46,8 @@ NEED_PER_SAMPLE_BYTES := 1 * units.MiB
 NEED_PER_INPUT_BYTE := 6
 
 HEX := "0123456789abcdef"
+B62 := "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+MAX_FIRST_GROUPS := 32
 
 ALL_LETTERS := []
 for i := 0; i < len(LABEL_LETTERS); i++ {
@@ -144,6 +152,67 @@ labelPredicate := func(pt, hashCol, letters, catchAll) {
 	return pred
 }
 
+// dealChars deals the chars of `alphabet` round-robin into n lists.
+dealChars := func(alphabet, n) {
+	lists := []
+	for i := 0; i < n; i++ {
+		lists = append(lists, [])
+	}
+	for i := 0; i < len(alphabet); i++ {
+		lists[i % n] = append(lists[i % n], alphabet[i:i + 1])
+	}
+	return lists
+}
+
+ALL_B62 := dealChars(B62, 1)[0]
+
+// knownKeyGroups returns the first-char and second-char group counts of k known-key buckets.
+knownKeyGroups := func(k) {
+	k1 := k < MAX_FIRST_GROUPS ? k : MAX_FIRST_GROUPS
+	return { k1: k1, k2: k / k1 }
+}
+
+// knownKeyBuckets returns k buckets { first: [char], second: [char] | undefined }; a key is in
+// the bucket whose lists hold its first and second char. `second` is undefined when the split
+// uses the first char only.
+knownKeyBuckets := func(k) {
+	g := knownKeyGroups(k)
+	firsts := dealChars(B62, g.k1)
+	seconds := dealChars(B62, g.k2)
+	res := []
+	for i2 := 0; i2 < g.k2; i2++ {
+		for i1 := 0; i1 < g.k1; i1++ {
+			res = append(res, { first: firsts[i1], second: g.k2 > 1 ? seconds[i2] : undefined })
+		}
+	}
+	return res
+}
+
+// knownKeyPredicate returns the filter selecting rows of column `col` whose known key is in
+// `bucket`. With catchAll it also selects keys outside the alphabet, null and empty ones.
+knownKeyPredicate := func(pt, col, bucket, catchAll) {
+	first := pt.col(col).fillNull("").strSlice(0, 1)
+	pred := first.inSet(bucket.first...)
+	valid := first.inSet(ALL_B62...)
+	if !is_undefined(bucket.second) {
+		second := pt.col(col).fillNull("").strSlice(1, 1)
+		pred = pred.and(second.inSet(bucket.second...))
+		valid = valid.and(second.inSet(ALL_B62...))
+	}
+	if catchAll {
+		pred = pred.or(valid.not())
+	}
+	return pred
+}
+
+// knownKeyShare returns the largest share of the keys one of k known-key buckets holds, as
+// { num, den }.
+knownKeyShare := func(k) {
+	g := knownKeyGroups(k)
+	n := len(B62)
+	return { num: ((n + g.k1 - 1) / g.k1) * ((n + g.k2 - 1) / g.k2), den: n * n }
+}
+
 // bucketName returns bucket index b as 3 digits, so names sort in bucket order.
 bucketName := func(b) {
 	s := string(b)
@@ -165,6 +234,13 @@ bucketJobBytes := func(samples, totalBytes, k, aggMemGB) {
 	return aggSizing.requestBytes(need, aggMemGB)
 }
 
+// shareJobBytes returns the request of a bucket job that holds num / den of totalBytes, in bytes.
+shareJobBytes := func(samples, totalBytes, num, den, aggMemGB) {
+	inputTerm := (NEED_PER_INPUT_BYTE * totalBytes * num + den - 1) / den
+	need := NEED_BASE_BYTES + NEED_PER_SAMPLE_BYTES * samples + inputTerm
+	return aggSizing.requestBytes(need, aggMemGB)
+}
+
 export {
 	EST_PAIR_SAMPLE_BYTES: EST_PAIR_SAMPLE_BYTES,
 
@@ -175,5 +251,9 @@ export {
 	labelLetters: labelLetters,
 	labelPredicate: labelPredicate,
 	bucketJobBytes: bucketJobBytes,
+	knownKeyBuckets: knownKeyBuckets,
+	knownKeyPredicate: knownKeyPredicate,
+	knownKeyShare: knownKeyShare,
+	shareJobBytes: shareJobBytes,
 	flatJobBytes: flatJobBytes
 }

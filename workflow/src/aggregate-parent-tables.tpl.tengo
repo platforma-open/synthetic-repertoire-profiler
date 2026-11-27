@@ -6,7 +6,7 @@
 //   parents             [parentId]           -> ntSequence, aaSequence
 //
 // All three come from the --parents FASTA alone, so every sample writes identical
-// rows: concatenate and dedup on the keys. Same shape as
+// rows: read one sample's copy and dedup on the keys. Same shape as
 // aggregate-region-annotation, the other parent-derived table here.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
@@ -27,25 +27,17 @@ self.body(func(inputs) {
 
 	rmMap := inputs.tableData.inputs()
 	// Left unsized on purpose — pt sizes CPU/RAM from input volume. See aggregate-state-matrix.
-	wf := pt.workflow().
+	wf := pt.workflow().name("ptabler parent tables").
 		inMediumQueue()
 
-	frames := []
-	for sKey in maps.getKeys(rmMap) {
-		// inferSchema:false → all String, so an empty placeholder and a populated table share
-		// one schema and the concat never hits a numeric-vs-String mismatch (position infers
-		// as Int64 when populated). The position axis is String anyway.
-		frames = append(frames, wf.frame({
-			file: rmMap[sKey],
-			xsvType: "tsv"
-		}, { id: "pt_" + string(len(frames)), inferSchema: false }))
-	}
-	ll.assert(len(frames) > 0, "no parent-table frames")
-
-	merged := frames[0]
-	if len(frames) > 1 {
-		merged = pt.concat(frames)
-	}
+	sKeys := maps.getKeys(rmMap)
+	ll.assert(len(sKeys) > 0, "no parent-table frames")
+	// One sample's copy is the whole table. Reading every copy makes memory grow with
+	// samples x table size. inferSchema:false keeps position a String, as the axis is.
+	merged := wf.frame({
+		file: rmMap[sKeys[0]],
+		xsvType: "tsv"
+	}, { id: "pt_0", inferSchema: false })
 
 	aggExprs := []
 	for c in valueCols {

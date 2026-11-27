@@ -2,12 +2,12 @@
 //
 // Reads the per-sample resource maps (the nt/aa abundance parquets and the per-sample variant
 // metadata parquets, keys and wide; see downstream.tpl) and emits:
-//   ntProperties.tsv  [variantKey]      -> sequence, mutations, mutationCount, isProductive, totals
-//   aaProperties.tsv  [variantKey(aa)]  -> + ntVariantCount
-//   ntLabels.tsv / aaLabels.tsv  [variantKey] -> variantLabel
-//   ntToAa.tsv    [aaKey, ntKey]     -> 1   (one aa → many nt)
-//   parentNt.tsv  [parentId, ntKey]  -> 1   (one parent → many nt)
-//   parentAa.tsv  [parentId, aaKey]  -> 1   (one parent → many aa)
+//   ntProperties.parquet  [variantKey]      -> sequence, mutations, mutationCount, isProductive, totals
+//   aaProperties.parquet  [variantKey(aa)]  -> + ntVariantCount
+//   ntLabels.parquet / aaLabels.parquet  [variantKey] -> variantLabel
+//   ntToAa.parquet    [aaKey, ntKey]     -> 1   (one aa → many nt)
+//   parentNt.parquet  [parentId, ntKey]  -> 1   (one parent → many nt)
+//   parentAa.parquet  [parentId, aaKey]  -> 1   (one parent → many aa)
 //
 // Key buckets: rows split into K buckets by the first 2 hex chars of the variant key (the aa
 // key on the aa level), K a power of two from 1 to 256, chosen from the total input size. Each
@@ -152,9 +152,9 @@ self.body(func(inputs) {
 	labelParts := func(labelInFiles) {
 		files := []
 		for l, letters in buckets.labelLetters(p.l) {
-			wf := aggSizing.applyLabel(pt.workflow(), flatBytes, p.l)
+			wf := aggSizing.applyLabel(pt.workflow().name("ptabler variant labels"), flatBytes, p.l)
 			variantAggregate.addLabels(wf, labelInFiles, labelKeep(letters, l == 0))
-			files = append(files, wf.run().getFile("labels.tsv"))
+			files = append(files, wf.run().getFile("labels.parquet"))
 		}
 		return files
 	}
@@ -163,9 +163,9 @@ self.body(func(inputs) {
 		if len(files) == 1 {
 			return files[0]
 		}
-		wf := aggSizing.applyComputed(pt.workflow(), flatBytes)
+		wf := aggSizing.applyComputed(pt.workflow().name("ptabler variant concat"), flatBytes)
 		variantAggregate.addConcat(wf, files)
-		return wf.run().getFile("out.tsv")
+		return wf.run().getFile("out.parquet")
 	}
 
 	return {

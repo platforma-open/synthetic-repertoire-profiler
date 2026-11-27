@@ -2,7 +2,7 @@
 // per-sample table concats, the state-matrix dedup, the composition heat maps, and the
 // cross-sample imports.
 //
-// Input-size rule (apply): aggregate-known and the per-sample table concats. On a backend that
+// Input-size rule (apply): the per-sample table concats. On a backend that
 // reports blob sizes, pt's 4 GiB + 10 x input, with no upper limit, and a floor of FLOOR_GIB;
 // the "Memory for aggregation" setting does not apply there. A backend without blob sizes
 // cannot evaluate the rule: a flat FLOOR_GIB, raised by the setting. Same rule as
@@ -18,6 +18,14 @@
 // MATRIX_JOIN_PER_OWNER_BYTE x owner-file bytes), at least FLOOR_GIB (matrixJoinRequestBytes);
 // without, the "dedup" entry of STEP_NEED, the need of the single-job plan, kept only as this
 // fallback.
+//
+// Known-set aggregate: its variant-key and known-key jobs are bucket jobs sized by
+// aggregate-buckets.lib.tengo. Its finish jobs hold the links and totals of the matched
+// variants and the designed tables: with blob sizes they request 2 x (KNOWN_FINISH_BASE_GIB +
+// KNOWN_FINISH_PER_HELD_BYTE x bytes of the links and totals + KNOWN_FINISH_PER_DESIGNED_BYTE x
+// bytes of the designed tables), at least FLOOR_GIB (knownFinishRequestBytes); without,
+// FLOOR_GIB raised by the setting. Not measured: the constants are the matrix job's, and the
+// designed term is 4 x the 0.4 GiB per million designed entries of the single-job plan.
 //
 // aggregate-variants follows neither rule: each job requests a fixed amount (applyComputed)
 // from aggregate-buckets.lib.tengo: a key-bucket job 2 x the bucket law on samples and input
@@ -45,7 +53,6 @@
 //   linkerImport           4 / 4 / 4 GiB (ntToAa, parentNt, parentAa); slope from fine bisect
 //   perSampleTableImport   4 / 4 / 4 GiB (abundance concats); known abundance 1.25 / 2 / 2.25 GiB,
 //                          6.8 MiB per sample
-//   knownAggregate         20 / 39 / 77 GiB; holds its whole input, 1.1 x the staged bytes
 //
 // The matrix import's DuckDB budget is the limit minus the plan's Polars stage; with the input
 // hot in page cache it needs more (see its STEP_NEED entry).
@@ -64,6 +71,11 @@ MATRIX_JOIN_BASE_GIB := 5
 MATRIX_JOIN_PER_SAMPLE_MIB := 1
 MATRIX_JOIN_PER_OWNER_BYTE := 20
 
+// Finish jobs of the known-set aggregate, with blob sizes.
+KNOWN_FINISH_BASE_GIB := 5
+KNOWN_FINISH_PER_HELD_BYTE := 20
+KNOWN_FINISH_PER_DESIGNED_BYTE := 4
+
 // Need of each sample-count-sized step: baseGiB + perSampleMiB x samples. The request is 2 x need.
 STEP_NEED := {
 	dedup: { baseGiB: 3, perSampleMiB: 36 },
@@ -75,9 +87,7 @@ STEP_NEED := {
 	knownImport: { baseGiB: 3.5, perSampleMiB: 14 },
 	labelImport: { baseGiB: 4, perSampleMiB: 3.5 },
 	linkerImport: { baseGiB: 4, perSampleMiB: 3.5 },
-	perSampleTableImport: { baseGiB: 4, perSampleMiB: 7 },
-	// Without blob sizes only. 1M designed entries, 0.4M variants per sample.
-	knownAggregate: { baseGiB: 1.4, perSampleMiB: 390 }
+	perSampleTableImport: { baseGiB: 4, perSampleMiB: 7 }
 }
 
 // fallbackGiB returns the flat grant on a backend without blob sizes.
@@ -195,13 +205,16 @@ applyStepOrInput := func(wf, step, samples, aggMemGB, slope) {
 		memSlope(slope)
 }
 
-// applyOrStep puts `wf` on the heavy queue. With blob sizes pt sizes it from its input, at least
-// FLOOR_GIB; without, it requests the sized need of `step`.
-applyOrStep := func(wf, step, samples, aggMemGB) {
-	if feats.hasBlobSize {
-		return wf.inHeavyQueue().memFloor(FLOOR_GIB * units.GiB)
+// knownFinishRequestBytes returns the request of a finish job of the known-set aggregate, in
+// bytes. heldBytes is the sum over its link and totals files and designedBytes over the two
+// designed tables; both undefined without blob sizes.
+knownFinishRequestBytes := func(heldBytes, designedBytes, aggMemGB) {
+	if is_undefined(heldBytes) {
+		return requestBytes(0, aggMemGB)
 	}
-	return wf.inHeavyQueue().memSlope(0).memIntercept(requestBytes(stepNeedBytes(step, samples), aggMemGB))
+	need := KNOWN_FINISH_BASE_GIB * units.GiB + KNOWN_FINISH_PER_HELD_BYTE * heldBytes +
+		KNOWN_FINISH_PER_DESIGNED_BYTE * designedBytes
+	return requestBytes(need, undefined)
 }
 
 // importOpts returns the memory options of a sized xsv.importFile; no `mem` key, so the
@@ -214,7 +227,6 @@ export {
 	FLOOR_GIB: FLOOR_GIB,
 	fallbackGiB: fallbackGiB,
 	apply: apply,
-	applyOrStep: applyOrStep,
 	applyComputed: applyComputed,
 	labelSlope: labelSlope,
 	applyLabel: applyLabel,
@@ -224,6 +236,7 @@ export {
 	settingFor: settingFor,
 	stepNeedBytes: stepNeedBytes,
 	matrixJoinRequestBytes: matrixJoinRequestBytes,
+	knownFinishRequestBytes: knownFinishRequestBytes,
 	applyStepOrInput: applyStepOrInput,
 	importOpts: importOpts
 }
