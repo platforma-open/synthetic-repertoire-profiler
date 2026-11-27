@@ -6,4 +6,5 @@
 Runs with thousands of samples:
 
 - Memory requests follow the sample count and the input size.
+- Tables passed between cross-sample steps are stored as Parquet.
 - Small bug fixes and improvements.
